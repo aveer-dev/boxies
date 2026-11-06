@@ -12,6 +12,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.SpamVerdictToast
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
@@ -343,6 +344,74 @@ class AppModel {
     /** DEBUG previews: seed the Screening room queue from fixtures. */
     fun setScreenerQueueForPreview(queue: List<Email>) {
         _screenerQueue.value = queue
+    }
+
+    // Custom folders ("tags", AVE-158)
+
+    /**
+     * Creates a tag. Names the Worker would refuse throw [CustomFolders.ValidationException]
+     * with the Worker's sentence, before any request.
+     */
+    suspend fun createCustomFolder(raw: String): Folder {
+        val name = CustomFolders.normalizedName(raw)
+        CustomFolders.validateCreate(name, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val created = if (isDebugPreview) {
+            Folder(id = CustomFolders.slug(name), name = name, unreadCount = 0)
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val folder = ApiClient.shared.createFolder(mailboxId, name)
+            if (_selectedMailboxId.value != mailboxId) return folder
+            folder
+        }
+        _folders.update { list -> list.filterNot { it.id == created.id } + created }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+        return created
+    }
+
+    /** Renames a tag; its id (and the mail in it) stay put. */
+    suspend fun renameCustomFolder(folder: Folder, raw: String) {
+        val name = CustomFolders.normalizedName(raw)
+        if (name == folder.name) return
+        CustomFolders.validateRename(name, folder, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val newName = if (isDebugPreview) {
+            name
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val renamed = ApiClient.shared.renameFolder(mailboxId, folder.id, name)
+            if (_selectedMailboxId.value != mailboxId) return
+            renamed.name
+        }
+        _folders.update { list -> list.map { if (it.id == folder.id) it.copy(name = newName) else it } }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+    }
+
+    /**
+     * Deletes a tag. The Worker moves its mail to the Inbox first; if the tag is open, the
+     * list goes back to Inbox.
+     */
+    suspend fun deleteCustomFolder(folder: Folder) {
+        if (!CustomFolders.isCustom(folder)) return
+        val mailboxId = _selectedMailboxId.value
+        if (!isDebugPreview) {
+            mailboxId ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            ApiClient.shared.deleteFolder(mailboxId, folder.id)
+            if (_selectedMailboxId.value != mailboxId) return
+            db.deleteFolder(mailboxId, folder.id)
+        }
+        val unread = _folders.value.firstOrNull { it.id == folder.id }?.unreadCount ?: 0
+        _folders.update { list -> list.filterNot { it.id == folder.id } }
+        adjustFolderUnread(FolderIds.INBOX, unread)
+        if (_selectedTab.value == HomeTab.Folder(folder.id)) {
+            selectTab(HomeTab.Folder(FolderIds.INBOX))
+        }
+        if (!isDebugPreview && mailboxId != null) {
+            // Settle counts with the server (the moved mail lands in Inbox).
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
+                ifStillSelected(mailboxId) { _folders.value = fresh }
+            }
+        }
     }
 
     fun adjustFolderUnread(folderId: String, delta: Int) {
@@ -2518,24 +2587,45 @@ class AppModel {
         }
     }
 
+    /** Screener-lite: allow the sender and file their queued mail to a purpose box. */
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
+        decideScreenerSender(email, destinationFolderId)
+    }
+
+    /** Screener-lite: reject the sender into Screened out (silent). */
+    suspend fun rejectScreenerSender(email: Email) {
+        decideScreenerSender(email, destinationFolderId = null)
+    }
+
+    /** Accept ([destinationFolderId]) or Decline (null), then a toast with Undo (AVE-159). */
+    private suspend fun decideScreenerSender(email: Email, destinationFolderId: String?) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return
         val sender = email.sender.trim().lowercase()
         if (sender.isEmpty()) return
+        val localFolderId = destinationFolderId ?: FolderIds.SCREENED_OUT
         try {
-            ApiClient.shared.approveSender(
-                mailboxId = mailboxId,
-                sender = sender,
-                destinationFolderId = destinationFolderId,
-                emailId = email.id,
-                displayName = email.senderName,
-            )
+            val response = if (destinationFolderId != null) {
+                ApiClient.shared.approveSender(
+                    mailboxId = mailboxId,
+                    sender = sender,
+                    destinationFolderId = destinationFolderId,
+                    emailId = email.id,
+                    displayName = email.senderName,
+                )
+            } else {
+                ApiClient.shared.rejectSender(
+                    mailboxId = mailboxId,
+                    sender = sender,
+                    emailId = email.id,
+                    displayName = email.senderName,
+                )
+            }
             val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
             }.distinctBy { it.id }
-            queued.forEach { db.moveEmail(it.id, destinationFolderId) }
+            queued.forEach { db.moveEmail(it.id, localFolderId) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
             _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
@@ -2545,6 +2635,12 @@ class AppModel {
                 _selectedEmail.value = null
                 _threadEmails.value = emptyList()
             }
+            showScreenerUndoToast(
+                ScreenerDecision.toastTitle(destinationFolderId),
+                mailboxId = mailboxId,
+                sender = sender,
+                restoreIds = ScreenerDecision.restoreIds(response, email.id),
+            )
             loadEmailsForCurrentTab(showLoading = false)
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
                 ifStillSelected(mailboxId) { _folders.value = folders }
@@ -2554,39 +2650,51 @@ class AppModel {
         }
     }
 
-    suspend fun rejectScreenerSender(email: Email) {
-        val mailboxId = _selectedMailboxId.value ?: return
-        if (blockIfReadOnly()) return
-        val sender = email.sender.trim().lowercase()
-        if (sender.isEmpty()) return
-        try {
-            ApiClient.shared.rejectSender(
-                mailboxId = mailboxId,
-                sender = sender,
-                emailId = email.id,
-                displayName = email.senderName,
-            )
-            val queued = (_emails.value + _screenerQueue.value).filter {
-                it.sender.trim().lowercase() == sender &&
-                    (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }.distinctBy { it.id }
-            queued.forEach { db.moveEmail(it.id, FolderIds.SCREENED_OUT) }
-            val queuedIds = queued.map { it.id }.toSet()
-            _emails.update { list -> list.filterNot { it.id in queuedIds } }
-            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
-            if (_selectedEmail.value?.id in queuedIds ||
-                _selectedEmail.value?.sender?.trim()?.lowercase() == sender
-            ) {
-                _selectedEmail.value = null
-                _threadEmails.value = emptyList()
-            }
-            loadEmailsForCurrentTab(showLoading = false)
-            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-                ifStillSelected(mailboxId) { _folders.value = folders }
-            }
-        } catch (e: Exception) {
-            _errorMessage.value = e.message
+    /**
+     * Decision toast with Undo. The decision is already on the server, so Undo
+     * calls `DELETE sender-triage/:sender` and moves the refiled mail back to the
+     * Screener (same shape as [showSpamVerdictUndoToast]). If the DELETE fails the
+     * decision stands and an error toast says so.
+     */
+    private fun showScreenerUndoToast(
+        message: String,
+        mailboxId: String,
+        sender: String,
+        restoreIds: List<String>,
+    ) {
+        commitPendingActionImmediately()
+        val action = UndoableAction(
+            message = message,
+            execute = {},
+            rollback = { scope.launch { undoScreenerDecision(mailboxId, sender, restoreIds) } },
+        )
+        val actionId = action.id
+        _pendingUndoAction.value = action
+        showToast(message, isUndo = true, durationMs = 6000)
+        pendingUndoJob = scope.launch {
+            delay(6000)
+            if (_pendingUndoAction.value?.id == actionId) _pendingUndoAction.value = null
         }
+    }
+
+    private suspend fun undoScreenerDecision(mailboxId: String, sender: String, restoreIds: List<String>) {
+        val deleted = runCatching { ApiClient.shared.deleteSenderTriage(mailboxId, sender) }
+        if (deleted.isFailure) {
+            showToast("Couldn't undo", isError = true)
+            return
+        }
+        // Undecided again: put what the decision filed back in the Screening room.
+        // Best effort per message; the next folder sync settles any that failed.
+        restoreIds.forEach { id ->
+            db.moveEmail(id, FolderIds.SCREENER)
+            runCatching { ApiClient.shared.moveEmail(mailboxId, id, FolderIds.SCREENER) }
+        }
+        refreshScreenerQueue()
+        loadEmailsForCurrentTab(showLoading = false)
+        runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+            ifStillSelected(mailboxId) { _folders.value = folders }
+        }
+        showToast("Undone")
     }
 
     suspend fun markEmailsRead(ids: Set<String>, read: Boolean) {

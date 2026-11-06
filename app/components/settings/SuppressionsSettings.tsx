@@ -4,7 +4,7 @@
 
 import { Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { ApiError } from "~/services/api";
 import {
 	formatSuppressionDate,
@@ -21,7 +21,7 @@ import SettingsSubpage from "./SettingsSubpage";
  * admins see the whole domain's. Un-suppress lets mail go to them again.
  */
 export default function SuppressionsSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const { data, isLoading, isError, refetch } = useSuppressions(mailboxId);
 	const unsuppressMut = useUnsuppress();

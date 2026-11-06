@@ -54,6 +54,7 @@ import {
 } from "../lib/domain-verification";
 import { isDomainSuspended, serviceEndedError } from "../lib/domain-service";
 import { anyRecoveryEmail } from "../auth/users";
+import { invitePath } from "../../shared/mailbox-url";
 
 /** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
 function canSkipDomainVerification(env: Env): boolean {
@@ -658,7 +659,7 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 				});
 				inviteData = {
 					token: invite.token,
-					inviteUrl: `${(c.env.APP_BASE_URL || new URL(c.req.url).origin).replace(/\/$/, "")}/invite/${invite.token}`,
+					inviteUrl: `${(c.env.APP_BASE_URL || new URL(c.req.url).origin).replace(/\/$/, "")}${invitePath(invite.token)}`,
 					inviteeEmail,
 				};
 			}

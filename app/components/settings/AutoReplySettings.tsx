@@ -4,12 +4,12 @@
 
 import { Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
 export default function AutoReplySettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
 	const updateMailboxMutation = useUpdateMailbox();

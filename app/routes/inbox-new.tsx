@@ -11,7 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate } from "react-router";
 import { Folders } from "shared/folders";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
@@ -38,8 +38,7 @@ const PAGE_SIZE = 25;
  * "Show N more new" row lands here (AVE-23).
  */
 export default function InboxNewRoute() {
-	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
-	const { emailId, openEmail, closeEmail } = useMailNavigation();
+	const { mailboxId, mailboxRef, emailId, openEmail, closeEmail } = useMailNavigation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const [page, setPage] = useState(1);
@@ -90,7 +89,7 @@ export default function InboxNewRoute() {
 		queryClient.invalidateQueries({ queryKey: queryKeys.folders.list(mailboxId) });
 	};
 
-	const backToInbox = () => navigate(folderPath(mailboxId, Folders.INBOX));
+	const backToInbox = () => navigate(folderPath(mailboxRef, Folders.INBOX));
 
 	return (
 		<>

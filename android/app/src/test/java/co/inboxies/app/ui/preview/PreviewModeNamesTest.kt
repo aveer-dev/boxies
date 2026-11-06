@@ -15,6 +15,9 @@ class PreviewModeNamesTest {
         assertEquals("previewSignInMethods", PreviewMode.SignInMethods.intentExtra)
         assertEquals("previewMembers", PreviewMode.Members.intentExtra)
         assertEquals("previewSessions", PreviewMode.Sessions.intentExtra)
+        assertEquals("previewSecurityActivity", PreviewMode.SecurityActivity.intentExtra)
+        assertEquals("previewSecurityActivityEmpty", PreviewMode.SecurityActivityEmpty.intentExtra)
+        assertEquals("previewSecurityActivityError", PreviewMode.SecurityActivityError.intentExtra)
         assertEquals("previewMailbox", PreviewMode.Mailbox.intentExtra)
         assertEquals("previewLoadMore", PreviewMode.LoadMore.intentExtra)
         assertEquals("previewLoadFailed", PreviewMode.LoadFailed.intentExtra)
@@ -28,6 +31,9 @@ class PreviewModeNamesTest {
         assertEquals("previewSplash", PreviewMode.Splash.intentExtra)
         assertEquals("previewWelcome", PreviewMode.Welcome.intentExtra)
         assertEquals("previewAuthOptions", PreviewMode.AuthOptions.intentExtra)
+        assertEquals("previewTags", PreviewMode.Tags.intentExtra)
+        assertEquals("previewTagsRename", PreviewMode.TagsRename.intentExtra)
+        assertEquals("previewTagsDelete", PreviewMode.TagsDelete.intentExtra)
     }
 
     @Test
@@ -45,5 +51,9 @@ class PreviewModeNamesTest {
         assertEquals("splash", PreviewMode.Splash.cliName)
         assertEquals("welcome", PreviewMode.Welcome.cliName)
         assertEquals("authOptions", PreviewMode.AuthOptions.cliName)
+        assertEquals("tags", PreviewMode.Tags.cliName)
+        assertEquals("securityActivity", PreviewMode.SecurityActivity.cliName)
+        assertEquals("securityActivityEmpty", PreviewMode.SecurityActivityEmpty.cliName)
+        assertEquals("securityActivityError", PreviewMode.SecurityActivityError.cliName)
     }
 }

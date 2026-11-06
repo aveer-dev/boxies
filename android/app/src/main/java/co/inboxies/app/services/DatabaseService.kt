@@ -48,6 +48,18 @@ class DatabaseService private constructor() {
         folders[mailboxId] = list.toMutableList()
     }
 
+    /**
+     * Drops a deleted custom folder and re-files its cached mail under Inbox, where the
+     * Worker moved it (AVE-158).
+     */
+    fun deleteFolder(mailboxId: String, folderId: String) {
+        folders[mailboxId]?.let { list -> folders[mailboxId] = list.filterNot { it.id == folderId }.toMutableList() }
+        folderUnread.remove("$mailboxId::$folderId")
+        emailsIn(mailboxId).filter { it.folderId == folderId }.toList().forEach { email ->
+            emails[email.id] = email.copy(folderId = "inbox")
+        }
+    }
+
     fun updateFolderUnread(mailboxId: String, folderId: String, delta: Int) {
         val key = "$mailboxId::$folderId"
         folderUnread[key] = (folderUnread[key] ?: 0) + delta

@@ -15,6 +15,8 @@
 #   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
 #   ./scripts/run-debug-preview.sh screenerList
+#   ./scripts/run-debug-preview.sh screenerUndo        # Screening room after Decline + Undo toast (AVE-159)
+#   ./scripts/run-debug-preview.sh screenerUndoAccept  # … after Accept → Promotions
 #   ./scripts/run-debug-preview.sh domainDns
 #   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
@@ -27,12 +29,22 @@
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
+#   ./scripts/run-debug-preview.sh reauth             # "Confirm it's you" over Sign-in & recovery (password, AVE-171)
+#   ./scripts/run-debug-preview.sh reauthTwoFactor    # … password + authenticator code
+#   ./scripts/run-debug-preview.sh reauthPasskey      # … passkey only
+#   ./scripts/run-debug-preview.sh reauthEmailCode    # … emailed code
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh securityActivity      # Devices & sessions → Recent security activity (AVE-151)
+#   ./scripts/run-debug-preview.sh securityActivityEmpty # … nothing in the last 30 days
+#   ./scripts/run-debug-preview.sh securityActivityError # … couldn't load
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
+#   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
+#   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
 #   ./scripts/run-debug-preview.sh aiUsage             # agent chat, usage meter at 42 / 50 (warning)
@@ -63,12 +75,22 @@ case "$mode" in
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
+  reauth|Reauth|reauthPassword|previewReauth) extra=previewReauth; label=reauth ;;
+  reauthTwoFactor|ReauthTwoFactor|previewReauthTwoFactor) extra=previewReauthTwoFactor; label=reauthTwoFactor ;;
+  reauthPasskey|ReauthPasskey|previewReauthPasskey) extra=previewReauthPasskey; label=reauthPasskey ;;
+  reauthEmailCode|ReauthEmailCode|previewReauthEmailCode) extra=previewReauthEmailCode; label=reauthEmailCode ;;
   inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
   members|Members|previewMembers) extra=previewMembers; label=members ;;
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
+  securityActivity|SecurityActivity|previewSecurityActivity) extra=previewSecurityActivity; label=securityActivity ;;
+  securityActivityEmpty|SecurityActivityEmpty|previewSecurityActivityEmpty) extra=previewSecurityActivityEmpty; label=securityActivityEmpty ;;
+  securityActivityError|SecurityActivityError|previewSecurityActivityError) extra=previewSecurityActivityError; label=securityActivityError ;;
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  tags|Tags|previewTags) extra=previewTags; label=tags ;;
+  tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
+  tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
   settings|Settings|previewSettings) extra=previewSettings; label=settings ;;
   settingsScreenerOff|SettingsScreenerOff|previewSettingsScreenerOff) extra=previewSettingsScreenerOff; label=settingsScreenerOff ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
@@ -82,6 +104,8 @@ case "$mode" in
   listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
+  screenerUndo|ScreenerUndo|previewScreenerUndo) extra=previewScreenerUndo; label=screenerUndo ;;
+  screenerUndoAccept|ScreenerUndoAccept|previewScreenerUndoAccept) extra=previewScreenerUndoAccept; label=screenerUndoAccept ;;
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
@@ -103,12 +127,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,41p' "$0"
+    sed -n '2,58p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
     exit 1
     ;;
 esac

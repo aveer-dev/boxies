@@ -16,12 +16,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Login
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Laptop
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PhoneIphone
+import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -45,11 +51,13 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.AccountSession
 import co.inboxies.app.models.McpGrant
+import co.inboxies.app.models.SecurityActivityItem
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
@@ -57,13 +65,18 @@ import java.time.Instant
 /**
  * Account → Devices & sessions: every signed-in device, browser, extension and
  * AutoFill session, with sign-out per session or everywhere else; plus the apps
- * connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens).
+ * connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens);
+ * then a read-only list of the last 30 days of sign-ins and account changes (AVE-151).
+ *
+ * [previewActivity] (DEBUG previews only) picks the Recent security activity state and
+ * scrolls down to it; null in a preview shows the fixture events unscrolled.
  */
 @Composable
-fun SessionsSettingsView(onBack: () -> Unit) {
+fun SessionsSettingsView(onBack: () -> Unit, previewActivity: SecurityActivityPreview? = null) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     var sessions by remember { mutableStateOf<List<AccountSession>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -78,6 +91,9 @@ fun SessionsSettingsView(onBack: () -> Unit) {
     var grantsError by remember { mutableStateOf<String?>(null) }
     var revokingGrantId by remember { mutableStateOf<String?>(null) }
     var grantToRevoke by remember { mutableStateOf<McpGrant?>(null) }
+    var activity by remember { mutableStateOf<List<SecurityActivityItem>>(emptyList()) }
+    var isLoadingActivity by remember { mutableStateOf(true) }
+    var activityFailed by remember { mutableStateOf(false) }
 
     val others = sessions.filterNot { it.current }
 
@@ -87,7 +103,27 @@ fun SessionsSettingsView(onBack: () -> Unit) {
             grants = previewGrants()
             isLoading = false
             isLoadingGrants = false
+            when (previewActivity ?: SecurityActivityPreview.Events) {
+                SecurityActivityPreview.Events -> activity = previewSecurityActivity()
+                SecurityActivityPreview.Empty -> activity = emptyList()
+                SecurityActivityPreview.Error -> {
+                    activity = emptyList()
+                    activityFailed = true
+                }
+            }
+            isLoadingActivity = false
             return
+        }
+        // Read-only; a failure (e.g. the server not migrated yet) shows a calm note.
+        scope.launch {
+            isLoadingActivity = true
+            runCatching { ApiClient.shared.securityActivity() }
+                .onSuccess {
+                    activity = it.events
+                    activityFailed = false
+                }
+                .onFailure { activityFailed = true }
+            isLoadingActivity = false
         }
         scope.launch {
             isLoadingGrants = true
@@ -112,11 +148,17 @@ fun SessionsSettingsView(onBack: () -> Unit) {
     }
 
     LaunchedEffect(Unit) { load() }
+    if (previewActivity != null) {
+        LaunchedEffect(previewActivity) {
+            delay(400)
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(bottom = 32.dp),
     ) {
         Row(
@@ -255,6 +297,55 @@ fun SessionsSettingsView(onBack: () -> Unit) {
         }
         Text(
             "AI assistants and other apps you allowed to use your mail over MCP. Disconnecting cuts off access right away.",
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+
+        SettingsSectionHeader("Recent security activity")
+
+        when {
+            isLoadingActivity && activity.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), color = colors.muted, strokeWidth = 2.dp)
+            }
+            activity.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surface)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                Text(
+                    if (activityFailed) "Couldn't load recent activity. Try again later." else "No security activity in the last 30 days",
+                    fontFamily = InterFontFamily,
+                    fontSize = if (activityFailed) 12.sp else 15.sp,
+                    color = colors.muted,
+                )
+            }
+            else -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surface),
+            ) {
+                activity.forEachIndexed { index, event ->
+                    ActivityRow(event)
+                    if (index < activity.lastIndex) {
+                        HorizontalDivider(modifier = Modifier.padding(start = 52.dp), color = colors.line)
+                    }
+                }
+            }
+        }
+        Text(
+            "Sign-ins and changes to how you sign in, from the last 30 days. Locations are approximate.",
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
             fontFamily = InterFontFamily,
             fontSize = 12.sp,
@@ -476,6 +567,95 @@ private fun GrantRow(grant: McpGrant, busy: Boolean, onDisconnect: () -> Unit) {
     }
 }
 
+@Composable
+private fun ActivityRow(event: SecurityActivityItem) {
+    val colors = inboxiesColors()
+    // Time first so it survives truncation; the title keeps the full row width (same as iOS).
+    val time = runCatching { Instant.parse(event.createdAt) }.getOrNull()?.let { relative(it) }
+    val subtitle = listOfNotNull(time, securityEventDetail(event))
+        .filter { it.isNotEmpty() }
+        .joinToString(" · ")
+        .replaceFirstChar { it.uppercase() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(securityEventIcon(event), contentDescription = null, tint = colors.ink, modifier = Modifier.size(22.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                securityEventTitle(event),
+                fontFamily = InterFontFamily,
+                fontSize = 15.sp,
+                color = colors.ink,
+                maxLines = 2,
+            )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    subtitle,
+                    fontFamily = InterFontFamily,
+                    fontSize = 12.sp,
+                    color = colors.muted,
+                    maxLines = 2,
+                )
+            }
+        }
+    }
+}
+
+/** Which Recent security activity state a DEBUG preview shows (AVE-151). */
+enum class SecurityActivityPreview { Events, Empty, Error }
+
+internal const val SECURITY_EVENT_FALLBACK_TITLE = "Account security change"
+
+/**
+ * "Signed in from a new device", "Password changed", "Google sign-in connected", …
+ * Same copy as iOS `SecurityActivity.title` and web `securityEventTitle`.
+ */
+internal fun securityEventTitle(event: SecurityActivityItem): String = when (event.kind) {
+    "sign_in" -> if (event.newDevice) "Signed in from a new device" else "Signed in"
+    "password_changed" -> "Password changed"
+    "password_added" -> "Password added"
+    "password_reset" -> "Password reset"
+    "two_factor_enabled" -> "Two-factor authentication turned on"
+    "two_factor_disabled" -> "Two-factor authentication turned off"
+    "passkey_added" -> "Passkey added"
+    "passkey_removed" -> "Passkey removed"
+    "sign_in_method_added" -> providerName(event.provider)?.let { "$it sign-in connected" } ?: "Sign-in method connected"
+    "sign_in_method_removed" -> providerName(event.provider)?.let { "$it sign-in removed" } ?: "Sign-in method removed"
+    "recovery_email_set" -> "Recovery email changed"
+    "recovery_email_removed" -> "Recovery email removed"
+    else -> SECURITY_EVENT_FALLBACK_TITLE
+}
+
+/** "Chrome on macOS · Lagos, Nigeria"; empty when neither is known. */
+internal fun securityEventDetail(event: SecurityActivityItem): String =
+    listOfNotNull(event.device?.trim(), event.location?.trim())
+        .filter { it.isNotEmpty() }
+        .joinToString(" · ")
+
+private fun providerName(provider: String?): String? {
+    val p = provider?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return null
+    return when (p) {
+        "google" -> "Google"
+        "apple" -> "Apple"
+        "password", "credential" -> "Password"
+        else -> p.replaceFirstChar { it.uppercase() }
+    }
+}
+
+private fun securityEventIcon(event: SecurityActivityItem): ImageVector = when (event.kind) {
+    "sign_in" -> Icons.AutoMirrored.Outlined.Login
+    "password_changed", "password_added", "password_reset" -> Icons.Outlined.Key
+    "two_factor_enabled", "two_factor_disabled" -> Icons.Outlined.Security
+    "passkey_added", "passkey_removed" -> Icons.Outlined.Fingerprint
+    "recovery_email_set", "recovery_email_removed" -> Icons.Outlined.Email
+    "sign_in_method_added", "sign_in_method_removed" -> Icons.Outlined.AccountCircle
+    else -> Icons.Outlined.Shield
+}
+
 /** The app's registered name (unverified). Same rules as iOS `SessionsSettingsView.grantTitle`. */
 internal fun grantTitle(grant: McpGrant): String =
     grant.clientName?.trim()?.takeIf { it.isNotEmpty() } ?: "Unnamed app"
@@ -537,8 +717,8 @@ private fun sessionSubtitle(session: AccountSession): String {
     return parts.joinToString(" · ")
 }
 
-private fun relative(at: Instant): String {
-    val elapsed = Duration.between(at, Instant.now())
+internal fun relative(at: Instant, now: Instant = Instant.now()): String {
+    val elapsed = Duration.between(at, now).let { if (it.isNegative) Duration.ZERO else it }
     return when {
         elapsed.toMinutes() < 1 -> "just now"
         elapsed.toHours() < 1 -> "${elapsed.toMinutes()} min ago"
@@ -570,6 +750,30 @@ private fun previewGrants(): List<McpGrant> {
             id = "g-2", clientId = "c-2", scopes = listOf("read"), mailboxIds = listOf("hello@inboxies.email"),
             createdAt = now.minusSeconds(3_600).toString(),
         ),
+    )
+}
+
+private fun previewSecurityActivity(): List<SecurityActivityItem> {
+    val now = Instant.now()
+    fun ago(seconds: Long) = now.minusSeconds(seconds).toString()
+    return listOf(
+        SecurityActivityItem(
+            id = "a-1", kind = "sign_in", createdAt = ago(12 * 60), device = "Inboxies app on Android",
+            location = "Lagos, Nigeria", country = "NG", newDevice = true,
+        ),
+        SecurityActivityItem(
+            id = "a-2", kind = "two_factor_enabled", createdAt = ago(3 * 3_600),
+            device = "Safari on macOS", location = "Lagos, Nigeria",
+        ),
+        SecurityActivityItem(
+            id = "a-3", kind = "sign_in_method_added", createdAt = ago(26 * 3_600),
+            device = "Chrome on Windows", provider = "google",
+        ),
+        SecurityActivityItem(
+            id = "a-4", kind = "password_changed", createdAt = ago(4 * 86_400),
+            device = "Safari on macOS", location = "Accra, Ghana",
+        ),
+        SecurityActivityItem(id = "a-5", kind = "recovery_email_set", createdAt = ago(12 * 86_400)),
     )
 }
 

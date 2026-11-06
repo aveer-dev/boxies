@@ -42,11 +42,16 @@ import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import co.inboxies.app.ui.settings.SendersSettingsView
 import co.inboxies.app.ui.settings.SendersTab
+import co.inboxies.app.ui.settings.SecurityActivityPreview
 import co.inboxies.app.ui.settings.SessionsSettingsView
 import co.inboxies.app.ui.settings.SuppressionsSettingsView
+import co.inboxies.app.ui.settings.TagsPreviewDialog
+import co.inboxies.app.ui.settings.TagsSettingsView
 import co.inboxies.app.ui.settings.SettingsSheetView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
+import co.inboxies.app.ui.settings.ReauthPromptHost
+import co.inboxies.app.services.ReauthCoordinator
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
 import co.inboxies.app.ui.widget.InboxWidgetGallery
@@ -89,11 +94,19 @@ object PreviewHarness {
             PreviewMode.DomainAdmin,
             PreviewMode.DomainDns,
             PreviewMode.Sessions,
+            PreviewMode.SecurityActivity,
+            PreviewMode.SecurityActivityEmpty,
+            PreviewMode.SecurityActivityError,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
             }
-            PreviewMode.SignInMethods -> {
+            PreviewMode.SignInMethods,
+            PreviewMode.Reauth,
+            PreviewMode.ReauthTwoFactor,
+            PreviewMode.ReauthPasskey,
+            PreviewMode.ReauthEmailCode,
+            -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
                 appModel.setIdentities(PreviewSupport.identities())
@@ -111,6 +124,9 @@ object PreviewHarness {
             PreviewMode.Senders,
             PreviewMode.SendersBlocked,
             PreviewMode.Suppressions,
+            PreviewMode.Tags,
+            PreviewMode.TagsRename,
+            PreviewMode.TagsDelete,
             PreviewMode.Settings,
             PreviewMode.SettingsScreenerOff,
             -> {
@@ -138,6 +154,8 @@ object PreviewHarness {
             PreviewMode.ListError,
             PreviewMode.Screener,
             PreviewMode.ScreenerList,
+            PreviewMode.ScreenerUndo,
+            PreviewMode.ScreenerUndoAccept,
             PreviewMode.ReplyLater,
             PreviewMode.Spam,
             PreviewMode.Newsletter,
@@ -189,10 +207,39 @@ fun PreviewRoot(
             )
         }
         PreviewMode.SignInMethods -> SettingsPreviewSurface { SignInMethodsSettingsView(onBack = {}) }
+        PreviewMode.Reauth,
+        PreviewMode.ReauthTwoFactor,
+        PreviewMode.ReauthPasskey,
+        PreviewMode.ReauthEmailCode,
+        -> SettingsPreviewSurface {
+            // "Confirm it's you" over Sign-in & recovery, fixture challenge, no API (AVE-171).
+            SignInMethodsSettingsView(onBack = {})
+            ReauthPromptHost()
+            LaunchedEffect(mode) {
+                delay(400)
+                PreviewSupport.reauthChallenge(mode)?.let { ReauthCoordinator.shared.presentForPreview(it) }
+            }
+        }
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
+        PreviewMode.SecurityActivity -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Events)
+        }
+        PreviewMode.SecurityActivityEmpty -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Empty)
+        }
+        PreviewMode.SecurityActivityError -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Error)
+        }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
         PreviewMode.Suppressions -> SettingsPreviewSurface { SuppressionsSettingsView(onBack = {}) }
+        PreviewMode.Tags -> SettingsPreviewSurface { TagsSettingsView(onBack = {}) }
+        PreviewMode.TagsRename -> SettingsPreviewSurface {
+            TagsSettingsView(onBack = {}, previewDialog = TagsPreviewDialog.Rename)
+        }
+        PreviewMode.TagsDelete -> SettingsPreviewSurface {
+            TagsSettingsView(onBack = {}, previewDialog = TagsPreviewDialog.Delete)
+        }
         PreviewMode.Settings, PreviewMode.SettingsScreenerOff, PreviewMode.AiUsageSettings -> SettingsPreviewSurface {
             SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
         }
@@ -245,6 +292,8 @@ fun PreviewRoot(
         PreviewMode.ListError,
         PreviewMode.Screener,
         PreviewMode.ScreenerList,
+        PreviewMode.ScreenerUndo,
+        PreviewMode.ScreenerUndoAccept,
         PreviewMode.ReplyLater,
         PreviewMode.Spam,
         PreviewMode.Newsletter,

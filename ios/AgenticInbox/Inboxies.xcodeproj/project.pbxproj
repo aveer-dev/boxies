@@ -64,6 +64,7 @@
 		43BDF0A5517B4663A83AD4A7 /* ClientContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 048F9C0790FD14781DE293EE /* ClientContractTests.swift */; };
 		446AE613BF8BDB5348779EDE /* AutofillSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F188CBAA8BD1E3594EECDC0A /* AutofillSession.swift */; };
 		448C3DC7935A51152A6FDA7B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9F90087071E0670883ED0ACD /* Assets.xcassets */; };
+		45303DCCEDF47CF0F9AF621A /* CustomFolders.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDDB8F6D5FB409BE394FDF42 /* CustomFolders.swift */; };
 		47889E308407CEA2EBEB6704 /* ForwardingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */; };
 		4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596607AFA8E6FA8BF2D371D9 /* InboxiesApp.swift */; };
 		4BB746CC01943E75D6A9B48A /* EmailDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7ACA3D7A218207D8E3BE44 /* EmailDetailView.swift */; };
@@ -77,6 +78,7 @@
 		591B2A85338AA0864D386D58 /* AgentPromptSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00205AEB0B508D541F52DF70 /* AgentPromptSettingsView.swift */; };
 		5A7F7E5E7E706B871C00DD32 /* SharedSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850C4C597D07AFD8C475B162 /* SharedSession.swift */; };
 		5C1AC64643194A4F397B7200 /* SendersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 980CAABDCDC902B32048C356 /* SendersSettingsView.swift */; };
+		5D50874F44B9FA1B412C1774 /* Reauth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C9E50D677DF1D01D1BA4CE9 /* Reauth.swift */; };
 		5F3CF3395E621B762337B75F /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C8E32E058FDC6AE3A2A3F /* DatabaseService.swift */; };
 		64C59D826FC55FF600893708 /* InviteAcceptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66D985868B2CF54D7FF7966 /* InviteAcceptView.swift */; };
 		650F811FE367031CBA140324 /* EmailBodyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A432039F72F28C3CB4B1FF /* EmailBodyView.swift */; };
@@ -126,13 +128,16 @@
 		B158790A486A5A6772C224AC /* InboxWidgetMock.swift in Sources */ = {isa = PBXBuildFile; fileRef = F689FFC0A7CFCA67D81095C6 /* InboxWidgetMock.swift */; };
 		B4A61C19CD723FD2B3345367 /* SuppressionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0BFFF943A2EB8B1755ED08 /* SuppressionsSettingsView.swift */; };
 		B6A8B426F1F832009D196CAF /* InboxWidgetPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92F643D22299D8238DBE7DF /* InboxWidgetPublisher.swift */; };
+		B85B6DBB777D6A78AC1DF114 /* ReauthSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300D3D02EBDAB55AB5441309 /* ReauthSheetView.swift */; };
 		BB9AE2E6AABF64268298273A /* MailboxSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B8E62B0AC175F564D44ABA /* MailboxSelection.swift */; };
 		BD19E0624AAFC436F55A6BE3 /* InboxWidgetMock.swift in Sources */ = {isa = PBXBuildFile; fileRef = F689FFC0A7CFCA67D81095C6 /* InboxWidgetMock.swift */; };
 		BEABE6117A87AF07E976CF2E /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4D9A4CBE7DF8D0E6DA68CFB /* PreviewSupport.swift */; };
+		C08E7A655C0D45AF1FD4E902 /* TagsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EEC016C451C28296FEE5B28 /* TagsSettingsView.swift */; };
 		C08F4C03E2FD7A5DEB6A55CB /* PrivateEmailRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74FC3A9EFF9C884E623775CF /* PrivateEmailRequestView.swift */; };
 		C5B92128F6B87965073E2E64 /* EmailActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D367BF95650BA4DB33A884 /* EmailActionExecutor.swift */; };
 		C5E8225C2C880AC6DD2D44E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723EAC1668DC9825FED81F4A /* AuthStore.swift */; };
 		C739D111D71A04159CBC722D /* ComposeFormatChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */; };
+		CF1F67639799F07F84B17528 /* ReauthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034D0180E2DB0FE32925DB6C /* ReauthTests.swift */; };
 		D196F51E67D450B1FE7326DB /* SharedSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850C4C597D07AFD8C475B162 /* SharedSession.swift */; };
 		D1A18F95D1ED4AF08CF9EC6E /* ThemeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 686F4132F3FED4973E6530FA /* ThemeController.swift */; };
 		D3F3A18B986693415748585B /* InboxWidgetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A73B9479AAE0CE90231F7AF /* InboxWidgetStore.swift */; };
@@ -210,6 +215,7 @@
 
 /* Begin PBXFileReference section */
 		00205AEB0B508D541F52DF70 /* AgentPromptSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPromptSettingsView.swift; sourceTree = "<group>"; };
+		034D0180E2DB0FE32925DB6C /* ReauthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReauthTests.swift; sourceTree = "<group>"; };
 		048F9C0790FD14781DE293EE /* ClientContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientContractTests.swift; sourceTree = "<group>"; };
 		0A458C487170DA657BC2E771 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		0A95037271E59C93C4B34508 /* DeliveryStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryStatus.swift; sourceTree = "<group>"; };
@@ -232,6 +238,7 @@
 		273A93AC90119EF2F433C2D5 /* AutoReplySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoReplySettingsView.swift; sourceTree = "<group>"; };
 		2A2645A47707A5FB83AB692C /* ThemeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSettingsView.swift; sourceTree = "<group>"; };
 		2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormModel.swift; sourceTree = "<group>"; };
+		300D3D02EBDAB55AB5441309 /* ReauthSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReauthSheetView.swift; sourceTree = "<group>"; };
 		314F2EDE47FA06C2E532BC0E /* InboxiesWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesWidget.entitlements; sourceTree = "<group>"; };
 		37786A9610B8F787C5525CA8 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceStatusBanner.swift; sourceTree = "<group>"; };
@@ -252,6 +259,7 @@
 		53D210F6CB0B6F1530680333 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		58E09B194629136A59B68053 /* CoverDragDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverDragDismiss.swift; sourceTree = "<group>"; };
 		596607AFA8E6FA8BF2D371D9 /* InboxiesApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxiesApp.swift; sourceTree = "<group>"; };
+		5EEC016C451C28296FEE5B28 /* TagsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TagsSettingsView.swift; sourceTree = "<group>"; };
 		5F497ABD160588BE78E714AF /* EmailActionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailActionsSheet.swift; sourceTree = "<group>"; };
 		602BF2EFF3E0FFE7D50873BC /* BounceSuppressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BounceSuppressionTests.swift; sourceTree = "<group>"; };
 		6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Italic.ttf"; sourceTree = "<group>"; };
@@ -270,6 +278,7 @@
 		789C13DE076FDF45C432F26B /* SettingsSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSheetView.swift; sourceTree = "<group>"; };
 		7A73B9479AAE0CE90231F7AF /* InboxWidgetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWidgetStore.swift; sourceTree = "<group>"; };
 		7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchQueryParserTests.swift; sourceTree = "<group>"; };
+		7C9E50D677DF1D01D1BA4CE9 /* Reauth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reauth.swift; sourceTree = "<group>"; };
 		7D14A26BA499EACE362B32B9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7DA1E3393B9B60E61F888638 /* MarkdownContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownContentView.swift; sourceTree = "<group>"; };
 		7F03281059755D67D2690FD1 /* DomainServiceActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainServiceActions.swift; sourceTree = "<group>"; };
@@ -345,6 +354,7 @@
 		F7DF8BEBB79B2AC262704B84 /* HomeShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeShellView.swift; sourceTree = "<group>"; };
 		FCAB549787CB20A5139C48E9 /* ReplyLaterReminderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyLaterReminderView.swift; sourceTree = "<group>"; };
 		FD35F79DAFD4CA942872DA19 /* PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationManager.swift; sourceTree = "<group>"; };
+		FDDB8F6D5FB409BE394FDF42 /* CustomFolders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomFolders.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -386,6 +396,7 @@
 				F188CBAA8BD1E3594EECDC0A /* AutofillSession.swift */,
 				51DC01F9995CCF1938777EB3 /* BounceSuppression.swift */,
 				2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */,
+				FDDB8F6D5FB409BE394FDF42 /* CustomFolders.swift */,
 				C97C8E32E058FDC6AE3A2A3F /* DatabaseService.swift */,
 				0A95037271E59C93C4B34508 /* DeliveryStatus.swift */,
 				7F03281059755D67D2690FD1 /* DomainServiceActions.swift */,
@@ -402,6 +413,7 @@
 				CAD6F28F3D52BDF30B14FA46 /* PendingSendStore.swift */,
 				FD35F79DAFD4CA942872DA19 /* PushNotificationManager.swift */,
 				F692AD79040A16E97A770F3F /* RealTimeStreamClient.swift */,
+				7C9E50D677DF1D01D1BA4CE9 /* Reauth.swift */,
 				4CB3A39C2F0108CC45D29E60 /* ReplyLaterReminder.swift */,
 				DC0DB4217B5E980F772323B7 /* SearchQueryParser.swift */,
 				4DF5F4BC153BCF0682C4D007 /* SwipeActionPreferences.swift */,
@@ -508,6 +520,7 @@
 				76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */,
 				23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */,
 				41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */,
+				300D3D02EBDAB55AB5441309 /* ReauthSheetView.swift */,
 				980CAABDCDC902B32048C356 /* SendersSettingsView.swift */,
 				45D197C214C0E3D8CB2DABD2 /* SessionsSettingsView.swift */,
 				789C13DE076FDF45C432F26B /* SettingsSheetView.swift */,
@@ -515,6 +528,7 @@
 				B9003AA3BAEDF7626B89A4FC /* SignInMethodsSettingsView.swift */,
 				CE0BFFF943A2EB8B1755ED08 /* SuppressionsSettingsView.swift */,
 				8F4A9BE28CD5C12A238585ED /* SwipeSettingsView.swift */,
+				5EEC016C451C28296FEE5B28 /* TagsSettingsView.swift */,
 				2A2645A47707A5FB83AB692C /* ThemeSettingsView.swift */,
 			);
 			path = Settings;
@@ -603,6 +617,7 @@
 				91800C0E06AC3EE38BD0947D /* PasskeysTwoFactorTests.swift */,
 				4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */,
 				9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */,
+				034D0180E2DB0FE32925DB6C /* ReauthTests.swift */,
 				1456B93EBB25453681F72B86 /* ReplyLaterReminderTests.swift */,
 				7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */,
 				D5A9689D0BB46A6D36E54F81 /* ThreadNotesTests.swift */,
@@ -904,6 +919,7 @@
 				317C209183BF569CDA6F7D84 /* ContactPillMenu.swift in Sources */,
 				7D6A92FBEF9206F8E05686CA /* ContactPillParser.swift in Sources */,
 				E7A47B91C386B0A979463B9F /* CoverDragDismiss.swift in Sources */,
+				45303DCCEDF47CF0F9AF621A /* CustomFolders.swift in Sources */,
 				5F3CF3395E621B762337B75F /* DatabaseService.swift in Sources */,
 				7EE3D39BD777F0AF92D0C1DE /* DeliveryStatus.swift in Sources */,
 				B157225C80D0523AE6C6CDC9 /* DomainAdminDNSView.swift in Sources */,
@@ -952,6 +968,8 @@
 				D58FC4EC78BF9FB8BCACB858 /* PrivateEmailMatching.swift in Sources */,
 				4036CA43F66EEBABB7EBDD60 /* PushNotificationManager.swift in Sources */,
 				3C0C180D74BFB7BBF094FC71 /* RealTimeStreamClient.swift in Sources */,
+				5D50874F44B9FA1B412C1774 /* Reauth.swift in Sources */,
+				B85B6DBB777D6A78AC1DF114 /* ReauthSheetView.swift in Sources */,
 				0E9F960A2533557413CC0705 /* ReplyLaterReminder.swift in Sources */,
 				DEE846346D6FC881209B79AB /* ReplyLaterReminderView.swift in Sources */,
 				A6B605532E5FC5A2DF29CC9E /* RootView.swift in Sources */,
@@ -971,6 +989,7 @@
 				B4A61C19CD723FD2B3345367 /* SuppressionsSettingsView.swift in Sources */,
 				5510A17A43A4EE36F6302D8D /* SwipeActionPreferences.swift in Sources */,
 				3DC940505BA0CE48B10AD127 /* SwipeSettingsView.swift in Sources */,
+				C08E7A655C0D45AF1FD4E902 /* TagsSettingsView.swift in Sources */,
 				7B7D0DD6B5B25BDC18FE5ED1 /* TextFlowLayout.swift in Sources */,
 				D1A18F95D1ED4AF08CF9EC6E /* ThemeController.swift in Sources */,
 				735E1C05C28F1E399465E7C4 /* ThemeMode.swift in Sources */,
@@ -990,6 +1009,7 @@
 				D4EF86138702120973282AA5 /* PasskeysTwoFactorTests.swift in Sources */,
 				11EBC9EC88AD1BADA1516DE8 /* PrivateEmailIdentitiesTests.swift in Sources */,
 				0DF13F17817F75C157DDDDD0 /* PrivateEmailMatchingTests.swift in Sources */,
+				CF1F67639799F07F84B17528 /* ReauthTests.swift in Sources */,
 				D67DB291172947377991E844 /* ReplyLaterReminderTests.swift in Sources */,
 				FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */,
 				71896C3C5A158905BB63AA41 /* ThreadNotesTests.swift in Sources */,

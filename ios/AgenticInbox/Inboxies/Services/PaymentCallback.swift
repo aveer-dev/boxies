@@ -1,12 +1,15 @@
 import Foundation
 
 /// Classifies the Stripe checkout return deep link. The Worker sends
-/// `inboxies://onboarding/domain-ready?domain=…&session_id=…[&token=…&mailbox_id=…]`
-/// on success and `inboxies://onboarding/cancelled?domain=…` when the buyer backs out.
+/// `inboxies://onboarding/domain-ready?domain=…[&code=…]` on success. `code` is a
+/// one-time, 60-second exchange code (never a session token): the app trades it,
+/// with the checkout session id it started, at `POST /api/v1/auth/exchange`.
+/// The link never carries the session id, so an app that intercepts it can't redeem it.
+/// `inboxies://onboarding/cancelled?domain=…` is sent when the buyer backs out.
 /// Renewals of a domain whose subscription ended come back on
 /// `inboxies://billing/renewed?domain=…` and `inboxies://billing/renew-cancelled?domain=…`.
 enum PaymentCallback: Equatable {
-    case domainReady(domain: String?, sessionId: String?, token: String?, mailboxId: String?)
+    case domainReady(domain: String?, code: String?)
     case cancelled(domain: String?)
     /// Renewal paid; the webhook restores the domain within seconds.
     case renewed(domain: String?)
@@ -48,12 +51,7 @@ enum PaymentCallback: Equatable {
 
         switch route {
         case "domain-ready":
-            return .domainReady(
-                domain: value("domain"),
-                sessionId: value("session_id"),
-                token: value("token"),
-                mailboxId: value("mailbox_id")
-            )
+            return .domainReady(domain: value("domain"), code: value("code"))
         case "cancelled", "canceled":
             return .cancelled(domain: value("domain"))
         default:

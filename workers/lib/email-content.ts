@@ -7,6 +7,7 @@
  * stay under the 2 MB limit and the mailbox DO stays under the storage cap.
  * SQLite keeps metadata + a short snippet only.
  */
+import { plainPreviewText } from "../../shared/quoted-text";
 import type { Env } from "../types";
 
 export const SNIPPET_MAX_LENGTH = 300;
@@ -23,37 +24,18 @@ export function emailContentKeys(emailId: string): string[] {
 	return [emailBodyKey(emailId), emailRawKey(emailId)];
 }
 
-/** First N characters of the stored body — matches historical SUBSTR(body, 1, 300). */
-const NAMED_ENTITIES: Record<string, string> = {
-	nbsp: " ",
-	amp: "&",
-	lt: "<",
-	gt: ">",
-	quot: '"',
-	apos: "'",
-	zwnj: "",
-	zwj: "",
-};
-
-/** Plain-text preview of an HTML body: no markup, CSS, or entities. */
+/**
+ * Plain-text preview of an HTML body: no markup, CSS, entities, or invisible
+ * preheader padding (`&shy;`, `&zwnj;`, `&#847;`… — AVE-180). Entities are
+ * decoded after tags are stripped, so `&lt;b&gt;` stays as visible text.
+ */
 function htmlToPreviewText(html: string): string {
-	return html
-		.replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-		.replace(/<!--[\s\S]*?-->/g, " ")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
-			if (entity[0] === "#") {
-				const code =
-					entity[1] === "x" || entity[1] === "X"
-						? parseInt(entity.slice(2), 16)
-						: parseInt(entity.slice(1), 10);
-				return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : " ";
-			}
-			return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
-		})
-		.replace(/[\u200b-\u200d\u034f\u00ad]/g, "")
-		.replace(/\s+/g, " ")
-		.trim();
+	return plainPreviewText(
+		html
+			.replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+			.replace(/<!--[\s\S]*?-->/g, " ")
+			.replace(/<[^>]+>/g, " "),
+	);
 }
 
 /**

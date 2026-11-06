@@ -11,7 +11,9 @@ import {
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { NavLink, useNavigate, useParams } from "react-router";
+import { NavLink, useNavigate } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
+import { mailboxRefFor } from "shared/mailbox-url";
 import { Tip } from "~/components/IconButton";
 import { AddMailboxDialog } from "~/components/AddMailboxDialog";
 import { folderPath } from "~/hooks/useMailNavigation";
@@ -32,7 +34,7 @@ function formatCount(count: number) {
 
 /** Column 1 — every mailbox the user can open ("Inboxies"). */
 export default function AccountsColumn() {
-	const { mailboxId: activeMailboxId } = useParams<{ mailboxId: string }>();
+	const activeMailboxId = useMailboxId();
 	const navigate = useNavigate();
 	const { data: mailboxes = [], isLoading, refetch } = useMailboxes();
 	const mailboxIds = mailboxes.map((m) => m.id);
@@ -124,7 +126,7 @@ export default function AccountsColumn() {
 						return (
 							<NavLink
 								key={mailbox.id}
-								to={folderPath(mailbox.id, "inbox")}
+								to={folderPath(mailboxRefFor(mailbox.id, mailboxIds) ?? "", "inbox")}
 								aria-current={isActive ? "page" : undefined}
 								data-current={isActive}
 								className={`relative flex items-center gap-3 rounded-lg px-2.5 py-2 transition-colors duration-150 ${
@@ -162,8 +164,9 @@ export default function AccountsColumn() {
 				isAdmin={Boolean(me?.isAdmin)}
 				onSuccess={async (mailboxId) => {
 					setIsAddOpen(false);
-					await refetch();
-					navigate(folderPath(mailboxId, "inbox"));
+					const { data: fresh = [] } = await refetch();
+					const ref = mailboxRefFor(mailboxId, fresh.map((m) => m.id));
+					navigate(ref === null ? "/" : folderPath(ref, "inbox"));
 				}}
 			/>
 		</ColumnPane>
