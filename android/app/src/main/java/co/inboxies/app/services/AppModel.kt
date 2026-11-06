@@ -2118,12 +2118,16 @@ class AppModel {
                 val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
                     html,
                     text,
-                    form.attachments.map { it.size },
+                    form.allAttachmentBytes(),
                 )
                 if (estimated > co.inboxies.app.util.OutboundLimits.MAX_MESSAGE_BYTES) {
                     error(co.inboxies.app.util.OutboundLimits.SIZE_ERROR)
                 }
-                val payload = form.toSendPayload()
+                // The original's files go out like any other attachment (AVE-181).
+                val forwarded = form.loadForwardedAttachments { mailbox, email, attachment ->
+                    ApiClient.shared.getAttachment(mailbox, email, attachment)
+                }
+                val payload = form.toSendPayload(forwarded)
                 when (form.mode) {
                     ComposeMode.Reply, ComposeMode.ReplyAll, ComposeMode.Forward ->
                         sendReplyOrForward(form, mailboxId, payload)

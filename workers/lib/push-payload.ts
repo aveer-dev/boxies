@@ -34,19 +34,25 @@ function stripToPreview(snippet: string | null | undefined, maxLength = 140): st
 /**
  * Build notification copy: sender stays as title (caller); description is the
  * body preview, with subject kept visible via APNs subtitle / FCM first line.
+ * A one-time code (AVE-175) leads the body as "Code 482913 · …" so it can be
+ * read without opening the mail; on FCM it leads the first line, which is
+ * what a collapsed Android notification shows.
  */
 export function composePushAlert(options: {
 	subject?: string | null;
 	snippet?: string | null;
+	oneTimeCode?: string | null;
 }): PushAlertCopy {
 	const subject = (options.subject ?? "").trim() || "(No subject)";
 	const preview = stripToPreview(options.snippet);
+	const code = options.oneTimeCode?.trim();
+	const lead = (text: string) => (code ? `Code ${code} · ${text}` : text);
 	if (!preview) {
-		return { body: subject, fcmBody: subject };
+		return { body: lead(subject), fcmBody: lead(subject) };
 	}
 	return {
 		subtitle: subject,
-		body: preview,
-		fcmBody: `${subject}\n${preview}`,
+		body: lead(preview),
+		fcmBody: `${lead(subject)}\n${preview}`,
 	};
 }

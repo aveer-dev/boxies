@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import type { EmailInvite, EmailOtp } from "shared/mail-cards";
+
 export interface SignatureSettings {
 	enabled: boolean;
 	text: string;
@@ -471,6 +473,16 @@ export interface Email {
 	/** Alias still active and unexpired; false means replies are refused. */
 	alias_active?: boolean | null;
 	attachments?: Attachment[];
+	/**
+	 * One-time code to offer for copy (AVE-175). Detail/thread payloads only;
+	 * null in Spam, for senders that failed auth, and on mail without one.
+	 */
+	otp?: EmailOtp | null;
+	/**
+	 * Calendar invite from a text/calendar part or .ics attachment (AVE-175).
+	 * Detail/thread payloads only; same gating as `otp`.
+	 */
+	invite?: EmailInvite | null;
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)
 	thread_count?: number;
@@ -519,6 +531,8 @@ export interface AgentConversation {
 	updatedAt: string;
 	lastMessagePreview?: string | null;
 }
+
+export type { EmailInvite, EmailInviteOrganizer, EmailOtp } from "shared/mail-cards";
 
 export type {
 	InboxDigest,

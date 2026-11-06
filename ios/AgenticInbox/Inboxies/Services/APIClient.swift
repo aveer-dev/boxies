@@ -1308,6 +1308,22 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Server-composed reply (AVE-140): the Worker fills To, the thread's sender and the
+    /// Re: subject from the original. Used by the notification Reply action.
+    func quickReply(
+        mailboxId: String,
+        emailId: String,
+        text: String,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/quick-reply",
+            method: "POST",
+            body: ["text": text, "quote_time_zone": TimeZone.current.identifier],
+            headers: Self.idempotencyHeaders(idempotencyKey)
+        )
+    }
+
     func forwardEmail(
         mailboxId: String,
         emailId: String,
@@ -1355,9 +1371,16 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func getAttachment(mailboxId: String, emailId: String, attachmentId: String) async throws -> Data {
-        let (data, _) = try await requestData(
-            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)"
+    /// `bearerToken` pins the download to a session (a forward sent after sign-out in the undo window).
+    func getAttachment(mailboxId: String, emailId: String, attachmentId: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, _) = try await perform(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)",
+            method: "GET",
+            query: [:],
+            body: nil,
+            authed: true,
+            bearerToken: bearerToken,
+            headers: [:]
         )
         return data
     }

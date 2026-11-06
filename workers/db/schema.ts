@@ -68,6 +68,10 @@ export const emails = sqliteTable("emails", {
 	 * 0 = not, NULL = not computed yet (migration 45). Drives needs_reply.
 	 */
 	direct_mail: integer("direct_mail"),
+	/** One-time code found at receive time (workers/lib/one-time-code.ts; migration 46). */
+	otp_code: text("otp_code"),
+	/** Parsed calendar invite, JSON of shared/mail-cards.ts EmailInvite (migration 46). */
+	calendar_invite: text("calendar_invite"),
 });
 
 export const attachments = sqliteTable("attachments", {

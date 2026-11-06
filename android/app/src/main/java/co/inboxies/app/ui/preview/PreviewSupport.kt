@@ -4,6 +4,7 @@ import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
+import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
@@ -693,6 +694,37 @@ object PreviewSupport {
         starred = false,
         body = PROMO_HTML,
         snippet = "Grab everything for spooky season in one easy order.",
+    )
+
+    /**
+     * AVE-181: a mail with two files and one inline `cid:` logo, so the forward composer shows
+     * "Include 2 attachments" (the logo doesn't count).
+     * iOS twin: `PreviewSupport.forwardAttachmentsEmail` (`-previewMailbox -previewForwardAttachments`).
+     */
+    fun forwardAttachmentsEmail(you: String = addr("you")): Email = Email(
+        id = "preview-forward-attachments",
+        folderId = FolderIds.INBOX,
+        subject = "Q3 board pack",
+        sender = "maya@northwind.example",
+        senderName = "Maya Chen",
+        recipient = you,
+        date = "2026-11-03T15:20:00.000Z",
+        read = true,
+        starred = false,
+        body = "<p><img src=\"cid:logo@northwind\" width=\"96\" alt=\"Northwind\"></p>" +
+            "<p>Hi! The board pack and the revenue sheet are attached. Shout if anything looks off.</p><p>Maya</p>",
+        snippet = "Hi! The board pack and the revenue sheet are attached.",
+        attachments = listOf(
+            Attachment(id = "att-pack", filename = "Q3 board pack.pdf", mimetype = "application/pdf", size = 1_240_000, disposition = "attachment"),
+            Attachment(
+                id = "att-sheet",
+                filename = "Revenue by region.xlsx",
+                mimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                size = 86_000,
+                disposition = "attachment",
+            ),
+            Attachment(id = "att-logo", filename = "logo.png", mimetype = "image/png", size = 4_200, contentId = "<logo@northwind>", disposition = "inline"),
+        ),
     )
 
     private val PROMO_HTML = """

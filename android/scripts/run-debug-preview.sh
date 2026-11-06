@@ -25,6 +25,7 @@
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
+#   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
 #   ./scripts/run-debug-preview.sh notesDetail  # thread with a draggable sticky + inline notes
 #   ./scripts/run-debug-preview.sh passwordSignIn
@@ -115,6 +116,7 @@ case "$mode" in
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
+  forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
   notesDetail|NotesDetail|previewNotesDetail) extra=previewNotesDetail; label=notesDetail ;;
   aiUsage|AiUsage|ai-usage|previewAiUsage) extra=previewAiUsage; label=aiUsage ;;
@@ -129,12 +131,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,58p' "$0"
+    sed -n '2,63p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | spam | newsletter | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
     exit 1
     ;;
 esac

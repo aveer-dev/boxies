@@ -90,6 +90,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Newsletter("newsletter", "previewNewsletter"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
+    /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */
+    ForwardAttachments("forwardAttachments", "previewForwardAttachments"),
     /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
     Notes("notes", "previewNotes"),
     /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */

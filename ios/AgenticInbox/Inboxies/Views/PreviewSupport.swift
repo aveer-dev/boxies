@@ -248,6 +248,31 @@ enum PreviewSupport {
         snippet: "Grab everything for spooky season in one easy order."
     )
 
+    /// `-previewMailbox -previewForwardAttachments` (AVE-181): forward a mail with two files and
+    /// one inline `cid:` logo, so the composer shows "Include 2 attachments" (the logo doesn't count).
+    /// Android twin: `PreviewSupport.forwardAttachmentsEmail` (`run-debug-preview.sh forwardAttachments`).
+    static let forwardAttachmentsEmail: Email = {
+        var email = Email(
+            id: "preview-forward-attachments",
+            folderId: "inbox",
+            subject: "Q3 board pack",
+            sender: "maya@northwind.example",
+            senderName: "Maya Chen",
+            recipient: "you@inboxies.email",
+            date: "2026-11-03T15:20:00.000Z",
+            read: true,
+            starred: false,
+            body: #"<p><img src="cid:logo@northwind" width="96" alt="Northwind"></p><p>Hi! The board pack and the revenue sheet are attached. Shout if anything looks off.</p><p>Maya</p>"#,
+            snippet: "Hi! The board pack and the revenue sheet are attached."
+        )
+        email.attachments = [
+            Attachment(id: "att-pack", filename: "Q3 board pack.pdf", mimetype: "application/pdf", size: 1_240_000, disposition: "attachment"),
+            Attachment(id: "att-sheet", filename: "Revenue by region.xlsx", mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 86_000, disposition: "attachment"),
+            Attachment(id: "att-logo", filename: "logo.png", mimetype: "image/png", size: 4_200, contentId: "<logo@northwind>", disposition: "inline"),
+        ]
+        return email
+    }()
+
     static let promoHTML = """
         <html><head><style type="text/css">body{margin:0;padding:0} .mso td{padding:0}</style></head><body>
         <div style="display:none;max-height:0;overflow:hidden;mso-hide:all">Grab everything for spooky season in one easy order.&#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy;</div>
@@ -942,7 +967,10 @@ struct PreviewMailboxRoot: View {
             .environment(auth)
             .environment(app)
             .task {
-                if ProcessInfo.processInfo.arguments.contains("-previewReplyQuote") {
+                if ProcessInfo.processInfo.arguments.contains("-previewForwardAttachments") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .forward, original: PreviewSupport.forwardAttachmentsEmail)
+                } else if ProcessInfo.processInfo.arguments.contains("-previewReplyQuote") {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     await app.startCompose(mode: .reply, original: PreviewSupport.promoEmail)
                 } else if ProcessInfo.processInfo.arguments.contains("-previewCompose") {

@@ -161,6 +161,7 @@ object PreviewHarness {
             PreviewMode.Spam,
             PreviewMode.Newsletter,
             PreviewMode.ReplyQuote,
+            PreviewMode.ForwardAttachments,
             PreviewMode.Notes,
             PreviewMode.NotesDetail,
             PreviewMode.ServiceEnded,
@@ -300,6 +301,7 @@ fun PreviewRoot(
         PreviewMode.Spam,
         PreviewMode.Newsletter,
         PreviewMode.ReplyQuote,
+        PreviewMode.ForwardAttachments,
         PreviewMode.Notes,
         PreviewMode.NotesDetail,
         PreviewMode.ServiceEnded,
@@ -310,6 +312,12 @@ fun PreviewRoot(
                 LaunchedEffect(Unit) {
                     delay(400)
                     appModel.startCompose(ComposeMode.Reply, original = PreviewSupport.promoEmail())
+                }
+            }
+            if (mode == PreviewMode.ForwardAttachments) {
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    appModel.startCompose(ComposeMode.Forward, original = PreviewSupport.forwardAttachmentsEmail())
                 }
             }
             HomeShellView(

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        MailNotificationActions.register()
         return true
     }
 
@@ -78,6 +79,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        // Mail actions (Archive, Mark read, Reply Later, Reply, Spam) run in the
+        // background; finish the handler only once the request is done.
+        if MailNotificationAction(rawValue: response.actionIdentifier) != nil {
+            Task {
+                await MailNotificationActions.handle(response: response)
+                completionHandler()
+            }
+            return
+        }
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
+            completionHandler()
+            return
+        }
         let userInfo = response.notification.request.content.userInfo
         Task { @MainActor in
             PushNotificationManager.shared.handleNotificationTap(userInfo: userInfo)

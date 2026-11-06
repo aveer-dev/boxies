@@ -56,6 +56,8 @@ import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-ag
 import { getPlanTier, tryConsumeAiQuota } from "./lib/ai-quota";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
+import { detectMailCards } from "./lib/mail-cards";
+import { mailCardsAllowed } from "../shared/mail-cards";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import type { AiSummaryResponse } from "../shared/ai-summaries";
@@ -2259,6 +2261,13 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			recipients: [...allRecipients, ...ccRecipients],
 			ownAddresses: [message.to, mailboxId, routedAliasMeta?.aliasEmail],
 		};
+		// Reader cards (AVE-175): one-time code and calendar invite. Never for
+		// senders that failed authentication; Spam is gated where they're read
+		// and pushed, since the folder can still change.
+		const authTier = storedAuthTier(auth);
+		const mailCards = mailCardsAllowed({ auth_tier: authTier })
+			? detectMailCards(parsedEmail)
+			: { otp: null, invite: null };
 		const inboundEmail = {
 			id: messageId, subject: parsedEmail.subject || "",
 			sender: fromAddress, sender_name: senderName, recipient,
@@ -2273,9 +2282,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			// Why it was filed where it was (AVE-94); the reason is set below,
 			// once the folder is decided.
 			classification_reason: classification.reason as string | null,
-			auth_tier: storedAuthTier(auth),
+			auth_tier: authTier,
 			matched_rule_id: null as string | null,
 			direct_mail: directMailFlag(directMailInput),
+			otp_code: mailCards.otp?.code ?? null,
+			calendar_invite: mailCards.invite,
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -2536,6 +2547,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 					const alert = composePushAlert({
 						subject: parsedEmail.subject,
 						snippet: inboundEmail.snippet,
+						oneTimeCode: mailCardsAllowed({ folder_id: filedFolder, auth_tier: authTier })
+							? inboundEmail.otp_code
+							: null,
 					});
 					const result = await dispatchPushToDevices(env, stub as any, {
 						title: senderName || fromAddress,
