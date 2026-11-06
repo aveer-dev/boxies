@@ -47,6 +47,8 @@ import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
 import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
+import { decodeStoredInvite } from "../lib/calendar-invite";
+import { mailCardsAllowed, type EmailInvite, type EmailOtp } from "../../shared/mail-cards";
 import {
 	buildInboxDigest,
 	type DigestEmailRow,
@@ -324,6 +326,10 @@ interface EmailData {
 	 * computes it from the stored row (0 for Sent / Draft).
 	 */
 	direct_mail?: 0 | 1 | null;
+	/** One-time code found at receive time (AVE-175); inbound only. */
+	otp_code?: string | null;
+	/** Parsed calendar invite (AVE-175), stored as JSON; inbound only. */
+	calendar_invite?: EmailInvite | null;
 }
 
 interface AttachmentData {
@@ -1015,6 +1021,26 @@ export class MailboxDO extends DurableObject<Env> {
 		};
 	}
 
+	/**
+	 * Reader cards (AVE-175, shared/mail-cards.ts): turn the stored
+	 * `otp_code` / `calendar_invite` columns into `otp` / `invite`, and drop
+	 * both while the message sits in Spam or its sender failed auth.
+	 */
+	#withMailCards<T extends { otp_code?: unknown; calendar_invite?: unknown; folder_id?: unknown; auth_tier?: unknown }>(
+		email: T,
+	): Omit<T, "otp_code" | "calendar_invite"> & { otp: EmailOtp | null; invite: EmailInvite | null } {
+		const { otp_code, calendar_invite, ...rest } = email;
+		const allowed = mailCardsAllowed({
+			folder_id: typeof email.folder_id === "string" ? email.folder_id : null,
+			auth_tier: typeof email.auth_tier === "string" ? email.auth_tier : null,
+		});
+		return {
+			...rest,
+			otp: allowed && typeof otp_code === "string" && otp_code ? { code: otp_code } : null,
+			invite: allowed ? decodeStoredInvite(calendar_invite) : null,
+		};
+	}
+
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
 
 	async getEmails(options: GetEmailsOptions = {}) {
@@ -1520,7 +1546,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return this.#withDecodedAuth({
+		return this.#withMailCards(this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
 			one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1531,7 +1557,7 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments.map(withAttachmentRisk),
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
-		});
+		}));
 	}
 
 	/**
@@ -1598,7 +1624,7 @@ export class MailboxDO extends DurableObject<Env> {
 		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
 
 		return await Promise.all(
-			emailRows.map(async (email) => this.#withDecodedAuth({
+			emailRows.map(async (email) => this.#withMailCards(this.#withDecodedAuth({
 				...email,
 				...this.#aliasFields(email.alias_id),
 				one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1608,7 +1634,7 @@ export class MailboxDO extends DurableObject<Env> {
 				reply_later: !!email.reply_later,
 				attachments: (attachmentsByEmail.get(email.id) || []).map(withAttachmentRisk),
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
-			})),
+			}))),
 		);
 	}
 
@@ -3480,6 +3506,8 @@ export class MailboxDO extends DurableObject<Env> {
 					source: email.source ?? null,
 					idempotency_key: idempotencyKey,
 					direct_mail: directMail,
+					otp_code: email.otp_code ?? null,
+					calendar_invite: email.calendar_invite ? JSON.stringify(email.calendar_invite) : null,
 				})
 				.run();
 		});
