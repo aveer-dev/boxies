@@ -29,7 +29,7 @@ export type Theme = "light" | "dark";
 
 export const stills: Record<StillName, { alt: string }> = {
 	inbox: {
-		alt: "The Inbox on iPhone: New holds three unread threads, from Jordan Hale, Morgan Lee and Sam Chen, Seen holds the rest, and a banner says one first-time sender is waiting in the Screener.",
+		alt: "The Inbox on iPhone: a row at the top says three first-time senders are waiting to be screened, New holds unread threads from Jordan Hale and Sam Chen, and Seen holds the rest.",
 	},
 	detail: {
 		alt: "A thread on iPhone: “Quarterly planning notes” from Jordan Hale, tagged Inbox, Unread and 3 messages, with a proposed agenda of Q4 priorities, hiring and a launch checklist.",
@@ -41,10 +41,10 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "Search on iPhone: the query “in:inbox review” finds Sam Chen’s “Design review tomorrow” and Pat Legal’s “Can you review the contract?”, with “review” in bold, and offers to ask AI instead. Sample mailbox; the results are simulated offline.",
 	},
 	screener: {
-		alt: "An email from a first-time sender, Dana Whitfield, “Guest spot on Small Studio Talks?”, with the note “New sender — approve where their mail should go, or screen them out privately.” and Accept and Decline buttons.",
+		alt: "An email from a first-time sender, Acme Outreach, “Quick intro from Acme”, with the note “New sender — approve where their mail should go, or screen them out privately.” and Accept and Decline buttons.",
 	},
 	"screener-list": {
-		alt: "The Screener on iPhone: one unread message from Dana Whitfield, with Accept and Decline buttons.",
+		alt: "The Screening room on iPhone: three first-time senders, Acme Outreach, Maya Patel and Northwind, each with Accept and Decline buttons.",
 	},
 	"reply-later": {
 		alt: "Reply Later on iPhone: two threads to reply to, from Alex Rivera and Pat Legal.",
@@ -62,13 +62,13 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "The Inboxies welcome screen on iPhone: “Your Personal email app” and a round button to continue.",
 	},
 	"get-started": {
-		alt: "“Welcome to Inboxies” on iPhone with two choices: Personal Address, an instant @inboxies.email address, and Custom Domain, set up through Cloudflare DNS.",
+		alt: "“Welcome to Inboxies” on iPhone with two choices: Personal Address, an instant @inboxies.email address, and Custom Domain, for an address on a domain you own.",
 	},
 	"domain-admin": {
 		alt: "Domain Admin on iPhone: DNS & Domain Configuration, a Create email button, and the domain’s mailboxes you@, ops@ and pending@.",
 	},
 	"sign-in-methods": {
-		alt: "Sign-in methods on iPhone: the methods connected to you@inboxies.email, a form to change the password, and Link another device.",
+		alt: "Sign-in & recovery on iPhone: a password and Apple connected, Change password, a saved passkey with Add a passkey, and two-factor authentication.",
 	},
 };
 
@@ -86,9 +86,9 @@ export const clips: Record<ClipName, { dark: boolean; duration: number; still: S
 	},
 	"screener-flow": {
 		dark: true,
-		duration: 9.7,
+		duration: 6.4,
 		still: "screener-list",
-		alt: "On iPhone, the Inbox shows a banner for one first-time sender. In the Screener, Dana Whitfield waits with Accept and Decline; Accept offers Inbox, Promotions or Updates, and her email then appears in the Inbox.",
+		alt: "On iPhone, a row at the top of the Inbox says three first-time senders are waiting to be screened. It opens the Screening room, where each one has Accept and Decline, and Accept’s menu offers Inbox, Promotions or Updates.",
 	},
 	"reply-later": {
 		dark: false,
