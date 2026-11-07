@@ -17,6 +17,7 @@ material3 = "1.3.1"
 jsoup = "1.18.3"
 junit = "4.13.2"
 autofill = "1.3.0"
+glance = "1.1.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -45,6 +46,7 @@ firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-autofill = { module = "androidx.autofill:autofill", version.ref = "autofill" }
+androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

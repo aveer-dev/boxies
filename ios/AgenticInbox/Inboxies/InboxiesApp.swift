@@ -26,6 +26,12 @@ struct InboxiesApp: App {
             // Leaving the preview: the fixture identities go with it.
             Task { await PrivateEmailIdentities.removeAll() }
         }
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-previewWidgetData") {
+            // AVE-149: sample data for the real "Today's inbox" widget on the home screen.
+            let inboxZero = arguments.indices.contains(index + 1) && arguments[index + 1] == "zero"
+            InboxWidgetPublisher.publishPreviewData(inboxZero: inboxZero)
+        }
         #endif
     }
 

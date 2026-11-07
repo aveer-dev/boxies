@@ -95,8 +95,8 @@
       "name": "sign-in-methods",
       "light": "sign-in-methods-light.png",
       "dark": "sign-in-methods-dark.png",
-      "whatItShows": "Account sign-in methods: connected methods, change password, link a device.",
-      "alt": "Sign-in methods screen. Connected: you@inboxies.email for this session, and a password. Below are a note about connecting on this device, a Change password form with current, new and confirm fields and an Update password button, and a Link another device section."
+      "whatItShows": "Settings → Sign-in & recovery: connected methods, change password, passkeys, two-factor.",
+      "alt": "Sign-in & recovery screen. Connected: a password for you@inboxies.email and Apple, each with Disconnect. Below are Change password, a Passkeys section with Inboxies on iPhone (added Oct 1, 2026, synced) and Add a passkey, and Two-factor authentication with Authenticator app off."
     }
   ],
   "clips": [

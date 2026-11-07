@@ -1,6 +1,7 @@
 package co.inboxies.app
 
 import android.app.Application
+import android.content.res.Configuration
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -11,6 +12,7 @@ import co.inboxies.app.services.AutofillMailboxPreference
 import co.inboxies.app.services.LastMailboxPreference
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.SwipeActionPreferences
+import co.inboxies.app.widget.InboxWidgetPublisher
 
 class InboxiesApplication : Application() {
     lateinit var authStore: AuthStore
@@ -32,6 +34,8 @@ class InboxiesApplication : Application() {
         SwipeActionPreferences.init(this)
         AutofillMailboxPreference.init(this)
         LastMailboxPreference.init(this)
+        InboxWidgetPublisher.init(this)
+        lastNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
 
         // Live sync (SSE + 20 s poll) only while some activity is visible. ON_STOP is
         // debounced by ProcessLifecycleOwner, so rotations don't drop the stream.
@@ -46,5 +50,17 @@ class InboxiesApplication : Application() {
                 }
             },
         )
+    }
+
+    private var lastNightMode = Configuration.UI_MODE_NIGHT_UNDEFINED
+
+    /** The widget's bitmaps are drawn for light or dark; redraw it when the system flips. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val night = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        if (night != lastNightMode) {
+            lastNightMode = night
+            InboxWidgetPublisher.redraw()
+        }
     }
 }
