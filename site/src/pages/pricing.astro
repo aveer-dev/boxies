@@ -13,7 +13,6 @@ import PlanGrid from "../components/pricing/PlanGrid.astro";
 import PriceBreakdown from "../components/pricing/PriceBreakdown.astro";
 import PriceRule from "../components/pricing/PriceRule.astro";
 import PricingClose from "../components/pricing/PricingClose.astro";
-import SelfHostRow from "../components/pricing/SelfHostRow.astro";
 import { flags } from "../config";
 import { billing } from "../data/faqs";
 import { compare, limits, plans } from "../data/pricing";
@@ -34,7 +33,6 @@ const intro = flags.domainPurchaseLive
 	<PageIntro title="Pricing" description={intro} />
 
 	<PlanGrid plans={plans} />
-	<SelfHostRow />
 
 	{
 		flags.domainPurchaseLive && (

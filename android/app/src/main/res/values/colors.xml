@@ -3,4 +3,10 @@
     <color name="ic_launcher_background">#FFFFFF</color>
     <color name="splash_background">#FAFAFB</color>
     <color name="splash_icon_color">#1F1F24</color>
+    <!-- "Today's inbox" widget picker preview (AVE-150); InboxiesColors surface / ink / muted / line. -->
+    <color name="widget_preview_surface">#FFFFFF</color>
+    <color name="widget_preview_ink">#1F1F24</color>
+    <color name="widget_preview_muted">#73737A</color>
+    <color name="widget_preview_line">#E6E6EB</color>
+    <color name="widget_preview_back">#F3F3F5</color>
 </resources>

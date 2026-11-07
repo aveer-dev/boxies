@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Text for the "Today's inbox" widget (AVE-150); Glance sets text, size and color.
+  Launchers inflate RemoteViews in a restricted context, which skips app font
+  resources, so Inter only shows where the host allows it; textFontWeight keeps the
+  weight on the system sans fallback.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_text"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:fontFamily="@font/inter_regular"
+    android:textFontWeight="400"
+    android:includeFontPadding="false"
+    android:maxLines="1" />

@@ -54,6 +54,9 @@ struct RootView: View {
                             .task(id: pushManager.pendingDeepLink) {
                                 await consumePendingDeepLinkIfReady()
                             }
+                            .task(id: pushManager.pendingInboxLink) {
+                                await consumePendingDeepLinkIfReady()
+                            }
                             .onChange(of: app.isMailboxLoading) { _, loading in
                                 if !loading {
                                     Task { await consumePendingDeepLinkIfReady() }
@@ -111,6 +114,16 @@ struct RootView: View {
         .font(.inter(size: 14))
         .onOpenURL { url in
             if GoogleSignInFlow.handle(url) { return }
+            // "Today's inbox" widget taps (AVE-149) take the notification-tap path.
+            if let link = InboxWidgetLink.parse(url) {
+                switch link {
+                case let .thread(mailboxId, threadId):
+                    pushManager.pendingDeepLink = PushDeepLink(mailboxId: mailboxId, emailId: threadId, folderId: "inbox")
+                case let .inbox(mailboxId):
+                    pushManager.pendingInboxLink = PendingInboxLink(mailboxId: mailboxId)
+                }
+                return
+            }
             if let token = Self.inviteToken(from: url) {
                 pendingInviteToken = token
                 return
@@ -171,8 +184,12 @@ struct RootView: View {
     private func consumePendingDeepLinkIfReady() async {
         guard auth.isAuthenticated,
               !app.isMailboxLoading,
-              !app.mailboxes.isEmpty,
-              let link = pushManager.pendingDeepLink else { return }
+              !app.mailboxes.isEmpty else { return }
+        if let inbox = pushManager.pendingInboxLink {
+            pushManager.pendingInboxLink = nil
+            await app.openInboxFromWidget(mailboxId: inbox.mailboxId)
+        }
+        guard let link = pushManager.pendingDeepLink else { return }
         pushManager.pendingDeepLink = nil
         await app.openEmailFromNotification(
             mailboxId: link.mailboxId,
