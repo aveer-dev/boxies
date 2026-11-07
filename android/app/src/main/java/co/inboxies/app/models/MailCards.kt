@@ -467,6 +467,158 @@ data class CalendarInsert(
 
 // endregion
 
+// region Free/busy (AVE-206)
+
+/**
+ * Another event on the phone's calendars (CalendarContract instances), reduced to
+ * what free/busy needs. iOS twin: `CalendarBusyEvent` in `MailCards.swift`.
+ */
+data class CalendarBusyEvent(
+    val title: String,
+    val beginMillis: Long,
+    val endMillis: Long,
+    val allDay: Boolean = false,
+    /** Availability "free" (transparent): it doesn't block the time. */
+    val showsAsFree: Boolean = false,
+    /** You declined it. */
+    val declined: Boolean = false,
+    val cancelled: Boolean = false,
+)
+
+/** Whether you're free for an invite, read from the phone's own calendars. */
+sealed interface InviteAvailability {
+    val label: String
+
+    object Free : InviteAvailability {
+        override val label = "You\u2019re free"
+    }
+
+    /** The earliest overlapping event, plus how many more overlap. */
+    data class Conflict(val title: String, val others: Int) : InviteAvailability {
+        override val label: String
+            get() = if (others > 0) "Conflicts with $title +$others more" else "Conflicts with $title"
+    }
+
+    /** The invite itself is already on a calendar (same title, same start and end). */
+    object InCalendar : InviteAvailability {
+        override val label = "In your calendar"
+    }
+
+    /** Half-open millis span to check. */
+    data class Window(val beginMillis: Long, val endMillis: Long)
+
+    companion object {
+        /**
+         * The span to check: timed, not cancelled. All-day invites are skipped: an
+         * all-day event rarely means "busy all day", so free/busy would mostly mislead.
+         * An invite without an end counts as one hour, like the event it adds.
+         */
+        fun window(invite: EmailInvite, zone: ZoneId = ZoneId.systemDefault()): Window? {
+            if (invite.cancelled) return null
+            val span = InviteTime.span(invite, zone) ?: return null
+            if (span.allDay) return null
+            val begin = span.start.toInstant().toEpochMilli()
+            val end = (span.end ?: span.start.plusHours(1)).toInstant().toEpochMilli()
+            return if (end > begin) Window(begin, end) else null
+        }
+
+        /**
+         * Busy, timed events that overlap the invite. Free (transparent), declined,
+         * cancelled and all-day events don't count. Only the first occurrence of a
+         * repeating invite is checked. Null when the invite has no window to check.
+         */
+        fun check(
+            invite: EmailInvite,
+            events: List<CalendarBusyEvent>,
+            zone: ZoneId = ZoneId.systemDefault(),
+        ): InviteAvailability? {
+            val window = window(invite, zone) ?: return null
+            val inviteTitle = normalized(invite.displayTitle)
+            val blocking = mutableListOf<CalendarBusyEvent>()
+            for (event in events) {
+                if (event.cancelled || event.declined || event.showsAsFree || event.allDay) continue
+                // Half-open overlap: back-to-back meetings don't conflict.
+                val overlaps = (event.beginMillis < window.endMillis && window.beginMillis < event.endMillis) ||
+                    (event.beginMillis == event.endMillis && event.beginMillis == window.beginMillis)
+                if (!overlaps) continue
+                if (event.beginMillis == window.beginMillis && event.endMillis == window.endMillis &&
+                    normalized(event.title) == inviteTitle
+                ) {
+                    return InCalendar
+                }
+                blocking += event
+            }
+            val first = blocking.minWithOrNull(compareBy<CalendarBusyEvent> { it.beginMillis }.thenBy { it.title })
+                ?: return Free
+            val title = first.title.trim().ifEmpty { "another event" }
+            return Conflict(title, blocking.size - 1)
+        }
+
+        private fun normalized(title: String) = title.trim().lowercase()
+    }
+}
+
+/**
+ * Columns for writing the invite straight into a calendar (`CalendarContract.Events`).
+ * All-day events are stored at UTC midnights with an exclusive end, and a repeating
+ * event needs DURATION instead of DTEND, as the provider requires.
+ */
+data class CalendarEventValues(
+    val title: String,
+    val dtStart: Long,
+    val dtEnd: Long?,
+    val duration: String?,
+    val allDay: Boolean,
+    val timezone: String,
+    val location: String?,
+    val description: String?,
+    val rrule: String?,
+) {
+    companion object {
+        fun of(invite: EmailInvite, zone: ZoneId = ZoneId.systemDefault()): CalendarEventValues? {
+            val insert = CalendarInsert.of(invite, zone) ?: return null
+            val start: Long
+            val end: Long
+            val timezone: String
+            if (insert.allDay) {
+                val utc = ZoneId.of("UTC")
+                val first = Instant.ofEpochMilli(insert.beginMillis).atZone(zone).toLocalDate()
+                val lastExclusive = Instant.ofEpochMilli(insert.endMillis).atZone(zone).toLocalDate()
+                start = first.atStartOfDay(utc).toInstant().toEpochMilli()
+                end = lastExclusive.atStartOfDay(utc).toInstant().toEpochMilli()
+                timezone = "UTC"
+            } else {
+                start = insert.beginMillis
+                end = insert.endMillis
+                // Floating events stay on the viewer's wall clock; zoned ones keep the organizer's zone.
+                val organizerZone = invite.timezone
+                    ?.takeIf { !InviteTime.isFloating(invite.start) }
+                    ?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+                timezone = (organizerZone ?: if (InviteTime.isFloating(invite.start)) zone else ZoneId.of("UTC")).id
+            }
+            val repeating = insert.rrule != null
+            val duration = if (insert.allDay) {
+                "P${((end - start) / 86_400_000L).coerceAtLeast(1)}D"
+            } else {
+                "P${((end - start) / 1000L).coerceAtLeast(0)}S"
+            }
+            return CalendarEventValues(
+                title = insert.title,
+                dtStart = start,
+                dtEnd = if (repeating) null else end,
+                duration = if (repeating) duration else null,
+                allDay = insert.allDay,
+                timezone = timezone,
+                location = insert.location,
+                description = insert.description,
+                rrule = insert.rrule,
+            )
+        }
+    }
+}
+
+// endregion
+
 // region Which card the reader shows
 
 object MailCards {

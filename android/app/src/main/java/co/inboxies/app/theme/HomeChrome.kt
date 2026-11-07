@@ -189,6 +189,8 @@ object MailCardMetrics {
     val detailIconColumn: Dp = 16.dp
     /** Details sit under the title, past the icon column. */
     val detailIndent: Dp = 28.dp
+    /** The Invite card's calendar picker truncates long calendar names (AVE-206). */
+    val calendarNameMaxWidth: Dp = 120.dp
     /** How long "Copied" stays on the card. */
     const val copiedFeedbackMs: Long = 2_000L
     /** A copied code is cleared from the clipboard after this, if it is still ours. */

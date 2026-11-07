@@ -234,7 +234,10 @@ enum PreviewSupport {
     /// `-previewDetail -previewInvite` (AVE-176): calendar invite with a join link and a
     /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant,
     /// `-previewInviteAddress` for an in-person invite (address only, Directions),
-    /// `-previewInviteExpanded` to open the details.
+    /// `-previewInviteExpanded` to open the details. Add `-previewInviteFreeBusy
+    /// free|conflict|added|ask` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
+    /// "You're free", "Conflicts with Team sync +1 more", the "Added to Work · Undo"
+    /// toast, or the "Check availability" link before access.
     static func inviteEmail(cancelled: Bool, inPerson: Bool = false) -> Email {
         Email(
             id: "preview-invite",
