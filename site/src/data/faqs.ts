@@ -277,9 +277,9 @@ const everyday: Faq[] = [
 		claim: "roadmap",
 		hidden: !flags.webAppPublic,
 		a: [
-			"Yes. Press ? to see them all. On a selected email or the open message: C writes a new message, R replies, A replies to all, F forwards, E archives, # deletes, U marks read or unread, S stars and L adds it to Reply Later. ⌘K jumps to search, [ and ] move between columns, Esc closes the right-most one, and ⌘J opens the assistant; in an open message it drafts a reply. ⌘↵ sends a quick reply and ⇧⌘O moves it into the full composer. On Windows and Linux, use Ctrl for ⌘. Moving through mail with j and k isn’t built yet; it’s on the [roadmap](/roadmap).",
+			"Yes. Press ? to see them all. On a selected email or the open message: C writes a new message, R replies, A replies to all, F forwards, E archives, # deletes, U marks read or unread, S stars and L adds it to Reply Later. J and K move to the next or previous email. ⌘K jumps to search, [ and ] move between columns, Esc closes the right-most one, and ⌘J opens the assistant; in an open message it drafts a reply. ⌘↵ sends a quick reply and ⇧⌘O moves it into the full composer. On Windows and Linux, use Ctrl for ⌘.",
 		],
-		src: "AVE-28 1e535a7: app/lib/shortcuts.ts SHORTCUTS, ShortcutSheet.tsx (? overlay), useListShortcuts.ts / EmailPanel.tsx (focused row or open message); QuickReplyBar.tsx (⌘J, ⌘↵, ⇧⌘O); no j/k or / handler; RM#1 (6)",
+		src: "AVE-28 1e535a7: app/lib/shortcuts.ts SHORTCUTS, ShortcutSheet.tsx (? overlay), useListShortcuts.ts / EmailPanel.tsx (focused row or open message); QuickReplyBar.tsx (⌘J, ⌘↵, ⇧⌘O); AVE-202 nextThread/prevThread (J K); no / handler; RM#1 (6)",
 	},
 	{
 		id: "compose",

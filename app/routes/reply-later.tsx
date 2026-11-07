@@ -64,7 +64,10 @@ export default function ReplyLaterRoute() {
 		}, []),
 	);
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(emails, actions);
+	useListShortcuts(emails, actions, {
+		selectedId: emailId,
+		open: (email) => openEmail(email.id),
+	});
 
 	useEffect(() => {
 		setPage(1);
