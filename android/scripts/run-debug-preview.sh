@@ -17,6 +17,7 @@
 #   ./scripts/run-debug-preview.sh screenerList
 #   ./scripts/run-debug-preview.sh screenerUndo        # Screening room after Decline + Undo toast (AVE-159)
 #   ./scripts/run-debug-preview.sh screenerUndoAccept  # … after Accept → Promotions
+#   ./scripts/run-debug-preview.sh screenerReaderAccept # Reader kept open after Accept (AVE-182)
 #   ./scripts/run-debug-preview.sh domainDns
 #   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
@@ -120,6 +121,7 @@ case "$mode" in
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
   screenerUndo|ScreenerUndo|previewScreenerUndo) extra=previewScreenerUndo; label=screenerUndo ;;
   screenerUndoAccept|ScreenerUndoAccept|previewScreenerUndoAccept) extra=previewScreenerUndoAccept; label=screenerUndoAccept ;;
+  screenerReaderAccept|ScreenerReaderAccept|previewScreenerReaderAccept) extra=previewScreenerReaderAccept; label=screenerReaderAccept ;;
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
@@ -154,12 +156,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,71p' "$0"
+    sed -n '2,72p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

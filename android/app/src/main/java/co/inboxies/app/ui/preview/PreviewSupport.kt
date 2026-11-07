@@ -163,6 +163,24 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.ScreenerReaderAccept -> {
+                // Accept keeps the reader open (AVE-182): the first sender's mail left
+                // the room and the open message is filed to Promotions.
+                val queue = allEmails.filter { it.folderId == FolderIds.SCREENER }
+                val decided = queue.first()
+                val opened = decided.copy(folderId = "promotions", folderName = null)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = queue.filterNot { it.sender.equals(decided.sender, ignoreCase = true) },
+                    selectedTab = HomeTab.Folder(FolderIds.SCREENER),
+                    selectedEmail = opened,
+                    threadEmails = listOf(opened),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.ScreenerList, PreviewMode.ScreenerUndo, PreviewMode.ScreenerUndoAccept -> {
                 val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }.let { queue ->
                     // Undo modes: the first sender was just decided, so their rows are gone.
@@ -401,10 +419,12 @@ object PreviewSupport {
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
         )
-        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept) {
+        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept ||
+            mode == PreviewMode.ScreenerReaderAccept
+        ) {
             // Decision toast with Undo (AVE-159); the decided sender has left the room and its count.
             app.setScreenerQueueForPreview(app.emails.value)
-            val destination = if (mode == PreviewMode.ScreenerUndoAccept) "promotions" else null
+            val destination = if (mode == PreviewMode.ScreenerUndo) null else "promotions"
             app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
         }
         if (mode == PreviewMode.Toast) {

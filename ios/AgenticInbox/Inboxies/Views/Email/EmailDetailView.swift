@@ -297,6 +297,10 @@ struct EmailDetailView: View {
                 }
             }
         }
+        // The compact reader is a sheet, outside HomeShellView's `.tint(AppTheme.ink)`.
+        // Without this, pre-iOS 26 toolbars fall back to system blue (the iPad
+        // reading pane already inherits ink from HomeSplitLayout).
+        .tint(AppTheme.ink)
     }
 
     private var tagsRow: some View {

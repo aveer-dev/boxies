@@ -82,6 +82,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerUndo("screenerUndo", "previewScreenerUndo"),
     /** Same after Accept → Promotions (iOS `… -previewScreenerUndo -previewScreenerAccept`). */
     ScreenerUndoAccept("screenerUndoAccept", "previewScreenerUndoAccept"),
+    /** Reader left open after Accept → Promotions: Screener bar gone, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`, AVE-182). */
+    ScreenerReaderAccept("screenerReaderAccept", "previewScreenerReaderAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
