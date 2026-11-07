@@ -73,6 +73,11 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+		<string>waze</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -80,6 +85,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Inboxies uses the camera to attach photos to emails you send.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Inboxies adds events from invitations you receive to your calendar. It never reads your calendar.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Inter-Regular.ttf</string>
