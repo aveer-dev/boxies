@@ -4,8 +4,8 @@
 import { IOS_STATUS, flags } from "../config";
 import type { Platform } from "../data/types";
 
-export const PLATFORM_LABEL: Record<Platform, string> = { ios: "iPhone", android: "Android", web: "Web", chrome: "Chrome", mcp: "MCP clients" };
-const ORDER: Platform[] = ["ios", "android", "web", "chrome", "mcp"];
+export const PLATFORM_LABEL: Record<Platform, string> = { ios: "iPhone", android: "Android", web: "Web", chrome: "Chrome" };
+const ORDER: Platform[] = ["ios", "android", "web", "chrome"];
 
 /** Whether visitors can get this platform today. */
 export const isPublic = (p: Platform) =>

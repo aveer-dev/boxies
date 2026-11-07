@@ -121,6 +121,7 @@ dependencies {
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.autofill)
+    implementation(libs.androidx.glance.appwidget)
 
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play)

@@ -19,4 +19,12 @@
     <string name="autofill_creating_for">For %1$s</string>
     <string name="autofill_create_failed">Couldn’t create a private email</string>
     <string name="autofill_close">Close</string>
+
+    <!-- "Today's inbox" home-screen widget (AVE-150) -->
+    <string name="widget_today_inbox_label">Today\'s inbox</string>
+    <string name="widget_today_inbox_description">New mail as a deck of cards, or inbox zero.</string>
+    <string name="widget_preview_header">Inbox</string>
+    <string name="widget_preview_count" translatable="false">3</string>
+    <string name="widget_preview_sender" translatable="false">Maya Chen</string>
+    <string name="widget_preview_subject">Q3 roadmap: final draft for review</string>
 </resources>
