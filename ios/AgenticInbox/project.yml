@@ -44,6 +44,7 @@ targets:
       - package: GoogleSignIn
         product: GoogleSignIn
       - target: InboxiesCredentialProvider
+      - target: InboxiesWidget
     settings:
       groups:
         - deviceTarget
@@ -95,6 +96,40 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: true
         SKIP_INSTALL: true
         SWIFT_EMIT_LOC_STRINGS: true
+  # "Today's inbox" home-screen widget (AVE-149). Reads the snapshot the app writes to
+  # the App Group; never touches the network or the session token.
+  InboxiesWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: InboxiesWidget
+      # Shared with the app: snapshot store + deep links + › intent, the widget views and
+      # tokens (round 2 "Depth"), AppTheme, Inter.
+      - path: Inboxies/WidgetShared
+      - path: Inboxies/Shared
+      - path: Inboxies/Config/AppConfig.swift
+      - path: Inboxies/Theme/AppTheme.swift
+      - path: Inboxies/Theme/LiquidGlass.swift
+      - path: Inboxies/Views/WidgetDesign/InboxWidgetSnapshot.swift
+      - path: Inboxies/Views/WidgetDesign/InboxWidgetMock.swift
+      - path: Inboxies/Views/WidgetDesign/InboxWidgetDepth.swift
+      - path: Inboxies/Fonts
+        buildPhase: resources
+    settings:
+      groups:
+        - deviceTarget
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app.widget
+        INFOPLIST_FILE: InboxiesWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: InboxiesWidget/InboxiesWidget.entitlements
+        GENERATE_INFOPLIST_FILE: false
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
+        APPLICATION_EXTENSION_API_ONLY: true
+        SKIP_INSTALL: true
+        SWIFT_EMIT_LOC_STRINGS: true
+        # Shared widget views swap Liquid Glass for a flat fill (no live glass in widgets).
+        OTHER_SWIFT_FLAGS: "$(inherited) -DINBOXIES_WIDGET"
   InboxiesTests:
     type: bundle.unit-test
     platform: iOS
