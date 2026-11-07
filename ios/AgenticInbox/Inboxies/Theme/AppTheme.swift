@@ -158,11 +158,14 @@ enum AppTheme {
         /// Monospaced, semibold, tracked.
         static let code: CGFloat = 22
         static let codeTracking: CGFloat = 2
-        /// Buttons: system glass (iOS 26) / bordered (iOS 17–25), capsule, app tint.
-        static let buttonFont: CGFloat = 14
-        static let buttonMinHeight: CGFloat = 34
+        /// Buttons: system glass (iOS 26) / bordered (iOS 17–25), capsule, app tint,
+        /// `.controlSize(.small)`. Label matches `detail` so the buttons sit in balance
+        /// with the card's text; the visual capsule is ~28pt tall.
+        static let buttonFont: CGFloat = 13
         static let buttonSpacing: CGFloat = 8
-        static let iconSize: CGFloat = 13
+        static let iconSize: CGFloat = 11
+        /// Tappable height around the smaller capsule (HIG 44pt); extends into the card padding.
+        static let buttonHitHeight: CGFloat = 44
         /// The copied code expires from the clipboard after this long.
         static let clipboardExpiry: TimeInterval = 90
     }
