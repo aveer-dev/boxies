@@ -79,13 +79,13 @@ export default function SearchResultsRoute() {
 		}, []),
 	);
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(results, actions);
 
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
 	const handleOpen = (email: Email) => {
 		openEmail(email.id);
 		if (isUnread(email)) updateEmail.mutate({ mailboxId, id: email.id, data: { read: true } });
 	};
+	useListShortcuts(results, actions, { selectedId: emailId, open: handleOpen });
 	// Results carry folder_id plus folder_name (a display name). System folders
 	// show their name; custom folders show as #tags.
 	const folderLabel = (email: Email) => {

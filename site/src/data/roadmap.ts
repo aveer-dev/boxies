@@ -74,7 +74,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "recipients", group: "search-compose", name: "Recipient suggestions", status: "available", platforms: ["ios", "android", "web"], note: "From people you’ve emailed.", src: "FSW#supporting-features" },
 	{ id: "web-workspace", group: "search-compose", name: "Columns on the web", status: "available", platforms: ["web"], note: "Mailboxes, folders, list and message side by side, with ⌘K search and a quick-reply box.", landing: true, src: "RM#1 (5); dev 87720b1/#53 (routes.ts nested column routes; mailbox.tsx columns; FloatingDock.tsx ⌘K focuses search; QuickReplyBar.tsx), on dev via 6ebc554 11 Oct" },
 	{ id: "web-shortcuts", group: "search-compose", name: "Keyboard shortcuts on the web", status: "available", platforms: ["web"], note: "Single keys to write, reply, forward, archive, star and more; ? lists them all.", src: "AVE-28 1e535a7: app/lib/shortcuts.ts SHORTCUTS, ShortcutSheet.tsx" },
-	{ id: "shortcuts", group: "search-compose", name: "More keyboard shortcuts on the web", status: "planned", platforms: ["web"], note: "j and k to move through mail.", landing: true, src: "RM#1 (6); AVE-28 1e535a7 app/lib/shortcuts.ts (C R A F E # U S L O P [ ] Esc ⌘K ⌘J ⇧T T ?); no j/k or / handler" },
+	{ id: "shortcuts", group: "search-compose", name: "More keyboard shortcuts on the web", status: "available", platforms: ["web"], note: "j and k to move up and down through mail.", landing: true, src: "RM#1 (6); AVE-202: app/lib/shortcuts.ts nextThread/prevThread (J K), app/hooks/useListShortcuts.ts; no / handler" },
 	{ id: "signature-web", group: "search-compose", name: "Signature editor on the web", status: "exploring", platforms: ["web"], note: "The apps can add a fixed “Sent with Inboxies Email” line; custom signatures can’t be written yet.", src: "RM#1 (10); FSW#caveats (7); SettingsSheetView.swift / .kt (Default signature toggle only); no web signature setting" },
 	{ id: "scheduled-send", group: "search-compose", name: "Scheduled send", status: "exploring", platforms: [], note: "Write now, send later.", landing: true, src: "RM#1 (9)" },
 
@@ -253,13 +253,6 @@ const allComingNext: (ComingNext & { hidden?: boolean })[] = [
 		body: "A short summary in the iPhone app: replies you probably owe, as to-dos you can tick off, and topics like purchases, travel and security to catch up on. It’s built, and not switched on yet.",
 		src: "FC#7; FSW#supporting-features (Inbox Brief: rules, not AI)",
 		ownerConfirm: "tease publicly",
-	},
-	{
-		id: "shortcuts",
-		title: "More keyboard shortcuts on the web",
-		status: "planned",
-		body: "j and k to move up and down through mail. The web app already has single keys for writing, replying, forwarding, archiving, deleting, starring and Reply Later, ⌘K for search, and ? to see them all.",
-		src: "RM#1 (6); AVE-28 1e535a7 app/lib/shortcuts.ts; no j/k handler",
 	},
 	{
 		id: "set-aside",

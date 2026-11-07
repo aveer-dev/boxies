@@ -77,12 +77,11 @@ export default function InboxNewRoute() {
 	}, [mailboxId]);
 
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(emails, actions);
-
 	const handleOpen = (email: Email) => {
 		openEmail(email.id);
 		if (hasUnread(email)) actions.setRead(email, true);
 	};
+	useListShortcuts(emails, actions, { selectedId: emailId, open: handleOpen });
 
 	const handleRefresh = () => {
 		queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] });
