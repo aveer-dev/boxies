@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker preview for "Today's inbox" (AVE-150): a static 2×2 deck. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_background"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="13dp"
+            android:layout_height="13dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_widget_inbox"
+            android:tint="@color/widget_preview_ink" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:layout_weight="1"
+            android:fontFamily="@font/inter_semibold"
+            android:textFontWeight="600"
+            android:includeFontPadding="false"
+            android:text="@string/widget_preview_header"
+            android:textColor="@color/widget_preview_ink"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/inter_bold"
+            android:textFontWeight="700"
+            android:includeFontPadding="false"
+            android:text="@string/widget_preview_count"
+            android:textColor="@color/widget_preview_ink"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginStart="9dp"
+            android:layout_marginEnd="9dp"
+            android:layout_marginBottom="14dp"
+            android:background="@drawable/widget_preview_card_back" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="7dp"
+            android:layout_marginEnd="4dp"
+            android:layout_marginBottom="7dp"
+            android:background="@drawable/widget_preview_card_back" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/widget_preview_card"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="@font/inter_semibold"
+            android:textFontWeight="600"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="@string/widget_preview_sender"
+                android:textColor="@color/widget_preview_ink"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:ellipsize="end"
+                android:fontFamily="@font/inter_regular"
+            android:textFontWeight="400"
+                android:includeFontPadding="false"
+                android:maxLines="2"
+                android:text="@string/widget_preview_subject"
+                android:textColor="@color/widget_preview_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>
