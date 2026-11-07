@@ -23,6 +23,12 @@
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
+#   ./scripts/run-debug-preview.sh code                # reader with the Code card (AVE-177)
+#   ./scripts/run-debug-preview.sh inviteCard          # reader with the Invite card: Meet link, Join
+#   ./scripts/run-debug-preview.sh inviteCardExpanded  # … details open
+#   ./scripts/run-debug-preview.sh inviteCardAddress   # in-person invite: Directions
+#   ./scripts/run-debug-preview.sh inviteCardAddressExpanded  # … details open, address tappable
+#   ./scripts/run-debug-preview.sh inviteCardCancelled # cancelled invite, no actions
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
 #   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
@@ -113,6 +119,12 @@ case "$mode" in
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
+  code|Code|previewCode) extra=previewCode; label=code ;;
+  inviteCard|InviteCard|previewInvite) extra=previewInvite; label=inviteCard ;;
+  inviteCardExpanded|InviteCardExpanded|previewInviteExpanded) extra=previewInviteExpanded; label=inviteCardExpanded ;;
+  inviteCardAddress|InviteCardAddress|previewInviteAddress) extra=previewInviteAddress; label=inviteCardAddress ;;
+  inviteCardAddressExpanded|InviteCardAddressExpanded|previewInviteAddressExpanded) extra=previewInviteAddressExpanded; label=inviteCardAddressExpanded ;;
+  inviteCardCancelled|InviteCardCancelled|previewInviteCancelled) extra=previewInviteCancelled; label=inviteCardCancelled ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
   forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
@@ -129,12 +141,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,58p' "$0"
+    sed -n '2,64p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
     exit 1
     ;;
 esac

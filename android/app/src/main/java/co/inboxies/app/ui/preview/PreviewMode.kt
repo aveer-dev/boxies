@@ -86,6 +86,18 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),
+    /** Sign-in mail open in the reader with the Code card pinned above the bottom bar (iOS `-previewDetail -previewCode`, AVE-177). */
+    Code("code", "previewCode"),
+    /** Invite with a Meet link: collapsed Invite card, Join + Add to calendar (iOS `-previewDetail -previewInvite`). */
+    InviteCard("inviteCard", "previewInvite"),
+    /** Same invite with the details open (iOS `… -previewInvite -previewInviteExpanded`). */
+    InviteCardExpanded("inviteCardExpanded", "previewInviteExpanded"),
+    /** In-person invite (address only): Directions + Add to calendar (iOS `… -previewInvite -previewInviteAddress`). */
+    InviteCardAddress("inviteCardAddress", "previewInviteAddress"),
+    /** In-person invite with the details open; the address is tappable (iOS `… -previewInviteAddress -previewInviteExpanded`). */
+    InviteCardAddressExpanded("inviteCardAddressExpanded", "previewInviteAddressExpanded"),
+    /** Cancelled invite: struck-through title, "Cancelled", no actions (iOS `… -previewInvite -previewInviteCancelled`). */
+    InviteCardCancelled("inviteCardCancelled", "previewInviteCancelled"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
     /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */

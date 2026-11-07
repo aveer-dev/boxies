@@ -6,6 +6,10 @@ import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.EmailInvite
+import co.inboxies.app.models.EmailInviteOrganizer
+import co.inboxies.app.models.EmailOtp
+import co.inboxies.app.ui.email.MailCardDebug
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
 import co.inboxies.app.services.ReauthChallenge
@@ -202,6 +206,39 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.INBOX),
                     selectedEmail = newsletter,
                     threadEmails = listOf(newsletter),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.Code,
+            PreviewMode.InviteCard,
+            PreviewMode.InviteCardExpanded,
+            PreviewMode.InviteCardAddress,
+            PreviewMode.InviteCardAddressExpanded,
+            PreviewMode.InviteCardCancelled,
+            -> {
+                // AVE-177: reader with the Code card / Invite card pinned at the bottom.
+                val card = if (mode == PreviewMode.Code) {
+                    codeEmail(you)
+                } else {
+                    inviteEmail(
+                        you = you,
+                        cancelled = mode == PreviewMode.InviteCardCancelled,
+                        inPerson = mode == PreviewMode.InviteCardAddress || mode == PreviewMode.InviteCardAddressExpanded,
+                    )
+                }
+                MailCardDebug.startsExpanded =
+                    mode == PreviewMode.InviteCardExpanded || mode == PreviewMode.InviteCardAddressExpanded
+                DatabaseService.shared.upsertEmails(mailbox.id, listOf(card))
+                val inbox = listOf(card) + allEmails.filter { it.folderId == FolderIds.INBOX }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = card,
+                    threadEmails = listOf(card),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -724,6 +761,71 @@ object PreviewSupport {
         <img src="https://example.com/open.gif" width="1" height="1" style="display:none">
         </body></html>
     """.trimIndent()
+
+    /**
+     * AVE-177: sign-in mail with a one-time code, so the reader pins the Code card above
+     * the bottom bar. iOS twin: `PreviewSupport.codeEmail` (`-previewDetail -previewCode`).
+     */
+    fun codeEmail(you: String = addr("you")): Email = Email(
+        id = "preview-code",
+        folderId = FolderIds.INBOX,
+        subject = "Your Acme sign-in code",
+        sender = "no-reply@acme.example",
+        senderName = "Acme",
+        recipient = you,
+        date = "2026-11-06T14:02:00.000Z",
+        read = false,
+        starred = false,
+        body = "<p>Hi Alex,</p><p>Use this code to finish signing in to Acme:</p>" +
+            "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">482 913</p>" +
+            "<p>It expires in 10 minutes. If you didn’t try to sign in, you can ignore this email.</p>" +
+            "<p>— The Acme team</p>",
+        snippet = "Use this code to finish signing in to Acme: 482 913",
+        authTier = "verified",
+        otp = EmailOtp(code = "482913"),
+    )
+
+    /**
+     * AVE-177: calendar invite with a Meet link and a weekly repeat; [inPerson] drops the
+     * link (address only, Directions), [cancelled] is the cancelled variant. iOS twin:
+     * `PreviewSupport.inviteEmail` (`-previewDetail -previewInvite …`).
+     */
+    fun inviteEmail(you: String = addr("you"), cancelled: Boolean, inPerson: Boolean = false): Email = Email(
+        id = "preview-invite",
+        folderId = FolderIds.INBOX,
+        subject = if (cancelled) "Canceled: Design review" else "Invitation: Design review @ Thu Nov 12",
+        sender = "pat@studio.example",
+        senderName = "Pat Lee",
+        recipient = you,
+        date = "2026-11-06T13:30:00.000Z",
+        read = false,
+        starred = false,
+        body = if (cancelled) {
+            "<p>This event has been cancelled.</p><p>Design review · Thursdays 10–11am</p>"
+        } else {
+            "<p>Pat Lee has invited you to <b>Design review</b>.</p>" +
+                "<p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" +
+                if (inPerson) "<p>We’ll meet in Room 4B, 200 Market St.</p>"
+                else "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"
+        },
+        snippet = if (cancelled) "This event has been cancelled." else "Pat Lee has invited you to Design review.",
+        hasAttachment = true,
+        authTier = "verified",
+        invite = EmailInvite(
+            method = if (cancelled) "CANCEL" else "REQUEST",
+            cancelled = cancelled,
+            uid = "design-review@studio.example",
+            sequence = if (cancelled) 2 else 0,
+            title = "Design review",
+            start = "2026-11-12T15:00:00.000Z",
+            end = "2026-11-12T16:00:00.000Z",
+            timezone = "America/New_York",
+            location = "Room 4B, 200 Market St",
+            organizer = EmailInviteOrganizer(email = "pat@studio.example", name = "Pat Lee"),
+            meetingUrl = if (inPerson) null else "https://meet.google.com/abc-defg-hij",
+            recurrence = "FREQ=WEEKLY;BYDAY=TH",
+        ),
+    )
 
     /**
      * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid

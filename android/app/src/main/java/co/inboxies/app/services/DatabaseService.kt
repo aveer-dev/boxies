@@ -136,7 +136,15 @@ class DatabaseService private constructor() {
             } else {
                 merged
             }
-            emails[merged.id] = withNotes
+            // List rows never carry the reader cards; keep the ones a detail load cached.
+            val withCards = if (withNotes.otp == null && withNotes.invite == null && existing != null &&
+                (existing.otp != null || existing.invite != null)
+            ) {
+                withNotes.copy(otp = existing.otp, invite = existing.invite)
+            } else {
+                withNotes
+            }
+            emails[merged.id] = withCards
             emailMailboxIds[merged.id] = mailboxId
         }
     }
