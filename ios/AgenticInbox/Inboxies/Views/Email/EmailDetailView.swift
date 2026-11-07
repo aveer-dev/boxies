@@ -15,6 +15,11 @@ struct EmailDetailView: View {
     @State private var queuedNoteEditor: NoteEditorTarget?
     @State private var noteToDelete: ThreadNote?
     @Namespace private var actionsNamespace
+    /// The subject sits in the content so previous / next can morph it letter by letter
+    /// (web `MorphText`); the bar shows it once it has scrolled away.
+    @State private var titleMemory = MorphingTitleMemory()
+    @State private var titleScrolledAway = false
+    private static let scrollSpace = "email-detail-scroll"
 
     private var email: Email? {
         app.selectedEmail
@@ -92,6 +97,19 @@ struct EmailDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    MorphingTitle(text: subjectText, memory: titleMemory)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                        .accessibilityAddTraits(.isHeader)
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: DetailTitleBottomKey.self,
+                                    value: proxy.frame(in: .named(Self.scrollSpace)).maxY
+                                )
+                            }
+                        }
+
                     if isScreenerEmail, !app.isReadOnly, let email {
                         ScreenerTriageBar(email: email)
                             .padding(.horizontal, 16)
@@ -182,12 +200,27 @@ struct EmailDetailView: View {
                 Text("It’s only visible to you and can’t be recovered.")
             }
             .id(email?.id)
+            .coordinateSpace(name: Self.scrollSpace)
+            .onPreferenceChange(DetailTitleBottomKey.self) { bottom in
+                let away = bottom < 4
+                guard away != titleScrolledAway else { return }
+                withAnimation(.easeInOut(duration: 0.2)) { titleScrolledAway = away }
+            }
             .background(AppTheme.background)
             .background(DetailNavigationTitleFont())
             .navigationTitle(subjectText)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(subjectText)
+                        .font(.inter(size: AppTheme.FontSize.inlineTitle, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                        .opacity(titleScrolledAway ? 1 : 0)
+                        .accessibilityHidden(!titleScrolledAway)
+                }
+
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1222,5 +1255,13 @@ struct EmailDetailBouncedPreviewWrapper: View {
             .environment(app)
             .environment(auth)
             .preferredColorScheme(.light)
+    }
+}
+
+/// Bottom edge of the detail's subject in its scroll view: the bar shows the subject once it's gone.
+private struct DetailTitleBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = min(value, nextValue())
     }
 }
