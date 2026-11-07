@@ -98,6 +98,14 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteCardAddressExpanded("inviteCardAddressExpanded", "previewInviteAddressExpanded"),
     /** Cancelled invite: struck-through title, "Cancelled", no actions (iOS `… -previewInvite -previewInviteCancelled`). */
     InviteCardCancelled("inviteCardCancelled", "previewInviteCancelled"),
+    /** Invite card with fixture calendars: "You're free" + the calendar picker (iOS `… -previewInvite -previewInviteFreeBusy free`, AVE-206). */
+    InviteCardFree("inviteCardFree", "previewInviteFree"),
+    /** Fixture calendars: "Conflicts with Team sync +1 more" (iOS `… -previewInviteFreeBusy conflict`). */
+    InviteCardConflict("inviteCardConflict", "previewInviteConflict"),
+    /** Added in one tap: "Added" button + pinned "Added to Work · Undo" toast (iOS `… -previewInviteFreeBusy added`). */
+    InviteCardAdded("inviteCardAdded", "previewInviteAdded"),
+    /** Before access: the "Check availability" link; tapping it grants without the system dialog (iOS `… -previewInviteFreeBusy ask`). */
+    InviteCardAsk("inviteCardAsk", "previewInviteAsk"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
     /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */

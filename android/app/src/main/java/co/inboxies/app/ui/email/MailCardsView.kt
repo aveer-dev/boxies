@@ -1,6 +1,8 @@
 package co.inboxies.app.ui.email
 
 import android.content.ActivityNotFoundException
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -21,12 +23,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,12 +38,17 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material.icons.outlined.Event
@@ -54,7 +63,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,6 +80,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -78,6 +96,17 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import co.inboxies.app.models.CalendarInsert
+import co.inboxies.app.models.InviteAvailability
+import co.inboxies.app.models.ToastAction
+import co.inboxies.app.services.InviteCalendar
+import co.inboxies.app.services.InviteCalendarAccess
+import co.inboxies.app.services.InviteCalendarChoice
+import co.inboxies.app.ui.components.AnimatedToast
+import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.ToastIcon
+import co.inboxies.app.theme.ToastMetrics
 import co.inboxies.app.models.EmailInvite
 import co.inboxies.app.models.InviteRecurrence
 import co.inboxies.app.models.InviteTime
@@ -94,6 +123,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.UUID
 
 // Reader Code card / Invite card, pinned above the bottom bar (AVE-177). Design
 // twin of iOS `MailCardsView.swift` (AVE-176). Contract: `shared/mail-cards.ts`.
@@ -106,20 +137,53 @@ object MailCardDebug {
     @Volatile var startsExpanded: Boolean = false
 }
 
+/** A toast raised by a card ("Added to Work · Undo"), shown with the app's one `InboxiesToast`. */
+data class MailCardToast(
+    val message: String,
+    val icon: ToastIcon = ToastIcon.None,
+    val action: ToastAction? = null,
+    /** Null pins it (DEBUG previews). */
+    val durationMs: Long? = 4_000L,
+    val id: String = UUID.randomUUID().toString(),
+)
+
 @Composable
 fun MailCardView(card: MailCards.Card, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(MailCardMetrics.cornerRadius)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = MailCardMetrics.horizontalInset)
-            .padding(bottom = MailCardMetrics.bottomInset)
-            .liquidGlass(shape)
-            .padding(MailCardMetrics.padding),
-    ) {
-        when (card) {
-            is MailCards.Card.Code -> CodeCard(code = card.otp.code)
-            is MailCards.Card.Invite -> InviteCard(invite = card.invite)
+    // The reader is a sheet over the home chrome, so `AppModel`'s toast would sit
+    // behind it; the card's own toast floats just above the card (AVE-206).
+    var toast by remember { mutableStateOf<MailCardToast?>(null) }
+    LaunchedEffect(toast?.id) {
+        val current = toast ?: return@LaunchedEffect
+        val duration = current.durationMs ?: return@LaunchedEffect
+        delay(duration)
+        if (toast?.id == current.id) toast = null
+    }
+
+    Column(modifier = modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        AnimatedToast(toast) { current ->
+            InboxiesToast(
+                message = current.message,
+                icon = current.icon,
+                action = current.action,
+                onDismiss = { toast = null },
+                modifier = Modifier
+                    .padding(horizontal = ToastMetrics.screenInset)
+                    .padding(bottom = ToastMetrics.barGap),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = MailCardMetrics.horizontalInset)
+                .padding(bottom = MailCardMetrics.bottomInset)
+                .liquidGlass(shape)
+                .padding(MailCardMetrics.padding),
+        ) {
+            when (card) {
+                is MailCards.Card.Code -> CodeCard(code = card.otp.code)
+                is MailCards.Card.Invite -> InviteCard(invite = card.invite, showToast = { toast = it })
+            }
         }
     }
 }
@@ -236,10 +300,12 @@ object MailCardClipboard {
  * sheet would stack a modal on a modal.
  */
 @Composable
-private fun InviteCard(invite: EmailInvite) {
+private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit) {
     val colors = inboxiesColors()
     val context = LocalContext.current
     val app = LocalAppModel.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
     var expanded by rememberSaveable(invite.uid, invite.start) { mutableStateOf(MailCardDebug.startsExpanded) }
     val chevron by animateFloatAsState(if (expanded) 180f else 0f, mailCardSpring(), label = "inviteChevron")
 
@@ -250,6 +316,144 @@ private fun InviteCard(invite: EmailInvite) {
     val repeats = remember(invite.recurrence) { InviteRecurrence.label(invite.recurrence) }
     val calendarInsert = remember(invite) { CalendarInsert.of(invite) }
     val venue = invite.venue
+
+    // region Free/busy + one-tap add (AVE-206). Nothing reads the calendar until access
+    // is already granted or the person taps Check availability / Add.
+    val store = InviteCalendar.current
+    var access by remember { mutableStateOf(InviteCalendarAccess.Denied) }
+    var availability by remember(invite) { mutableStateOf<InviteAvailability?>(null) }
+    var calendars by remember { mutableStateOf(emptyList<InviteCalendarChoice>()) }
+    var chosenCalendarId by remember { mutableStateOf(InviteCalendar.chosenCalendarId(context)) }
+    var added by remember(invite) { mutableStateOf<AddedEvent?>(null) }
+    var refreshTick by remember { mutableIntStateOf(0) }
+    var pendingAdd by remember { mutableStateOf(false) }
+    var didAutoAdd by remember { mutableStateOf(false) }
+    val window = remember(invite) { InviteAvailability.window(invite) }
+    val selectedCalendar = InviteCalendar.pick(calendars, chosenCalendarId)
+    val isInCalendar = added != null || availability == InviteAvailability.InCalendar
+
+    /** Reads access, calendars and free/busy. Never prompts. */
+    suspend fun refresh() {
+        val appContext = context.applicationContext
+        val result = withContext(Dispatchers.IO) {
+            val nextAccess = store.access(appContext)
+            if (nextAccess == InviteCalendarAccess.Full) {
+                Triple(
+                    nextAccess,
+                    store.writableCalendars(appContext),
+                    window?.let { InviteAvailability.check(invite, store.events(appContext, it.beginMillis, it.endMillis)) },
+                )
+            } else {
+                Triple(nextAccess, emptyList(), null)
+            }
+        }
+        access = result.first
+        calendars = result.second
+        availability = result.third
+    }
+
+    fun openInsertScreen() {
+        val insert = calendarInsert ?: return
+        try {
+            context.startActivity(insert.toIntent())
+        } catch (_: ActivityNotFoundException) {
+            app.showToast("No calendar app to add this to", isError = true)
+        }
+    }
+
+    fun undoAdd(eventId: Long) {
+        showToast(null)
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { store.remove(context.applicationContext, eventId) }
+            if (removed) {
+                added = null
+                refresh()
+            } else {
+                showToast(MailCardToast("Couldn\u2019t remove the event", icon = ToastIcon.Error))
+            }
+        }
+    }
+
+    fun addDirectly(pinToast: Boolean = false) {
+        scope.launch {
+            // Read the state now, not from this composition: access may have just been granted.
+            val calendar = InviteCalendar.pick(calendars, chosenCalendarId)
+            val eventId = calendar?.let {
+                withContext(Dispatchers.IO) { store.add(context.applicationContext, invite, it.id) }
+            }
+            if (calendar == null || eventId == null) {
+                // Couldn't write (no writable calendar, provider refused): the calendar app tries.
+                openInsertScreen()
+                return@launch
+            }
+            added = AddedEvent(eventId, calendar.title)
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            showToast(
+                MailCardToast(
+                    message = "Added to ${calendar.title}",
+                    icon = ToastIcon.Success,
+                    action = ToastAction("Undo") { undoAdd(eventId) },
+                    durationMs = if (pinToast) null else 5_000L,
+                ),
+            )
+            refresh()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val granted = result.isNotEmpty() && result.values.all { it }
+        store.recordRequestResult(context.applicationContext, granted)
+        val thenAdd = pendingAdd
+        pendingAdd = false
+        scope.launch {
+            refresh()
+            if (thenAdd) {
+                if (granted) addDirectly() else openInsertScreen()
+            }
+        }
+    }
+
+    fun requestAccess(thenAdd: Boolean) {
+        if (!store.usesSystemPermission) {
+            store.recordRequestResult(context.applicationContext, true)
+            scope.launch {
+                refresh()
+                if (thenAdd) addDirectly()
+            }
+            return
+        }
+        pendingAdd = thenAdd
+        permissionLauncher.launch(InviteCalendar.permissions)
+    }
+
+    /** Full access: one tap writes the event. Not asked yet: ask, then add. Denied: the insert screen. */
+    fun addTapped() {
+        when (access) {
+            InviteCalendarAccess.Full -> addDirectly()
+            InviteCalendarAccess.Askable -> requestAccess(thenAdd = true)
+            InviteCalendarAccess.Denied -> openInsertScreen()
+        }
+    }
+
+    LaunchedEffect(invite, refreshTick) {
+        refresh()
+        if (store.autoAdds && !didAutoAdd && access == InviteCalendarAccess.Full) {
+            didAutoAdd = true
+            addDirectly(pinToast = true)
+        }
+    }
+    // Access may change in Settings while we are away.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // endregion
 
     fun open(uri: String, failure: String) {
         try {
@@ -332,6 +536,22 @@ private fun InviteCard(invite: EmailInvite) {
             )
         }
 
+        if (!invite.cancelled) {
+            AvailabilityRow(
+                access = access,
+                availability = if (added != null) InviteAvailability.InCalendar else availability,
+                checksAvailability = window != null,
+                calendars = calendars,
+                selectedCalendar = selectedCalendar,
+                showsCalendarPicker = calendarInsert != null && !isInCalendar,
+                onCheckAvailability = { requestAccess(thenAdd = false) },
+                onChooseCalendar = {
+                    chosenCalendarId = it.id
+                    InviteCalendar.setChosenCalendarId(context, it.id)
+                },
+            )
+        }
+
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically(mailCardSpring()) + fadeIn(mailCardSpring()),
@@ -382,19 +602,23 @@ private fun InviteCard(invite: EmailInvite) {
                     )
                     InviteVenue.None -> Unit
                 }
-                calendarInsert?.let { insert ->
-                    MailCardButton(
-                        title = "Add to calendar",
-                        icon = Icons.Outlined.EditCalendar,
-                        prominent = true,
-                        onClick = {
-                            try {
-                                context.startActivity(insert.toIntent())
-                            } catch (_: ActivityNotFoundException) {
-                                app.showToast("No calendar app to add this to", isError = true)
-                            }
-                        },
-                    )
+                if (calendarInsert != null) {
+                    if (isInCalendar) {
+                        MailCardButton(
+                            title = "Added",
+                            icon = Icons.Outlined.Check,
+                            prominent = true,
+                            enabled = false,
+                            onClick = {},
+                        )
+                    } else {
+                        MailCardButton(
+                            title = "Add to calendar",
+                            icon = Icons.Outlined.EditCalendar,
+                            prominent = true,
+                            onClick = { addTapped() },
+                        )
+                    }
                 }
             }
         }
@@ -413,6 +637,180 @@ private fun CalendarInsert.toIntent(): Intent =
         rrule?.let { putExtra(CalendarContract.Events.RRULE, it) }
     }
 
+private data class AddedEvent(val eventId: Long, val calendarTitle: String)
+
+/**
+ * "You're free" / "Conflicts with Team sync" and the calendar Add writes to. Before
+ * access: a "Check availability" link that asks. Denied: nothing.
+ */
+@Composable
+private fun AvailabilityRow(
+    access: InviteCalendarAccess,
+    availability: InviteAvailability?,
+    checksAvailability: Boolean,
+    calendars: List<InviteCalendarChoice>,
+    selectedCalendar: InviteCalendarChoice?,
+    showsCalendarPicker: Boolean,
+    onCheckAvailability: () -> Unit,
+    onChooseCalendar: (InviteCalendarChoice) -> Unit,
+) {
+    val colors = inboxiesColors()
+    when (access) {
+        InviteCalendarAccess.Full -> {
+            val picker = showsCalendarPicker && calendars.isNotEmpty()
+            if (availability == null && !picker) return
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = MailCardMetrics.detailIndent),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    when (availability) {
+                        InviteAvailability.Free -> StatusLine(Icons.Outlined.CheckCircle, colors.accent, availability.label)
+                        InviteAvailability.InCalendar -> StatusLine(Icons.Outlined.EventAvailable, colors.accent, availability.label)
+                        is InviteAvailability.Conflict -> StatusLine(
+                            Icons.Outlined.ErrorOutline,
+                            colors.deepDarkRed,
+                            availability.label,
+                            styled = buildAnnotatedString {
+                                append("Conflicts with ")
+                                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(availability.title) }
+                                if (availability.others > 0) {
+                                    withStyle(SpanStyle(color = colors.muted)) { append(" +${availability.others} more") }
+                                }
+                            },
+                        )
+                        // All-day invites skip free/busy; only the calendar picker shows.
+                        null -> Text(
+                            "Add to",
+                            fontFamily = InterFontFamily,
+                            fontSize = MailCardMetrics.detail,
+                            color = colors.muted,
+                        )
+                    }
+                }
+                if (picker) CalendarPicker(calendars, selectedCalendar, onChooseCalendar)
+            }
+        }
+        InviteCalendarAccess.Askable -> {
+            if (!checksAvailability) return
+            DetailRow(
+                Icons.Outlined.EventAvailable,
+                "Check availability",
+                tint = colors.accent,
+                onClickLabel = "Read your calendar to see if you\u2019re free",
+                onClick = onCheckAvailability,
+                medium = true,
+            )
+        }
+        InviteCalendarAccess.Denied -> Unit
+    }
+}
+
+@Composable
+private fun StatusLine(
+    icon: ImageVector,
+    tint: Color,
+    label: String,
+    styled: androidx.compose.ui.text.AnnotatedString? = null,
+) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = label },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .width(MailCardMetrics.detailIconColumn)
+                .size(MailCardMetrics.detailIconSize),
+        )
+        Text(
+            styled ?: androidx.compose.ui.text.AnnotatedString(label),
+            fontFamily = InterFontFamily,
+            fontSize = MailCardMetrics.detail,
+            color = colors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** The calendar Add writes to; the choice is remembered on this device. */
+@Composable
+private fun CalendarPicker(
+    calendars: List<InviteCalendarChoice>,
+    selected: InviteCalendarChoice?,
+    onChoose: (InviteCalendarChoice) -> Unit,
+) {
+    val colors = inboxiesColors()
+    var open by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Box {
+        Row(
+            modifier = Modifier
+                .graphicsLayer { alpha = if (pressed) 0.55f else 1f }
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = "Choose the calendar Add writes to",
+                ) { open = true }
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "Calendar, ${selected?.title ?: "default"}"
+                },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            CalendarDot(selected?.color)
+            Text(
+                selected?.title ?: "Calendar",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = MailCardMetrics.detail,
+                color = colors.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = MailCardMetrics.calendarNameMaxWidth),
+            )
+            Icon(
+                Icons.Outlined.UnfoldMore,
+                contentDescription = null,
+                tint = colors.muted,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        InboxiesDropdownMenu(expanded = open, onDismiss = { open = false }) {
+            calendars.forEach { calendar ->
+                InboxiesMenuItem(
+                    text = calendar.title,
+                    icon = if (calendar.id == selected?.id) Icons.Outlined.Check else null,
+                    onClick = {
+                        open = false
+                        onChoose(calendar)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CalendarDot(argb: Int?) {
+    val colors = inboxiesColors()
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .background(argb?.let { Color(it) } ?: colors.muted, CircleShape),
+    )
+}
+
 @Composable
 private fun DetailRow(
     icon: ImageVector,
@@ -420,6 +818,7 @@ private fun DetailRow(
     tint: Color = inboxiesColors().muted,
     onClickLabel: String? = null,
     onClick: (() -> Unit)? = null,
+    medium: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -452,6 +851,7 @@ private fun DetailRow(
         Text(
             text,
             fontFamily = InterFontFamily,
+            fontWeight = if (medium) FontWeight.Medium else FontWeight.Normal,
             fontSize = MailCardMetrics.detail,
             color = tint,
             maxLines = 2,
@@ -473,15 +873,22 @@ private fun MailCardButton(
     title: String,
     icon: ImageVector,
     prominent: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val container = if (prominent) colors.accent else colors.pillFill
+    val content = if (prominent) Color.White else colors.ink
     Button(
         onClick = onClick,
+        enabled = enabled,
         shape = CircleShape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (prominent) colors.accent else colors.pillFill,
-            contentColor = if (prominent) Color.White else colors.ink,
+            containerColor = container,
+            contentColor = content,
+            // "Added": the same capsule, quieter, not Material's grey.
+            disabledContainerColor = container.copy(alpha = 0.55f),
+            disabledContentColor = content,
         ),
         elevation = null,
         contentPadding = PaddingValues(horizontal = MailCardMetrics.buttonHorizontalPadding, vertical = 0.dp),

@@ -12,6 +12,7 @@ import co.inboxies.app.models.EmailOtp
 import co.inboxies.app.ui.email.MailCardDebug
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
+import co.inboxies.app.services.InviteCalendar
 import co.inboxies.app.services.ReauthChallenge
 import co.inboxies.app.services.ReauthMethod
 import co.inboxies.app.services.ReplyLaterReminderPresets
@@ -216,6 +217,10 @@ object PreviewSupport {
             PreviewMode.InviteCardAddress,
             PreviewMode.InviteCardAddressExpanded,
             PreviewMode.InviteCardCancelled,
+            PreviewMode.InviteCardFree,
+            PreviewMode.InviteCardConflict,
+            PreviewMode.InviteCardAdded,
+            PreviewMode.InviteCardAsk,
             -> {
                 // AVE-177: reader with the Code card / Invite card pinned at the bottom.
                 val card = if (mode == PreviewMode.Code) {
@@ -229,6 +234,14 @@ object PreviewSupport {
                 }
                 MailCardDebug.startsExpanded =
                     mode == PreviewMode.InviteCardExpanded || mode == PreviewMode.InviteCardAddressExpanded
+                // AVE-206: fixture calendars for free/busy; other card modes keep the real (permissionless) path.
+                InviteCalendar.override = when (mode) {
+                    PreviewMode.InviteCardFree -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Free)
+                    PreviewMode.InviteCardConflict -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Conflict)
+                    PreviewMode.InviteCardAdded -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Added)
+                    PreviewMode.InviteCardAsk -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Ask)
+                    else -> null
+                }
                 DatabaseService.shared.upsertEmails(mailbox.id, listOf(card))
                 val inbox = listOf(card) + allEmails.filter { it.folderId == FolderIds.INBOX }
                 app.applyDebugPreview(

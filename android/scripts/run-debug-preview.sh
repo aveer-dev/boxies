@@ -29,6 +29,10 @@
 #   ./scripts/run-debug-preview.sh inviteCardAddress   # in-person invite: Directions
 #   ./scripts/run-debug-preview.sh inviteCardAddressExpanded  # … details open, address tappable
 #   ./scripts/run-debug-preview.sh inviteCardCancelled # cancelled invite, no actions
+#   ./scripts/run-debug-preview.sh inviteCardFree      # fixture calendars: "You're free" + calendar picker (AVE-206)
+#   ./scripts/run-debug-preview.sh inviteCardConflict  # … "Conflicts with Team sync +1 more"
+#   ./scripts/run-debug-preview.sh inviteCardAdded     # … added in one tap, "Added to Work · Undo" toast
+#   ./scripts/run-debug-preview.sh inviteCardAsk       # … before access: "Check availability"
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
 #   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
@@ -128,6 +132,10 @@ case "$mode" in
   inviteCardAddress|InviteCardAddress|previewInviteAddress) extra=previewInviteAddress; label=inviteCardAddress ;;
   inviteCardAddressExpanded|InviteCardAddressExpanded|previewInviteAddressExpanded) extra=previewInviteAddressExpanded; label=inviteCardAddressExpanded ;;
   inviteCardCancelled|InviteCardCancelled|previewInviteCancelled) extra=previewInviteCancelled; label=inviteCardCancelled ;;
+  inviteCardFree|InviteCardFree|previewInviteFree) extra=previewInviteFree; label=inviteCardFree ;;
+  inviteCardConflict|InviteCardConflict|previewInviteConflict) extra=previewInviteConflict; label=inviteCardConflict ;;
+  inviteCardAdded|InviteCardAdded|previewInviteAdded) extra=previewInviteAdded; label=inviteCardAdded ;;
+  inviteCardAsk|InviteCardAsk|previewInviteAsk) extra=previewInviteAsk; label=inviteCardAsk ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
   forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
@@ -151,7 +159,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

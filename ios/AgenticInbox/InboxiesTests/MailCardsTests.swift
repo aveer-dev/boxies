@@ -304,4 +304,88 @@ final class MailCardsTests: XCTestCase {
         let calendar = Calendar.current
         XCTAssertTrue(calendar.isDate(allDayEvent.endDate, inSameDayAs: allDayEvent.startDate))
     }
+
+    // MARK: - Free/busy (AVE-206)
+
+    private func timedInvite(title: String = "Design review", start: String = "2026-11-12T15:00:00.000Z", end: String? = "2026-11-12T16:00:00.000Z", cancelled: Bool = false) -> EmailInvite {
+        EmailInvite(cancelled: cancelled, title: title, start: start, end: end, timezone: "America/New_York")
+    }
+
+    private func busy(_ title: String, _ start: String, _ end: String, allDay: Bool = false, free: Bool = false, declined: Bool = false, cancelled: Bool = false) -> CalendarBusyEvent {
+        CalendarBusyEvent(title: title, start: utc(start), end: utc(end), allDay: allDay, showsAsFree: free, declined: declined, cancelled: cancelled)
+    }
+
+    func testFreeWhenNothingOverlaps() {
+        let events = [
+            busy("Standup", "2026-11-12T14:00:00Z", "2026-11-12T15:00:00Z"), // ends as the invite starts
+            busy("Lunch", "2026-11-12T16:00:00Z", "2026-11-12T17:00:00Z"),   // starts as it ends
+        ]
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: events), .free)
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: []), .free)
+    }
+
+    func testConflictNamesTheEarliestAndCountsTheRest() {
+        let events = [
+            busy("1:1 with Sam", "2026-11-12T15:45:00Z", "2026-11-12T16:15:00Z"),
+            busy("Team sync", "2026-11-12T15:30:00Z", "2026-11-12T16:00:00Z"),
+            busy("All hands", "2026-11-12T14:00:00Z", "2026-11-12T18:00:00Z"),
+        ]
+        let result = InviteAvailability.check(timedInvite(), against: events)
+        XCTAssertEqual(result, .conflict(title: "All hands", others: 2))
+        XCTAssertEqual(result?.label, "Conflicts with All hands +2 more")
+        XCTAssertEqual(
+            InviteAvailability.conflict(title: "Team sync", others: 0).label,
+            "Conflicts with Team sync"
+        )
+    }
+
+    func testFreeDeclinedCancelledAndAllDayEventsDoNotBlock() {
+        let events = [
+            busy("Focus time", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", free: true),
+            busy("Offsite prep", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", declined: true),
+            busy("Old sync", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", cancelled: true),
+            busy("Holiday", "2026-11-12T05:00:00Z", "2026-11-13T05:00:00Z", allDay: true),
+        ]
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: events), .free)
+    }
+
+    func testTheInviteItselfReadsAsInCalendar() {
+        let events = [
+            busy("Team sync", "2026-11-12T15:30:00Z", "2026-11-12T16:00:00Z"),
+            busy(" design REVIEW ", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z"),
+        ]
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: events), .inCalendar)
+        // Same title at another time is a real conflict.
+        let moved = [busy("Design review", "2026-11-12T15:30:00Z", "2026-11-12T16:30:00Z")]
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: moved), .conflict(title: "Design review", others: 0))
+    }
+
+    func testInviteWithoutEndCountsAsOneHour() {
+        let invite = timedInvite(end: nil)
+        let window = InviteAvailability.window(for: invite)
+        XCTAssertEqual(window?.duration, 3600)
+        let events = [busy("Late call", "2026-11-12T15:50:00Z", "2026-11-12T16:30:00Z")]
+        XCTAssertEqual(InviteAvailability.check(invite, against: events), .conflict(title: "Late call", others: 0))
+    }
+
+    func testAllDayAndCancelledInvitesAreNotChecked() {
+        let allDay = EmailInvite(title: "Offsite", start: "2026-11-12", end: "2026-11-13", allDay: true)
+        XCTAssertNil(InviteAvailability.window(for: allDay, timeZone: newYork))
+        XCTAssertNil(InviteAvailability.check(allDay, against: [], timeZone: newYork))
+        XCTAssertNil(InviteAvailability.check(timedInvite(cancelled: true), against: []))
+        XCTAssertNil(InviteAvailability.check(timedInvite(start: "garbage"), against: []))
+    }
+
+    func testUntitledConflictReadsAsAnotherEvent() {
+        let events = [busy("  ", "2026-11-12T15:00:00Z", "2026-11-12T15:30:00Z")]
+        XCTAssertEqual(InviteAvailability.check(timedInvite(), against: events)?.label, "Conflicts with another event")
+    }
+
+    func testFloatingInviteIsCheckedInTheViewersZone() {
+        let invite = EmailInvite(title: "Dentist", start: "2026-11-12T10:00:00", end: "2026-11-12T11:00:00")
+        // 10:00 in New York is 15:00Z.
+        let events = [busy("Call", "2026-11-12T15:15:00Z", "2026-11-12T15:45:00Z")]
+        XCTAssertEqual(InviteAvailability.check(invite, against: events, timeZone: newYork), .conflict(title: "Call", others: 0))
+        XCTAssertEqual(InviteAvailability.check(invite, against: events, timeZone: tokyo), .free)
+    }
 }

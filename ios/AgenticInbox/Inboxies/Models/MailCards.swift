@@ -538,3 +538,85 @@ enum MailCards {
         return nil
     }
 }
+
+// MARK: - Free/busy (AVE-206)
+
+/// Another event on the phone's calendars, reduced to what free/busy needs.
+/// Android twin: `CalendarBusyEvent` in `MailCards.kt`.
+struct CalendarBusyEvent: Equatable {
+    var title: String
+    var start: Date
+    var end: Date
+    var allDay: Bool = false
+    /// Availability "free" (transparent): it doesn't block the time.
+    var showsAsFree: Bool = false
+    /// You declined it.
+    var declined: Bool = false
+    var cancelled: Bool = false
+}
+
+/// Whether you're free for an invite, read from the phone's own calendars.
+enum InviteAvailability: Equatable {
+    case free
+    /// The earliest overlapping event, plus how many more overlap.
+    case conflict(title: String, others: Int)
+    /// The invite itself is already on a calendar (same title, same start and end).
+    case inCalendar
+
+    /// The span to check: timed, not cancelled. All-day invites are skipped: an
+    /// all-day event rarely means "busy all day", so free/busy would mostly mislead.
+    /// An invite without an end counts as one hour, like the event it adds.
+    static func window(for invite: EmailInvite, timeZone: TimeZone = .current) -> DateInterval? {
+        guard !invite.cancelled,
+              let span = InviteTime.span(for: invite, timeZone: timeZone),
+              !span.allDay else { return nil }
+        let end = span.end ?? span.start.addingTimeInterval(3600)
+        guard end > span.start else { return nil }
+        return DateInterval(start: span.start, end: end)
+    }
+
+    /// Busy, timed events that overlap the invite. Free (transparent), declined,
+    /// cancelled and all-day events don't count. Only the first occurrence of a
+    /// repeating invite is checked. Nil when the invite has no window to check.
+    static func check(
+        _ invite: EmailInvite,
+        against events: [CalendarBusyEvent],
+        timeZone: TimeZone = .current
+    ) -> InviteAvailability? {
+        guard let window = window(for: invite, timeZone: timeZone) else { return nil }
+        let inviteTitle = normalized(invite.displayTitle)
+        var blocking: [CalendarBusyEvent] = []
+        for event in events {
+            if event.cancelled || event.declined || event.showsAsFree || event.allDay { continue }
+            // Half-open overlap: back-to-back meetings don't conflict.
+            let overlaps = event.start < window.end && window.start < event.end
+                || (event.start == event.end && event.start == window.start)
+            guard overlaps else { continue }
+            if event.start == window.start, event.end == window.end, normalized(event.title) == inviteTitle {
+                return .inCalendar
+            }
+            blocking.append(event)
+        }
+        guard !blocking.isEmpty else { return .free }
+        let sorted = blocking.sorted { lhs, rhs in
+            lhs.start != rhs.start ? lhs.start < rhs.start : lhs.title < rhs.title
+        }
+        let title = sorted[0].title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .conflict(title: title.isEmpty ? "another event" : title, others: sorted.count - 1)
+    }
+
+    /// "You're free", "Conflicts with Team sync", "Conflicts with Team sync +2 more",
+    /// "In your calendar".
+    var label: String {
+        switch self {
+        case .free: return "You’re free"
+        case .inCalendar: return "In your calendar"
+        case .conflict(let title, let others):
+            return others > 0 ? "Conflicts with \(title) +\(others) more" : "Conflicts with \(title)"
+        }
+    }
+
+    private static func normalized(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}

@@ -333,4 +333,158 @@ class MailCardsTest {
     }
 
     // endregion
+
+    // region Free/busy (AVE-206)
+
+    private val tokyo = ZoneId.of("Asia/Tokyo")
+
+    private fun ms(iso: String) = Instant.parse(iso).toEpochMilli()
+
+    private fun timed(
+        title: String = "Design review",
+        start: String = "2026-11-12T15:00:00.000Z",
+        end: String? = "2026-11-12T16:00:00.000Z",
+        cancelled: Boolean = false,
+        timezone: String? = "America/New_York",
+        recurrence: String? = null,
+    ) = EmailInvite(
+        title = title,
+        start = start,
+        end = end,
+        cancelled = cancelled,
+        timezone = timezone,
+        recurrence = recurrence,
+    )
+
+    private fun busy(
+        title: String,
+        start: String,
+        end: String,
+        allDay: Boolean = false,
+        free: Boolean = false,
+        declined: Boolean = false,
+        cancelled: Boolean = false,
+    ) = CalendarBusyEvent(title, ms(start), ms(end), allDay, free, declined, cancelled)
+
+    @Test
+    fun freeWhenNothingOverlaps() {
+        val events = listOf(
+            busy("Standup", "2026-11-12T14:00:00Z", "2026-11-12T15:00:00Z"), // ends as the invite starts
+            busy("Lunch", "2026-11-12T16:00:00Z", "2026-11-12T17:00:00Z"), // starts as it ends
+        )
+        assertEquals(InviteAvailability.Free, InviteAvailability.check(timed(), events, utc))
+        assertEquals(InviteAvailability.Free, InviteAvailability.check(timed(), emptyList(), utc))
+        assertEquals("You\u2019re free", InviteAvailability.Free.label)
+    }
+
+    @Test
+    fun conflictNamesTheEarliestAndCountsTheRest() {
+        val events = listOf(
+            busy("1:1 with Sam", "2026-11-12T15:45:00Z", "2026-11-12T16:15:00Z"),
+            busy("Team sync", "2026-11-12T15:30:00Z", "2026-11-12T16:00:00Z"),
+            busy("All hands", "2026-11-12T14:00:00Z", "2026-11-12T18:00:00Z"),
+        )
+        val result = InviteAvailability.check(timed(), events, utc)
+        assertEquals(InviteAvailability.Conflict("All hands", 2), result)
+        assertEquals("Conflicts with All hands +2 more", result?.label)
+        assertEquals("Conflicts with Team sync", InviteAvailability.Conflict("Team sync", 0).label)
+    }
+
+    @Test
+    fun freeDeclinedCancelledAndAllDayEventsDoNotBlock() {
+        val events = listOf(
+            busy("Focus time", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", free = true),
+            busy("Offsite prep", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", declined = true),
+            busy("Old sync", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z", cancelled = true),
+            busy("Holiday", "2026-11-12T00:00:00Z", "2026-11-13T00:00:00Z", allDay = true),
+        )
+        assertEquals(InviteAvailability.Free, InviteAvailability.check(timed(), events, utc))
+    }
+
+    @Test
+    fun theInviteItselfReadsAsInCalendar() {
+        val events = listOf(
+            busy("Team sync", "2026-11-12T15:30:00Z", "2026-11-12T16:00:00Z"),
+            busy(" design REVIEW ", "2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z"),
+        )
+        assertEquals(InviteAvailability.InCalendar, InviteAvailability.check(timed(), events, utc))
+        // Same title at another time is a real conflict.
+        val moved = listOf(busy("Design review", "2026-11-12T15:30:00Z", "2026-11-12T16:30:00Z"))
+        assertEquals(InviteAvailability.Conflict("Design review", 0), InviteAvailability.check(timed(), moved, utc))
+    }
+
+    @Test
+    fun inviteWithoutEndCountsAsOneHour() {
+        val window = InviteAvailability.window(timed(end = null), utc)!!
+        assertEquals(3_600_000L, window.endMillis - window.beginMillis)
+        val events = listOf(busy("Late call", "2026-11-12T15:50:00Z", "2026-11-12T16:30:00Z"))
+        assertEquals(InviteAvailability.Conflict("Late call", 0), InviteAvailability.check(timed(end = null), events, utc))
+    }
+
+    @Test
+    fun allDayAndCancelledInvitesAreNotChecked() {
+        val allDay = EmailInvite(title = "Offsite", start = "2026-11-12", end = "2026-11-13", allDay = true)
+        assertNull(InviteAvailability.window(allDay, newYork))
+        assertNull(InviteAvailability.check(allDay, emptyList(), newYork))
+        assertNull(InviteAvailability.check(timed(cancelled = true), emptyList(), utc))
+        assertNull(InviteAvailability.check(timed(start = "garbage"), emptyList(), utc))
+    }
+
+    @Test
+    fun untitledConflictReadsAsAnotherEvent() {
+        val events = listOf(busy("  ", "2026-11-12T15:00:00Z", "2026-11-12T15:30:00Z"))
+        assertEquals("Conflicts with another event", InviteAvailability.check(timed(), events, utc)?.label)
+    }
+
+    @Test
+    fun floatingInviteIsCheckedInTheViewersZone() {
+        val invite = EmailInvite(title = "Dentist", start = "2026-11-12T10:00:00", end = "2026-11-12T11:00:00")
+        // 10:00 in New York is 15:00Z.
+        val events = listOf(busy("Call", "2026-11-12T15:15:00Z", "2026-11-12T15:45:00Z"))
+        assertEquals(InviteAvailability.Conflict("Call", 0), InviteAvailability.check(invite, events, newYork))
+        assertEquals(InviteAvailability.Free, InviteAvailability.check(invite, events, tokyo))
+    }
+
+    @Test
+    fun directEventKeepsTheOrganizersZoneAndDtend() {
+        val values = CalendarEventValues.of(timed(), newYork)!!
+        assertEquals(ms("2026-11-12T15:00:00Z"), values.dtStart)
+        assertEquals(ms("2026-11-12T16:00:00Z"), values.dtEnd)
+        assertNull(values.duration)
+        assertEquals("America/New_York", values.timezone)
+        assertFalse(values.allDay)
+        assertEquals("Design review", values.title)
+    }
+
+    @Test
+    fun directRepeatingEventUsesDurationNotDtend() {
+        val values = CalendarEventValues.of(timed(recurrence = "FREQ=WEEKLY;BYDAY=TH"), newYork)!!
+        assertNull(values.dtEnd)
+        assertEquals("P3600S", values.duration)
+        assertEquals("FREQ=WEEKLY;BYDAY=TH", values.rrule)
+    }
+
+    @Test
+    fun directAllDayEventIsStoredAtUtcMidnights() {
+        val allDay = EmailInvite(title = "Offsite", start = "2026-11-05", end = "2026-11-07", allDay = true)
+        val values = CalendarEventValues.of(allDay, newYork)!!
+        assertTrue(values.allDay)
+        assertEquals("UTC", values.timezone)
+        assertEquals(ms("2026-11-05T00:00:00Z"), values.dtStart)
+        assertEquals(ms("2026-11-07T00:00:00Z"), values.dtEnd)
+        val repeating = CalendarEventValues.of(allDay.copy(recurrence = "FREQ=YEARLY"), newYork)!!
+        assertEquals("P2D", repeating.duration)
+        assertNull(repeating.dtEnd)
+    }
+
+    @Test
+    fun directFloatingEventUsesTheViewersZone() {
+        val floating = EmailInvite(title = "Dentist", start = "2026-11-12T10:00:00", end = "2026-11-12T11:00:00", timezone = "Asia/Tokyo")
+        assertEquals("America/New_York", CalendarEventValues.of(floating, newYork)!!.timezone)
+        val badZone = timed(timezone = "Not/AZone")
+        assertEquals("UTC", CalendarEventValues.of(badZone, newYork)!!.timezone)
+        assertNull(CalendarEventValues.of(timed(cancelled = true), newYork))
+    }
+
+    // endregion
 }
