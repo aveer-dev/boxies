@@ -54,6 +54,10 @@ import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -117,6 +121,7 @@ import co.inboxies.app.ui.components.PrivateEmailLogoView
 import co.inboxies.app.ui.components.rememberSheetDragY
 import co.inboxies.app.ui.components.sheetDragToDismiss
 import co.inboxies.app.util.ComposeHtml
+import co.inboxies.app.util.ForwardAttachments
 import co.inboxies.app.util.OutboundAttachmentException
 import co.inboxies.app.util.OutboundImageCompressor
 import co.inboxies.app.util.OutboundLimits
@@ -166,6 +171,7 @@ fun ComposeSheetView(
     var subject by remember(form) { mutableStateOf(form.subject) }
     var body by remember(form) { mutableStateOf(form.body) }
     var attachments by remember(form) { mutableStateOf(form.attachments) }
+    var includeForwarded by remember(form) { mutableStateOf(form.includeForwardedAttachments) }
     var showFormatSheet by remember { mutableStateOf(false) }
     var showAttachMenu by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
@@ -708,6 +714,24 @@ fun ComposeSheetView(
                                 commitTokens()
                             },
                         )
+                        if (form.forwardedAttachments.isNotEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp)
+                                    .height(1.dp)
+                                    .background(colors.line),
+                            )
+                            ForwardAttachmentsRow(
+                                filenames = form.forwardedAttachments.map { it.filename },
+                                checked = includeForwarded,
+                                onCheckedChange = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    includeForwarded = it
+                                    form.includeForwardedAttachments = it
+                                },
+                            )
+                        }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1410,6 +1434,68 @@ private fun TokenTextField(
             }
         },
     )
+}
+
+/**
+ * Forward only (AVE-181): send the original's files along. On by default; shown only when
+ * the original has a real attachment (inline images don't count). iOS twin:
+ * `ComposeSheetView.forwardAttachmentsRow`.
+ */
+@Composable
+private fun ForwardAttachmentsRow(
+    filenames: List<String>,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            Icons.Outlined.AttachFile,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(16.dp),
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                ForwardAttachments.includeLabel(filenames.size),
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.FontSize.sender,
+                color = colors.ink,
+            )
+            Text(
+                filenames.joinToString(", "),
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Switch(
+            checked = checked,
+            // The whole row toggles, so the switch itself is display-only.
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = colors.accent,
+                checkedThumbColor = Color.White,
+            ),
+        )
+    }
 }
 
 @Composable

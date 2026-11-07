@@ -95,6 +95,11 @@
             </intent-filter>
         </service>
 
+        <!-- New-mail notification actions (AVE-142); also receives Wear OS bridged taps. -->
+        <receiver
+            android:name=".services.MailNotificationActionReceiver"
+            android:exported="false" />
+
         <!-- Autofill dataset authentication: creates the private email, then fills it. -->
         <activity
             android:name=".autofill.PrivateEmailAutofillActivity"
