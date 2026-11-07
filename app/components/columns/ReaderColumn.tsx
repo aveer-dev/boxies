@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { useRef } from "react";
 import { Link } from "react-router";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "shared/folders";
@@ -37,6 +38,9 @@ export default function ReaderColumn({
 	const close = onClose ?? closeEmail;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: folders = [] } = useFolders(mailboxId);
+	// The subject on screen, kept while the column stays open, so moving to
+	// another message morphs the title from it instead of re-revealing the reader.
+	const shownSubject = useRef<string | null>(null);
 
 	const folderId = email?.folder_id ?? folder;
 	const isTag = Boolean(folderId && !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folderId));
@@ -85,6 +89,10 @@ export default function ReaderColumn({
 				mailboxId={mailboxId}
 				folder={onClose ? folderId : folder}
 				onClose={close}
+				previousSubject={shownSubject.current}
+				onSubjectShown={(subject) => {
+					shownSubject.current = subject;
+				}}
 				chips={chips}
 				renderFooter={(replyTarget) => (
 					<QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />

@@ -36,7 +36,21 @@ import type { Email, Folder, Mailbox } from "~/types";
 import { displaySenderName } from "shared/sender";
 import { bodyHasInlineQuote } from "shared/quoted-html";
 
-function EmailPanelSkeleton() {
+function EmailPanelSkeleton({ heldSubject, chips }: { heldSubject?: string | null; chips?: ReactNode }) {
+	// Moving between messages: the toolbar's room and the last title stay put
+	// while the next message loads, so the title can morph once it arrives.
+	if (heldSubject != null) {
+		return (
+			<div className="flex flex-col h-full">
+				<div className="h-12 shrink-0 border-b border-kumo-line" />
+				<EmailPanelHeader subject={heldSubject} messageCount={1} showThreadCount={false} chips={chips} reveal={false} />
+				<div className="animate-pulse px-4 py-4 space-y-4 md:px-6">
+					<div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-kumo-fill" /><div className="space-y-2 flex-1"><div className="h-3 w-40 rounded bg-kumo-fill" /><div className="h-2.5 w-24 rounded bg-kumo-fill" /></div></div>
+					<div className="space-y-2 pt-2"><div className="h-2.5 w-full rounded bg-kumo-fill" /><div className="h-2.5 w-5/6 rounded bg-kumo-fill" /><div className="h-2.5 w-4/6 rounded bg-kumo-fill" /></div>
+				</div>
+			</div>
+		);
+	}
 	return (
 		<div className="animate-pulse p-5 space-y-4">
 			<div className="h-5 w-2/3 rounded bg-kumo-fill" />
@@ -54,6 +68,8 @@ export default function EmailPanel({
 	chips,
 	renderFooter,
 	inPopOut = false,
+	previousSubject,
+	onSubjectShown,
 }: {
 	emailId: string;
 	mailboxId?: string;
@@ -66,7 +82,18 @@ export default function EmailPanel({
 	renderFooter?: (replyTarget: Email) => ReactNode;
 	/** Shown in the pop-out sheet (AVE-29) rather than a column. */
 	inPopOut?: boolean;
+	/**
+	 * The subject the reader showed before this message (null on opening it).
+	 * Set, the title morphs from it and the message appears without the
+	 * opening reveal.
+	 */
+	previousSubject?: string | null;
+	/** Called with the subject once it's on screen. */
+	onSubjectShown?: (subject: string) => void;
 }) {
+	// Read once: re-renders mustn't restart the morph.
+	const [morphFrom] = useState(previousSubject ?? null);
+	const isSwitch = morphFrom !== null;
 	const listFolder = useListFolderId();
 	const routeMailboxId = useMailboxId();
 	const mailboxId = propMailboxId || routeMailboxId;
@@ -202,9 +229,14 @@ export default function EmailPanel({
 	useReaderKey("replyLater");
 	useReaderKey("popOut");
 
+	const shownSubject = email ? email.subject || "(no subject)" : null;
+	useEffect(() => {
+		if (shownSubject !== null) onSubjectShown?.(shownSubject);
+	}, [shownSubject]); // eslint-disable-line react-hooks/exhaustive-deps
+
 	if (!email) {
 		keyActions.current = {};
-		return <EmailPanelSkeleton />;
+		return <EmailPanelSkeleton heldSubject={morphFrom} chips={chips} />;
 	}
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
@@ -445,6 +477,8 @@ export default function EmailPanel({
 				messageCount={allMessages.length}
 				showThreadCount={hasThread}
 				chips={chips}
+				previousSubject={morphFrom}
+				reveal={!isSwitch}
 			/>
 
 			<AISummaryCard
@@ -455,7 +489,7 @@ export default function EmailPanel({
 
 			{/* A single message fills the reader and its body scrolls itself. */}
 			<div className="relative flex-1 min-h-0">
-			<ScrollArea className="h-full" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
+			<ScrollArea className="h-full" contentClassName={`${isSwitch ? "" : "animate-reveal"} ${hasThread ? "" : "h-full"}`}>
 				{hasThread ? (
 					allMessages.map((msg, idx) => {
 						const isDraft = draftMessageIds.has(msg.id);
@@ -470,6 +504,7 @@ export default function EmailPanel({
 								isSending={isDraft ? isSending : false}
 								isExpanded={expandedMessages.has(msg.id)}
 								onToggleExpand={() => toggleExpand(msg.id)}
+								quietOpen={isSwitch}
 								onSendDraft={isDraft ? () => handleSendDraft(msg) : undefined}
 								onEditDraft={isDraft ? () => handleEditDraft(msg) : undefined}
 								onDeleteDraft={isDraft ? () => handleDeleteDraft(msg) : undefined}
