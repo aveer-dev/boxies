@@ -313,17 +313,27 @@ extension AppModel {
             let queuedIds = Set(queued.map(\.id))
             emails.removeAll { queuedIds.contains($0.id) }
             screenerQueue.removeAll { queuedIds.contains($0.id) }
+            let restoreIds = ScreenerDecision.restoreIds(response: response, emailId: email.id)
             if let selected = selectedEmail, queuedIds.contains(selected.id)
                 || Self.screenerSenderKey(selected) == sender
             {
-                selectedEmail = nil
-                threadEmails = []
+                if destinationFolderId != nil {
+                    // Accept keeps the reader open (AVE-182): the message is
+                    // filed where it was accepted to, so the Screener bar goes.
+                    refileOpenThread(
+                        ids: queuedIds.union(restoreIds),
+                        to: localFolderId
+                    )
+                } else {
+                    selectedEmail = nil
+                    threadEmails = []
+                }
             }
             showScreenerUndoToast(
                 ScreenerDecision.toastTitle(destinationFolderId: destinationFolderId),
                 mailboxId: mailboxId,
                 sender: sender,
-                restoreIds: ScreenerDecision.restoreIds(response: response, emailId: email.id)
+                restoreIds: restoreIds
             )
             await loadEmailsForCurrentTab(showLoading: false)
             if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
@@ -365,6 +375,18 @@ extension AppModel {
         }
     }
 
+    /// Re-files messages of the open reader in place, without closing it.
+    private func refileOpenThread(ids: Set<String>, to folderId: String) {
+        if let selected = selectedEmail, ids.contains(selected.id) {
+            selectedEmail?.folderId = folderId
+            selectedEmail?.folderName = nil
+        }
+        for index in threadEmails.indices where ids.contains(threadEmails[index].id) {
+            threadEmails[index].folderId = folderId
+            threadEmails[index].folderName = nil
+        }
+    }
+
     private func undoScreenerDecision(mailboxId: String, sender: String, restoreIds: [String]) async {
         do {
             try await APIClient.shared.deleteSenderTriage(mailboxId: mailboxId, sender: sender)
@@ -378,6 +400,8 @@ extension AppModel {
             DatabaseService.shared.moveEmail(id: id, toFolderId: "screener")
             _ = try? await APIClient.shared.moveEmail(mailboxId: mailboxId, id: id, folderId: "screener")
         }
+        // A reader left open after Accept (AVE-182) shows the Screener bar again.
+        refileOpenThread(ids: Set(restoreIds), to: "screener")
         await refreshScreenerQueue()
         await loadEmailsForCurrentTab(showLoading: false)
         if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {

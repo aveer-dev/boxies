@@ -333,13 +333,6 @@ fun EmailDetailView(
                         },
                     )
                     Spacer(modifier = Modifier.weight(1f))
-                    if (canWriteNotes) {
-                        HomeChromeToolbarButton(
-                            icon = Icons.AutoMirrored.Outlined.StickyNote2,
-                            contentDescription = "Add sticky note",
-                            onClick = { noteEditor = NoteEditorTarget.NewSticky(noteThreadKey) },
-                        )
-                    }
                     HomeChromeToolbarCluster {
                         HomeChromeToolbarClusterItem(
                             icon = Icons.Outlined.KeyboardArrowUp,
@@ -393,8 +386,9 @@ fun EmailDetailView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
                 ) {
-                    // Read-only mailbox: no delete / archive / reply, so no cluster at all.
-                    if (availability.showsDelete || availability.showsArchive || availability.showsReplyActions) HomeChromeToolbarCluster(
+                    // Read-only mailbox: no delete / archive / note / reply, so no cluster at all.
+                    // Same order as the iOS bottom bar: Delete, Archive, Add sticky note, Reply.
+                    if (availability.showsDelete || availability.showsArchive || canWriteNotes || availability.showsReplyActions) HomeChromeToolbarCluster(
                         contentPadding = PaddingValues(horizontal = HomeChromeMetrics.toolbarClusterInnerPadding),
                         itemSpacing = HomeChromeMetrics.toolbarClusterItemSpacing,
                     ) {
@@ -424,6 +418,13 @@ fun EmailDetailView(
                                 icon = Icons.Outlined.Archive,
                                 contentDescription = "Archive",
                                 onClick = { scope.launch { app.archiveCurrentEmail() } },
+                            )
+                        }
+                        if (canWriteNotes) {
+                            HomeChromeToolbarClusterItem(
+                                icon = Icons.AutoMirrored.Outlined.StickyNote2,
+                                contentDescription = "Add sticky note",
+                                onClick = { noteEditor = NoteEditorTarget.NewSticky(noteThreadKey) },
                             )
                         }
                         if (availability.showsReplyActions) {
@@ -461,7 +462,7 @@ fun EmailDetailView(
                 if (isScreenerEmail && !readOnly) {
                     ScreenerTriageBar(
                         email = current,
-                        onDone = onClose,
+                        onDeclined = onClose,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
@@ -780,7 +781,8 @@ private fun TagChip(title: String, destructive: Boolean = false) {
 @Composable
 private fun ScreenerTriageBar(
     email: Email,
-    onDone: () -> Unit,
+    /** Decline closes the reader; Accept keeps it open on the refiled message (AVE-182). */
+    onDeclined: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val app = LocalAppModel.current
@@ -806,15 +808,12 @@ private fun ScreenerTriageBar(
         ScreenerActionButtons(
             email = email,
             onAccept = { dest ->
-                scope.launch {
-                    app.approveScreenerSender(email, dest)
-                    onDone()
-                }
+                scope.launch { app.approveScreenerSender(email, dest) }
             },
             onDecline = {
                 scope.launch {
                     app.rejectScreenerSender(email)
-                    onDone()
+                    onDeclined()
                 }
             },
         )

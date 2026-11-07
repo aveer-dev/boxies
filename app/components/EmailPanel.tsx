@@ -444,7 +444,7 @@ export default function EmailPanel({
 					emailId={email.id}
 					sender={email.sender}
 					senderName={email.sender_name}
-					onDone={closePanel}
+					onDeclined={closePanel}
 				/>
 			)}
 
