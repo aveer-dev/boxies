@@ -21,6 +21,8 @@ import StickyNotes from "~/components/notes/StickyNotes";
 import { groupThreadNotes, threadKeyFor } from "~/lib/thread-notes";
 import { useThreadNotes } from "~/queries/thread-notes";
 import AISummaryCard from "~/components/email-panel/AISummaryCard";
+import MailCard from "~/components/email-panel/MailCard";
+import { readerCard } from "~/lib/mail-cards";
 import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries";
 import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
@@ -138,6 +140,12 @@ export default function EmailPanel({
 		const nonDrafts = allMessages.filter((msg) => !draftMessageIds.has(msg.id));
 		return nonDrafts.length > 0 ? nonDrafts[0] : email;
 	}, [allMessages, draftMessageIds, currentMailbox?.email, email]);
+
+	// Code / Invite card (AVE-178): from the newest message that carries one.
+	const mailCard = useMemo(
+		() => (isDraftFolder ? null : readerCard(allMessages, draftMessageIds)),
+		[allMessages, draftMessageIds, isDraftFolder],
+	);
 
 	// AI summary (AVE-20): only for mail that reached the mailbox and has
 	// enough text. The server re-checks both; this just skips pointless calls.
@@ -504,6 +512,8 @@ export default function EmailPanel({
 				/>
 			)}
 			</div>
+
+			{mailCard && <MailCard card={mailCard} className="mx-4 mt-3 mb-3 shrink-0 md:mx-6" />}
 
 			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
 				renderFooter(lastReceivedMessage)}

@@ -661,6 +661,10 @@ data class Email(
     @SerialName("inline_note_count") val inlineNoteCount: Int? = null,
     /** RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99). */
     @SerialName("one_click_unsubscribe") val oneClickUnsubscribe: Boolean? = null,
+    /** One-time code for the reader's Code card (reader payloads only; AVE-175/177). */
+    @Serializable(with = LenientOtpSerializer::class) val otp: EmailOtp? = null,
+    /** Calendar invite for the reader's Invite card (reader payloads only; AVE-175/177). */
+    @Serializable(with = LenientInviteSerializer::class) val invite: EmailInvite? = null,
 ) {
     /** A pending reminder on a mail still in Reply Later (AVE-86). */
     val hasPendingReplyLaterReminder: Boolean

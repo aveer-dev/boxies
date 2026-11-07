@@ -215,6 +215,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
+| `-previewDetail -previewCode` / `-previewDetail -previewInvite` | Reader with the Code card / Invite card pinned above the bottom bar (add `-previewInviteCancelled` for the cancelled invite, `-previewInviteAddress` for an in-person invite with Directions, `-previewInviteExpanded` to open the details) (AVE-176) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |

@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Shared home chrome metrics — mirrors iOS `HomeChromeMetrics`. */
 object HomeChromeMetrics {
@@ -159,6 +160,39 @@ object ToastMetrics {
     /** Bottom inset when nothing sits under the toast (sheets, sign-in). */
     val standaloneBottomInset: Dp = 24.dp
     val dismissDistance: Dp = 36.dp
+}
+
+/**
+ * Reader Code card / Invite card pinned above the bottom bar (AVE-177). Same numbers
+ * as iOS `AppTheme.MailCard` (AVE-176). The container is [liquidGlass], like the toast.
+ */
+object MailCardMetrics {
+    val cornerRadius: Dp = 22.dp
+    val padding: Dp = 14.dp
+    /** Matches the reader's 16.dp side gutter. */
+    val horizontalInset: Dp = 16.dp
+    val bottomInset: Dp = 8.dp
+    val eyebrow = 12.sp
+    val title = 15.sp
+    val detail = 13.sp
+    /** Monospaced, semibold, tracked. */
+    val code = 22.sp
+    val codeTracking = 2.sp
+    val buttonFont = 14.sp
+    val buttonMinHeight: Dp = 36.dp
+    val buttonHorizontalPadding: Dp = 14.dp
+    val buttonSpacing: Dp = 8.dp
+    val buttonIconSize: Dp = 16.dp
+    val titleIconSize: Dp = 18.dp
+    val titleIconColumn: Dp = 22.dp
+    val detailIconSize: Dp = 14.dp
+    val detailIconColumn: Dp = 16.dp
+    /** Details sit under the title, past the icon column. */
+    val detailIndent: Dp = 28.dp
+    /** How long "Copied" stays on the card. */
+    const val copiedFeedbackMs: Long = 2_000L
+    /** A copied code is cleared from the clipboard after this, if it is still ours. */
+    const val clipboardExpiryMs: Long = 90_000L
 }
 
 /**

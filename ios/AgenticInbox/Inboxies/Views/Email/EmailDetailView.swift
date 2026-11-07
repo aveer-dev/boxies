@@ -49,6 +49,12 @@ struct EmailDetailView: View {
         return EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
+    /// The newest message's code or invite; none while the thread is still loading.
+    private var mailCard: MailCards.Card? {
+        if app.isEmailDetailLoading && app.threadEmails.isEmpty { return nil }
+        return MailCards.card(for: app.threadEmails)
+    }
+
     private var subjectText: String {
         let subject = email?.subject ?? ""
         return subject.isEmpty ? "(no subject)" : subject
@@ -105,6 +111,14 @@ struct EmailDetailView: View {
                     }
                 }
             }
+            // Code / Invite card in thumb reach, above the bottom bar (AVE-176).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let card = mailCard {
+                    MailCardView(card: card)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mailCard)
             .overlay {
                 let stickies = noteGroups.sticky
                 if !stickies.isEmpty {
