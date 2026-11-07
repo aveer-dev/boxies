@@ -309,7 +309,7 @@ private struct MailCardButton: View {
         let button = Button(action: action) {
             Label {
                 Text(title)
-                    .font(.inter(size: AppTheme.MailCard.buttonFont, weight: .medium))
+                    .font(.inter(size: AppTheme.MailCard.buttonFont, weight: .semibold))
             } icon: {
                 Image(systemName: systemImage)
                     .font(.system(size: AppTheme.MailCard.iconSize, weight: .semibold))
@@ -317,17 +317,13 @@ private struct MailCardButton: View {
             }
             .labelStyle(.titleAndIcon)
             .lineLimit(1)
+            .frame(minHeight: AppTheme.MailCard.buttonMinHeight)
+            .padding(.horizontal, 2)
         }
         .buttonBorderShape(.capsule)
-        .controlSize(.small)
+        .controlSize(.regular)
         .tint(AppTheme.accent)
 
-        styled(button)
-            .modifier(MailCardHitArea(action: action))
-    }
-
-    @ViewBuilder
-    private func styled(_ button: some View) -> some View {
         if #available(iOS 26.0, *) {
             if prominent {
                 button.buttonStyle(.glassProminent)
@@ -341,25 +337,6 @@ private struct MailCardButton: View {
                 button.buttonStyle(.bordered).foregroundStyle(AppTheme.ink)
             }
         }
-    }
-}
-
-/// Grows the tappable area of a small card button to `buttonHitHeight` without
-/// changing its layout: taps on the capsule go to the button, taps just above or
-/// below it (inside the card padding) run the same action.
-private struct MailCardHitArea: ViewModifier {
-    let action: () -> Void
-
-    func body(content: Content) -> some View {
-        content
-            .background(GeometryReader { proxy in
-                let slop = max(0, (AppTheme.MailCard.buttonHitHeight - proxy.size.height) / 2)
-                Color.clear
-                    .contentShape(Rectangle())
-                    .padding(.vertical, -slop)
-                    .onTapGesture(perform: action)
-                    .accessibilityHidden(true)
-            })
     }
 }
 
