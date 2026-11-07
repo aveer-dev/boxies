@@ -6,20 +6,27 @@ import type { AppLoadContext, EntryContext } from "react-router";
 import { ServerRouter } from "react-router";
 import { isbot } from "isbot";
 import { renderToReadableStream } from "react-dom/server";
+import { CspNonceContext } from "~/lib/csp-nonce";
 
 export default async function handleRequest(
   request: Request,
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  _loadContext: AppLoadContext
+  loadContext: AppLoadContext
 ) {
   let shellRendered = false;
   const userAgent = request.headers.get("user-agent");
 
+  // The Worker's CSP nonce (workers/lib/content-security-policy.ts): React
+  // Router and React put it on their inline scripts, root.tsx on its own.
+  const nonce = loadContext.cspNonce;
   const body = await renderToReadableStream(
-    <ServerRouter context={routerContext} url={request.url} />,
+    <CspNonceContext.Provider value={nonce}>
+      <ServerRouter context={routerContext} url={request.url} nonce={nonce} />
+    </CspNonceContext.Provider>,
     {
+      nonce,
       onError(error: unknown) {
         responseStatusCode = 500;
         // Log streaming rendering errors from inside the shell.  Don't log

@@ -4,7 +4,7 @@
 
 import { routeAgentRequest } from "agents";
 import { Hono } from "hono";
-import { createRequestHandler } from "react-router";
+import { type AppLoadContext, createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import {
@@ -20,16 +20,27 @@ import {
 import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
-import { authDb, authorizeMailboxAccess } from "./auth/authz";
+import { getMailboxStub } from "./lib/email-helpers";
+import { withSecurityHeaders } from "./lib/security-headers";
+import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "./auth/authz";
+import { isLegacyMailboxPage, legacyAppPageResponse, legacyInviteResponse } from "./lib/legacy-app-urls";
 import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
 import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
 import { handleBetterAuthRequest } from "./routes/better-auth";
+import { withSecurityScope } from "./auth/security-scope";
 import { registerOpsRoutes } from "./routes/ops";
 import { runScheduledMaintenance } from "./lib/maintenance";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import { AUTH_BASE_PATH } from "./auth";
 import { webHostRedirect } from "./lib/web-host-redirect";
+import { httpsRedirect } from "./lib/https-redirect";
+import {
+	CSP_REPORT_PATH,
+	createCspNonce,
+	handleCspReport,
+	withContentSecurityPolicy,
+} from "./lib/content-security-policy";
 import type { Env } from "./types";
 import type { McpConsentView } from "../shared/mcp-consent";
 
@@ -50,6 +61,8 @@ declare module "react-router" {
 		 * renders it. Absent on every other request.
 		 */
 		mcpConsent?: McpConsentView;
+		/** This response's CSP nonce (AVE-148); app/entry.server.tsx puts it on every inline script. */
+		cspNonce?: string;
 	}
 }
 
@@ -57,6 +70,19 @@ const requestHandler = createRequestHandler(
 	() => import("virtual:react-router/server-build"),
 	import.meta.env.MODE,
 );
+
+/**
+ * Renders a React Router document with its Content-Security-Policy: a fresh
+ * nonce goes to the renderer and into the header (workers/lib/content-security-policy.ts).
+ */
+async function renderDocument(
+	request: Request,
+	loadContext: Pick<AppLoadContext, "cloudflare" | "mcpConsent">,
+): Promise<Response> {
+	const nonce = createCspNonce();
+	const response = await requestHandler(request, { ...loadContext, cspNonce: nonce });
+	return withContentSecurityPolicy(response, { nonce, requestUrl: request.url });
+}
 
 import { isPublicAuthPath } from "./lib/auth-paths";
 import { serviceEndedErrorForMailbox } from "./lib/domain-service";
@@ -67,11 +93,31 @@ type AppVariables = { principal?: RequestPrincipal; operator?: Operator };
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
+// Security headers on every response (AVE-115, workers/lib/security-headers.ts).
+// First, so redirects and early returns below get them too.
+app.use("*", async (c, next) => {
+	await next();
+	const res = withSecurityHeaders(c.res, c.req.raw);
+	if (res !== c.res) c.res = res;
+});
+
+// Sign-ins made by this request are recorded (and a new device is mailed
+// about) after the response (AVE-151, workers/auth/security-scope.ts).
+app.use("*", (c, next) => withSecurityScope(c.env, c.req.raw, c.executionCtx, next));
+
+// Cleartext requests go to HTTPS (AVE-109, workers/lib/https-redirect.ts):
+// a fallback for the zones' "Always Use HTTPS". Never in local dev.
+app.use("*", async (c, next) => httpsRedirect(c.req.raw) ?? next());
+
 // The web app lives on APP_BASE_URL; old hosts (inboxies.email) send browsers there.
 app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
 
 // Better Auth (AUTH_DB): an allowlisted subset of its routes.
-app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw));
+app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw, c.executionCtx));
+
+// CSP violation reports (AVE-148): browsers send them without cookies, so
+// this is public. Logged only, size-capped, nothing stored.
+app.post(CSP_REPORT_PATH, (c) => handleCspReport(c.req.raw));
 
 // Operators: Cloudflare Access only, and only on /ops/*.
 app.use("/ops/*", operatorMiddleware);
@@ -88,12 +134,32 @@ const mcpOAuth = createMcpOAuth(mcpHandler, {
 	// The consent page is the web app's /authorize route (AVE-68), rendered
 	// with the view the Worker built; the Worker adds the security headers.
 	renderConsent: (request, env, ctx, view) =>
-		requestHandler(request, { cloudflare: { env, ctx }, mcpConsent: view }),
+		renderDocument(request, { cloudflare: { env, ctx }, mcpConsent: view }),
 });
 registerMcpOAuthRoutes(app, mcpOAuth);
 
+// Old invite links (`/invite/<token>`) move the token into the query string
+// before the page loads (AVE-126, workers/lib/legacy-app-urls.ts). Public.
+app.use("/invite/*", async (c, next) => legacyInviteResponse(c.req.raw) ?? next());
+
 // Everyone else: a Better Auth session.
 app.use("*", sessionMiddleware);
+
+// Old mailbox links with an address (`/mailbox/you@domain/...`) or a tag name
+// (`.../emails/<tag>`) in the path go to the mailbox's and the tag's index
+// before the page loads (AVE-126). Signed-out visitors were already sent to
+// /login above. The folder list is read only for these old links.
+app.use("/mailbox/*", async (c, next) => {
+	const userId = c.get("principal")?.userId;
+	if (!userId || !isLegacyMailboxPage(c.req.raw)) return next();
+	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), userId);
+	const response = await legacyAppPageResponse(
+		c.req.raw,
+		rows.map((r) => r.mailboxId),
+		async (mailboxId) => (await getMailboxStub(c.env, mailboxId).getFolders()).map((f) => f.id),
+	);
+	return response ?? next();
+});
 
 // /mcp: an OAuth access token goes to the resource server; anything else
 // already went through the session middleware (Bearer session token or
@@ -125,7 +191,7 @@ app.all("/agents/*", async (c) => {
 
 // React Router catch-all: serves the SPA for all non-API routes
 app.all("*", (c) => {
-	return requestHandler(c.req.raw, {
+	return renderDocument(c.req.raw, {
 		cloudflare: { env: c.env, ctx: c.executionCtx as ExecutionContext },
 	});
 });

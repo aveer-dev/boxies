@@ -26,6 +26,10 @@ import {
 } from "../lib/email-helpers";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { SendEmailRequestSchema } from "../lib/schemas";
+import { countRecipients, recipientCapError } from "../lib/send-quota";
+import { buildReplyEnvelope, plainTextToHtml } from "../../shared/reply-envelope";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import { z } from "zod";
 import { appendQuote, buildForwardQuote, buildReplyQuote } from "../../shared/quoted-html";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
@@ -40,26 +44,103 @@ import {
 } from "../lib/alias-sender";
 
 type AppContext = Context<MailboxContext>;
+type SendEmailRequest = z.infer<typeof SendEmailRequestSchema>;
 type RateLimitStub = {
-	checkSendRateLimit: () => Promise<string | null>;
+	checkSendRateLimit: (recipients?: number) => Promise<string | null>;
 	releaseSendSlot: () => Promise<void>;
 };
 
 export async function handleReplyEmail(c: AppContext) {
-	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	// A retried send with a stored Idempotency-Key returns the original row.
 	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
 	if ("response" in idem) return idem.response;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { cc, bcc, subject, attachments } = body;
 
-	const stub = c.var.mailboxStub;
-	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
-
+	const rawOriginal = (await c.var.mailboxStub.getEmail(id)) as EmailFull | null;
 	if (!rawOriginal) {
 		return c.json({ error: "Original email not found" }, 404);
 	}
+
+	return sendReply(c, rawOriginal, body, idem.key);
+}
+
+/** Longest text a quick reply accepts (a notification / watch reply is short). */
+export const QUICK_REPLY_MAX_LENGTH = 2000;
+
+export const QuickReplyRequestSchema = z.object({
+	text: z
+		.string()
+		.trim()
+		.min(1, "text is required")
+		.max(QUICK_REPLY_MAX_LENGTH, `text must be at most ${QUICK_REPLY_MAX_LENGTH} characters`),
+	/** IANA zone for the quote's "On <date>" line; defaults to UTC. */
+	quote_time_zone: z.string().max(64).optional(),
+});
+
+/**
+ * `POST /api/v1/mailboxes/:mailboxId/emails/:id/quick-reply { text }` (AVE-140).
+ *
+ * A Reply composed by the Worker for notification actions and watches, which
+ * only have the text. To / Re: subject come from the original the way the web
+ * quick reply builds them (`buildReplyEnvelope`, plain Reply), and the send
+ * goes through the same path as `/reply`: the thread's private email is the
+ * sender when the conversation is bound to one (`resolveOutboundSender`), the
+ * original is quoted, and Idempotency-Key, suppression, size and the send
+ * rate limit all apply. Responds like `/reply`: 202 `{ id, status: "sent" }`.
+ */
+export async function handleQuickReply(c: AppContext) {
+	const mailboxId = c.var.mailboxId;
+	const id = c.req.param("id") ?? "";
+	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
+	if ("response" in idem) return idem.response;
+	const input = QuickReplyRequestSchema.parse(await c.req.json());
+
+	const rawOriginal = (await c.var.mailboxStub.getEmail(id)) as EmailFull | null;
+	if (!rawOriginal) {
+		return c.json({ error: "Original email not found" }, 404);
+	}
+	const original = await resolveOriginalEmail(c.var.mailboxStub, rawOriginal);
+
+	const settings = await loadReplySettings(c.env, mailboxId);
+	const envelope = buildReplyEnvelope(
+		original,
+		{ email: mailboxId, fromName: settings.fromName },
+		"reply",
+	);
+	const body: SendEmailRequest = {
+		to: envelope.to,
+		from: envelope.from,
+		subject: envelope.subject,
+		html: plainTextToHtml(input.text),
+		text: input.text,
+		quote_original: true,
+		quote_time_zone: input.quote_time_zone,
+	};
+	return sendReply(c, rawOriginal, body, idem.key);
+}
+
+async function loadReplySettings(env: AppContext["env"], mailboxId: string): Promise<{ fromName?: string }> {
+	try {
+		const obj = await env.BUCKET.get(mailboxMetadataKey(mailboxId));
+		const parsed = obj ? ((await obj.json()) as { fromName?: unknown }) : null;
+		const fromName = typeof parsed?.fromName === "string" ? parsed.fromName.trim() : "";
+		return fromName ? { fromName } : {};
+	} catch {
+		return {};
+	}
+}
+
+/** Shared by `/reply` and `/quick-reply`: everything after the request is parsed. */
+async function sendReply(
+	c: AppContext,
+	rawOriginal: EmailFull,
+	body: SendEmailRequest,
+	idempotencyKey: string | null,
+) {
+	const mailboxId = c.var.mailboxId;
+	const { cc, bcc, subject, attachments } = body;
+	const stub = c.var.mailboxStub;
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
 	// The original as the real message, formatting kept (AVE-133).
@@ -101,6 +182,11 @@ export async function handleReplyEmail(c: AppContext) {
 		throw e;
 	}
 
+	// 50 recipients at most (AVE-125). The schema checks /reply and /forward
+	// bodies; this also covers /quick-reply, whose body the Worker builds.
+	const tooMany = recipientCapError(to, cc, bcc);
+	if (tooMany) return c.json({ error: tooMany }, 400);
+
 	// Suppressed recipients block the send before a slot or Sent row exists.
 	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
 	if (suppressed) return suppressed;
@@ -115,8 +201,9 @@ export async function handleReplyEmail(c: AppContext) {
 		throw e;
 	}
 
+	// The quota counts recipients (AVE-125).
 	const rateLimitError = await (stub as unknown as RateLimitStub)
-		.checkSendRateLimit();
+		.checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) {
 		return c.json({ error: rateLimitError }, 429);
 	}
@@ -145,7 +232,7 @@ export async function handleReplyEmail(c: AppContext) {
 				delivery_status: "queued",
 				delivery_error: null,
 				alias_id: sender.aliasId,
-				idempotency_key: idem.key,
+				idempotency_key: idempotencyKey,
 				raw_headers: JSON.stringify([
 					{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 					{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -258,8 +345,9 @@ export async function handleForwardEmail(c: AppContext) {
 		throw e;
 	}
 
+	// The quota counts recipients (AVE-125).
 	const rateLimitError = await (stub as unknown as RateLimitStub)
-		.checkSendRateLimit();
+		.checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) {
 		return c.json({ error: rateLimitError }, 429);
 	}

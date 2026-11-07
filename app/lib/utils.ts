@@ -172,31 +172,6 @@ export function getSignatureBlock(settings?: {
 	return "";
 }
 
-/**
- * Rewrite CID references in email HTML to API URLs for inline images.
- * Replaces `src="cid:image001@example.com"` with the attachment API endpoint.
- */
-export function rewriteInlineImages(
-	body: string,
-	mailboxId: string,
-	emailId: string,
-	attachments?: { id: string; content_id?: string | null; disposition?: string | null }[],
-): string {
-	if (!body || !attachments?.length) return body;
-	let result = body;
-	for (const att of attachments) {
-		if (att.disposition === "inline" && att.content_id) {
-			const url = `/api/v1/mailboxes/${mailboxId}/emails/${emailId}/attachments/${att.id}`;
-			// Strip angle brackets from content_id if present
-			const cid = att.content_id.startsWith("<")
-				? att.content_id.slice(1, -1)
-				: att.content_id;
-			result = result.replace(new RegExp(`cid:${cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), url);
-		}
-	}
-	return result;
-}
-
 export function getNonInlineAttachments(attachments?: Attachment[]): Attachment[] {
 	return attachments?.filter((attachment) => attachment.disposition !== "inline") ?? [];
 }

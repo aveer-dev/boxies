@@ -185,6 +185,51 @@ final class SharedSessionTests: XCTestCase {
         XCTAssertNil(KeychainStore.read(key, in: .shared))
     }
 
+    /// Items saved with the old backup-able class are moved to ThisDeviceOnly
+    /// on read, keeping the token (nobody is signed out by the update).
+    func testReadMigratesLegacyAccessibilityInPlace() throws {
+        let key = "test-accessibility-\(UUID().uuidString)"
+        defer { KeychainStore.deleteEverywhere(key) }
+
+        var legacy: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: Data("legacy-token".utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+        ]
+        if let shared = KeychainStore.accessGroup {
+            legacy[kSecAttrAccessGroup as String] = shared
+        }
+        var status = SecItemAdd(legacy as CFDictionary, nil)
+        if status == errSecMissingEntitlement {
+            // Unsigned host: KeychainStore falls back to the default group.
+            legacy.removeValue(forKey: kSecAttrAccessGroup as String)
+            status = SecItemAdd(legacy as CFDictionary, nil)
+        }
+        try XCTSkipIf(status == errSecMissingEntitlement, "The keychain is unavailable on this host")
+        XCTAssertEqual(status, errSecSuccess)
+        XCTAssertEqual(accessibility(key), kSecAttrAccessibleAfterFirstUnlock as String)
+
+        XCTAssertEqual(KeychainStore.read(key, in: .shared), "legacy-token")
+
+        XCTAssertEqual(accessibility(key), kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+        XCTAssertEqual(KeychainStore.read(key, in: .shared), "legacy-token")
+        XCTAssertEqual(itemCount(key), 1)
+    }
+
+    func testWriteStoresThisDeviceOnly() throws {
+        try XCTSkipUnless(keychainAvailable(), "The keychain is unavailable on this host")
+        let key = "test-write-\(UUID().uuidString)"
+        defer { KeychainStore.deleteEverywhere(key) }
+
+        KeychainStore.write(key, value: "fresh-token", in: .app)
+        XCTAssertEqual(KeychainStore.read(key, in: .app), "fresh-token")
+        XCTAssertEqual(accessibility(key), kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+
+        KeychainStore.write(key, value: "fresh-token", in: .shared)
+        XCTAssertEqual(KeychainStore.read(key, in: .shared), "fresh-token")
+    }
+
     func testPublishMirrorsMailboxAndOnlyNonDefaultAPIOrigin() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: SharedSession.appGroupId))
         let savedMailbox = defaults.object(forKey: "activeMailboxId")
@@ -206,6 +251,46 @@ final class SharedSessionTests: XCTestCase {
         SharedSession.clear()
         XCTAssertNil(SharedSession.activeMailboxId)
         XCTAssertEqual(SharedSession.apiBaseURL, AppConfig.defaultAPIBaseURL)
+    }
+
+    /// False on builds without any keychain entitlement (CI's CODE_SIGNING_ALLOWED=NO),
+    /// where even the default group refuses items. `KeychainStore.write` doesn't
+    /// report its status, so probe with an item of our own.
+    private func keychainAvailable() -> Bool {
+        let probe = "test-probe-\(UUID().uuidString)"
+        defer { KeychainStore.deleteEverywhere(probe) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: probe,
+            kSecValueData as String: Data(),
+        ]
+        return SecItemAdd(query as CFDictionary, nil) != errSecMissingEntitlement
+    }
+
+    /// `kSecAttrAccessible` of the single item for `key`, in any group.
+    private func accessibility(_ key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let attributes = item as? [String: Any] else { return nil }
+        return attributes[kSecAttrAccessible as String] as? String
+    }
+
+    private func itemCount(_ key: String) -> Int {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess else { return 0 }
+        return (items as? [[String: Any]])?.count ?? 0
     }
 
     private func stored(_ key: String, group: String) -> String? {

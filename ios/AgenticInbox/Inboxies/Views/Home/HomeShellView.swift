@@ -182,6 +182,8 @@ struct HomeShellView: View {
                 // Leaving the app ends the undo window: send now rather than risk a kill.
                 if phase == .background {
                     app.commitPendingActionForBackground()
+                    // Leave the "Today's inbox" widget current (AVE-149).
+                    app.publishInboxWidgetNow()
                 }
             }
             .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)

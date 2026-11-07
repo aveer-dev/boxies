@@ -26,6 +26,12 @@ struct InboxiesApp: App {
             // Leaving the preview: the fixture identities go with it.
             Task { await PrivateEmailIdentities.removeAll() }
         }
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-previewWidgetData") {
+            // AVE-149: sample data for the real "Today's inbox" widget on the home screen.
+            let inboxZero = arguments.indices.contains(index + 1) && arguments[index + 1] == "zero"
+            InboxWidgetPublisher.publishPreviewData(inboxZero: inboxZero)
+        }
         #endif
     }
 
@@ -59,8 +65,14 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewMembers")
                 || ProcessInfo.processInfo.arguments.contains("-previewSessions")
                 || ProcessInfo.processInfo.arguments.contains("-previewSenders")
+                || ProcessInfo.processInfo.arguments.contains("-previewSuppressions")
+                || ProcessInfo.processInfo.arguments.contains("-previewTags")
                 || ProcessInfo.processInfo.arguments.contains("-previewSettings") {
                 PreviewAdminAuthRoot()
+                    .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewWidgets") {
+                // AVE-138: "Today's inbox" widget mocks at real size.
+                InboxWidgetGallery()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {
                 SplashScreenView()

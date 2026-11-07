@@ -83,7 +83,7 @@ wrangler secret put GOOGLE_EXTRA_CLIENT_IDS
 
 For local dev, set the same values in `.dev.vars` (see `.dev.vars.example`).
 
-Check that **Zero Trust → Access** bypasses `inboxies.email/api/*` (see [`android/README.md`](../android/README.md#cloudflare-access-required-for-production)). Otherwise mobile calls get the Access HTML page back.
+Keep Cloudflare Access off `/api/*`: it only belongs on `/ops/*` (see [`android/README.md`](../android/README.md#how-the-app-signs-in)). Otherwise mobile calls get the Access HTML page back.
 
 **Verify:**
 
@@ -142,5 +142,4 @@ This should return **401** "Invalid Google identity token", not 503.
 
 ## Cleanup while you're here
 
-- [`android/README.md`](../android/README.md) still lists `MOBILE_JWT_SECRET`. Sessions are Better Auth now (`BETTER_AUTH_SECRET`), and Google tokens are checked against `GOOGLE_CLIENT_ID` plus `GOOGLE_EXTRA_CLIENT_IDS`.
 - Item S7 in [`platform-review-2026-10-09.md`](platform-review-2026-10-09.md) says Google sign-in ignores `email_verified`. Recheck it against Better Auth's Google verifier before launch.

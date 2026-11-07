@@ -223,6 +223,114 @@ struct McpGrant: Codable, Identifiable, Hashable {
     var expiresAt: String?
 }
 
+/// One entry of Account → Devices & sessions → Recent security activity (AVE-151).
+/// Mirrors the Worker's `SecurityActivityItem`; `kind` stays a string so a kind
+/// newer than this build still renders (as a generic label).
+struct SecurityActivityItem: Codable, Identifiable, Hashable {
+    var id: String
+    var kind: String
+    var createdAt: String
+    /// "Chrome on macOS"; nil when unknown.
+    var device: String?
+    /// "Lagos, Nigeria" (approximate); nil when unknown.
+    var location: String?
+    var country: String?
+    /// Sign-ins only: from a device not seen in the last 90 days.
+    var newDevice: Bool
+    /// Sign-in method events: "google", "apple", "password".
+    var provider: String?
+
+    init(
+        id: String, kind: String, createdAt: String, device: String? = nil, location: String? = nil,
+        country: String? = nil, newDevice: Bool = false, provider: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.createdAt = createdAt
+        self.device = device
+        self.location = location
+        self.country = country
+        self.newDevice = newDevice
+        self.provider = provider
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(String.self, forKey: .kind)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        device = try c.decodeIfPresent(String.self, forKey: .device)
+        location = try c.decodeIfPresent(String.self, forKey: .location)
+        country = try c.decodeIfPresent(String.self, forKey: .country)
+        newDevice = try c.decodeIfPresent(Bool.self, forKey: .newDevice) ?? false
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+    }
+}
+
+/// `GET /api/v1/me/security-activity`: the caller's last 30 days, newest first.
+struct SecurityActivityResponse: Codable {
+    var since: String?
+    var events: [SecurityActivityItem]
+}
+
+/// Labels for Recent security activity. Same copy as web `app/lib/security-activity.ts`
+/// and Android `securityEventTitle`.
+enum SecurityActivity {
+    static let fallbackTitle = "Account security change"
+
+    /// "Signed in from a new device", "Password changed", "Google sign-in connected", …
+    static func title(_ event: SecurityActivityItem) -> String {
+        switch event.kind {
+        case "sign_in": return event.newDevice ? "Signed in from a new device" : "Signed in"
+        case "password_changed": return "Password changed"
+        case "password_added": return "Password added"
+        case "password_reset": return "Password reset"
+        case "two_factor_enabled": return "Two-factor authentication turned on"
+        case "two_factor_disabled": return "Two-factor authentication turned off"
+        case "passkey_added": return "Passkey added"
+        case "passkey_removed": return "Passkey removed"
+        case "sign_in_method_added":
+            return providerName(event.provider).map { "\($0) sign-in connected" } ?? "Sign-in method connected"
+        case "sign_in_method_removed":
+            return providerName(event.provider).map { "\($0) sign-in removed" } ?? "Sign-in method removed"
+        case "recovery_email_set": return "Recovery email changed"
+        case "recovery_email_removed": return "Recovery email removed"
+        default: return fallbackTitle
+        }
+    }
+
+    /// "Chrome on macOS · Lagos, Nigeria"; empty when neither is known.
+    static func detail(_ event: SecurityActivityItem) -> String {
+        [event.device, event.location]
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    static func providerName(_ provider: String?) -> String? {
+        guard let p = provider?.trimmingCharacters(in: .whitespaces).lowercased(), !p.isEmpty else { return nil }
+        switch p {
+        case "google": return "Google"
+        case "apple": return "Apple"
+        case "password", "credential": return "Password"
+        default: return p.prefix(1).uppercased() + p.dropFirst()
+        }
+    }
+
+    /// SF Symbol for the row.
+    static func symbol(_ event: SecurityActivityItem) -> String {
+        switch event.kind {
+        case "sign_in": return "arrow.right.circle"
+        case "password_changed", "password_added", "password_reset": return "key"
+        case "two_factor_enabled", "two_factor_disabled": return "lock.shield"
+        case "passkey_added", "passkey_removed": return "person.badge.key"
+        case "recovery_email_set", "recovery_email_removed": return "envelope"
+        case "sign_in_method_added", "sign_in_method_removed": return "person.crop.circle"
+        default: return "shield"
+        }
+    }
+}
+
 struct RevokeSessionsResponse: Codable {
     var ok: Bool
     var revoked: Int?
@@ -585,6 +693,43 @@ enum SpamVerdictToast {
     }
 }
 
+/// `POST sender-triage/approve` and `/reject` response: the queued Screener mail
+/// that moved with the decision (AVE-159 Undo moves it back).
+struct SenderTriageDecisionResponse: Decodable, Equatable {
+    struct Moved: Decodable, Equatable {
+        var moved: Int?
+        var ids: [String]?
+    }
+
+    var moved: Moved?
+}
+
+/// Accept / Decline in the Screening room and its Undo (AVE-159).
+/// Twin: Android `ScreenerDecision` in SenderTriage.kt.
+enum ScreenerDecision {
+    private static let folderNames: [String: String] = [
+        "promotions": "Promotions",
+        "updates": "Updates",
+    ]
+
+    /// Toast after the decision. `destinationFolderId` nil means Decline.
+    /// Inbox is the plain Accept (pins nothing, AVE-139); Promotions / Updates stick.
+    static func toastTitle(destinationFolderId: String?) -> String {
+        guard let destinationFolderId else { return "Declined" }
+        if let name = folderNames[destinationFolderId] {
+            return "Accepted · future mail goes to \(name)"
+        }
+        return "Accepted"
+    }
+
+    /// Messages Undo moves back to the Screener: everything the decision refiled,
+    /// plus the one it was made from. Order kept, duplicates dropped.
+    static func restoreIds(response: SenderTriageDecisionResponse?, emailId: String) -> [String] {
+        var seen = Set<String>()
+        return ((response?.moved?.ids ?? []) + [emailId]).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+}
+
 struct Email: Identifiable, Codable, Hashable {
     let id: String
     var threadId: String?
@@ -642,6 +787,10 @@ struct Email: Identifiable, Codable, Hashable {
     var matchedRuleId: String? = nil
     /// RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99).
     var oneClickUnsubscribe: Bool? = nil
+    /// One-time code for the reader's Code card (reader payloads only; AVE-175/176).
+    var otp: EmailOtp? = nil
+    /// Calendar invite for the reader's Invite card (reader payloads only; AVE-175/176).
+    var invite: EmailInvite? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -675,6 +824,7 @@ struct Email: Identifiable, Codable, Hashable {
         case classificationReason = "classification_reason"
         case matchedRuleId = "matched_rule_id"
         case oneClickUnsubscribe = "one_click_unsubscribe"
+        case otp, invite
     }
 
     /// Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
@@ -1060,6 +1210,9 @@ extension Email {
         hasStickyNote = c.decodeLenientBool(forKey: .hasStickyNote)
         stickyNoteText = try? c.decodeIfPresent(String.self, forKey: .stickyNoteText)
         inlineNoteCount = try? c.decodeIfPresent(Int.self, forKey: .inlineNoteCount)
+        // Reader cards (AVE-176): a malformed card must never fail the whole email.
+        otp = try? c.decodeIfPresent(EmailOtp.self, forKey: .otp)
+        invite = try? c.decodeIfPresent(EmailInvite.self, forKey: .invite)
     }
 }
 
@@ -1548,6 +1701,14 @@ struct PasswordLoginResponse: Codable {
     var email: String?
     var sub: String?
     var keys: [String]?
+}
+
+/// `/api/v1/auth/exchange`: the owner session a checkout return code was traded for.
+struct CheckoutExchangeResponse: Codable {
+    var token: String
+    var expiresAt: String
+    var email: String?
+    var mailboxId: String?
 }
 
 /// `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a

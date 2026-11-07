@@ -156,7 +156,8 @@ assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 		headerFrom: "ada@example.com",
 		envelopeFrom: "ada@example.com",
 	});
-	assert.equal(auth.spf, "pass");
+	// Received-SPF isn't read: nothing proves Cloudflare wrote it (AVE-107).
+	assert.equal(auth.spf, undefined);
 	assert.equal(auth.source, "none");
 	assert.equal(auth.spoofed, false);
 }
@@ -1548,6 +1549,120 @@ for (const [policy, tier] of [
 	});
 	assert.equal(auth.authTier, "verified");
 	assert.equal(auth.arcSealer, "google.com");
+}
+
+// --- Forged results can't out-vote Cloudflare's (AVE-107) ----------------
+// A sender can write an Authentication-Results or ARC-Authentication-Results
+// with our authserv-id. Cloudflare's real verdict must stand.
+{
+	// Real-shaped Cloudflare ARC results: DKIM and SPF pass, but only for the
+	// attacker's domain, so DMARC fails for the From.
+	const realArc = (policy) =>
+		`i=1; mx.cloudflare.net; dkim=pass header.d=evil.example header.s=s1; spf=pass (mx.cloudflare.net: domain of x@evil.example designates 192.0.2.9 as permitted sender) smtp.mailfrom=x@evil.example; dmarc=fail header.from=paypal.com policy.dmarc=${policy}; arc=none smtp.remote-ip=192.0.2.9`;
+	const FORGED_PLAIN = "mx.cloudflare.net; dmarc=pass header.from=paypal.com";
+	const run = (...pairs) =>
+		parseAuthSignals({
+			envelopeHeaders: headers(...pairs),
+			headerFrom: "PayPal <service@paypal.com>",
+			envelopeFrom: "x@evil.example",
+		});
+
+	for (const [policy, tier] of [
+		["quarantine", "failed"],
+		["none", "unverified"],
+	]) {
+		const control = run(["ARC-Authentication-Results", realArc(policy)]);
+		assert.equal(control.authTier, tier, `control ${policy}`);
+		assert.equal(control.aligned, false, `control ${policy}`);
+		for (const forged of [
+			FORGED_PLAIN,
+			// Restating the real passes doesn't help either.
+			"mx.cloudflare.net; dkim=pass header.d=evil.example; spf=pass smtp.mailfrom=x@evil.example; dmarc=pass header.from=paypal.com",
+			// Nor does a header with no verdict at all.
+			"mx.cloudflare.net; none",
+		]) {
+			for (const pairs of [
+				[["ARC-Authentication-Results", realArc(policy)], ["Authentication-Results", forged]],
+				[["Authentication-Results", forged], ["ARC-Authentication-Results", realArc(policy)]],
+			]) {
+				const auth = run(...pairs);
+				assert.equal(auth.authTier, tier, `${policy}: ${forged}`);
+				assert.equal(auth.aligned, false, `${policy}: ${forged}`);
+				assert.equal(auth.dmarc, "fail", `${policy}: ${forged}`);
+				assert.equal(isFromUntrusted(auth), true, `${policy}: ${forged}`);
+			}
+		}
+	}
+
+	// The forged header is ARC instead, beside a real plain one.
+	const swapped = run(
+		["Authentication-Results", realArc("none").replace(/^i=1; /, "")],
+		["ARC-Authentication-Results", `i=1; ${FORGED_PLAIN}`],
+	);
+	assert.equal(swapped.authTier, "unverified");
+	assert.equal(swapped.aligned, false);
+	assert.equal(swapped.dmarc, "fail");
+
+	// As Cloudflare delivers it: its sealed set on top, then the sender's
+	// headers. With and without Cloudflare's plain Authentication-Results.
+	for (const withPlain of [true, false]) {
+		const real = realArc("none").replace(/^i=1; /, "");
+		const auth = run(
+			...cloudflareSet(1, real),
+			...(withPlain ? [["Authentication-Results", real]] : []),
+			["Authentication-Results", FORGED_PLAIN],
+		);
+		assert.equal(auth.authTier, "unverified", `withPlain=${withPlain}`);
+		assert.equal(auth.aligned, false, `withPlain=${withPlain}`);
+	}
+}
+
+{
+	// Tie on passes: Cloudflare's only verdict is an unaligned SPF pass, the
+	// forged header adds one DMARC pass. Must stay unverified and untrusted.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", "i=1; mx.cloudflare.net; spf=pass smtp.mailfrom=bounce@esp.example; arc=none"],
+			["Authentication-Results", "mx.cloudflare.net; dmarc=pass header.from=paypal.com"],
+		),
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "bounce@esp.example",
+	});
+	assert.equal(auth.authTier, "unverified");
+	assert.equal(auth.aligned, false);
+	assert.equal(isFromUntrusted(auth), true);
+}
+
+{
+	// Two real-looking verdicts that both verify still verify.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", `i=1; ${CF_PASS}`],
+			["Authentication-Results", CF_PASS],
+		),
+		headerFrom: "PayPal <notify@paypal.com>",
+		envelopeFrom: "notify@paypal.com",
+	});
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.source, "authentication-results");
+}
+
+{
+	// Received-SPF can't add an SPF pass to Cloudflare's verdict.
+	const pairs = [
+		["ARC-Authentication-Results", "i=1; mx.cloudflare.net; dkim=none; dmarc=none"],
+		["Received-SPF", "pass (mx.cloudflare.net: domain of service@paypal.com designates 192.0.2.9 as permitted sender) envelope-from=service@paypal.com"],
+	];
+	for (const input of [{ envelopeHeaders: headers(...pairs) }, { mimeHeaders: headers(...pairs) }]) {
+		const auth = parseAuthSignals({
+			...input,
+			headerFrom: "PayPal <service@paypal.com>",
+			envelopeFrom: "service@paypal.com",
+		});
+		assert.equal(auth.spf, undefined);
+		assert.notEqual(auth.aligned, true);
+		assert.equal(auth.authTier, "unverified");
+	}
 }
 
 console.log("email-auth tests passed");

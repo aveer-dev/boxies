@@ -1,0 +1,80 @@
+[
+	{
+		"name": "no attachments",
+		"body": "<p>Hi</p>",
+		"attachments": [],
+		"forwardable": []
+	},
+	{
+		"name": "plain file attachments",
+		"body": "<p>See attached.</p>",
+		"attachments": [
+			{ "id": "a1", "filename": "report.pdf", "mimetype": "application/pdf", "disposition": "attachment" },
+			{ "id": "a2", "filename": "photo.jpg", "mimetype": "image/jpeg", "disposition": "attachment" }
+		],
+		"forwardable": ["a1", "a2"]
+	},
+	{
+		"name": "missing disposition counts as a file",
+		"body": "<p>Hi</p>",
+		"attachments": [{ "id": "a1", "filename": "notes.txt", "mimetype": "text/plain" }],
+		"forwardable": ["a1"]
+	},
+	{
+		"name": "inline disposition is left out",
+		"body": "<p>Logo below</p>",
+		"attachments": [
+			{ "id": "logo", "filename": "logo.png", "mimetype": "image/png", "content_id": "<logo@x>", "disposition": "inline" },
+			{ "id": "a1", "filename": "invoice.pdf", "mimetype": "application/pdf", "disposition": "attachment" }
+		],
+		"forwardable": ["a1"]
+	},
+	{
+		"name": "inline disposition in upper case",
+		"body": "<p>Hi</p>",
+		"attachments": [{ "id": "i1", "filename": "sig.gif", "mimetype": "image/gif", "disposition": "INLINE" }],
+		"forwardable": []
+	},
+	{
+		"name": "image referenced by cid in the body is left out even as attachment",
+		"body": "<p><img src=\"cid:image001@example.com\"></p>",
+		"attachments": [
+			{ "id": "img", "filename": "image001.png", "mimetype": "image/png", "content_id": "<image001@example.com>", "disposition": "attachment" },
+			{ "id": "doc", "filename": "deck.pptx", "mimetype": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "disposition": "attachment" }
+		],
+		"forwardable": ["doc"]
+	},
+	{
+		"name": "cid reference with angle brackets and mixed case",
+		"body": "<img src=\"CID:<Banner@Mail>\">",
+		"attachments": [{ "id": "b", "filename": "banner.jpg", "mimetype": "image/jpeg; name=banner.jpg", "content_id": "banner@mail", "disposition": "attachment" }],
+		"forwardable": []
+	},
+	{
+		"name": "image with a content id the body never references is a file",
+		"body": "<p>No images here</p>",
+		"attachments": [{ "id": "p", "filename": "scan.png", "mimetype": "image/png", "content_id": "<scan@x>", "disposition": "attachment" }],
+		"forwardable": ["p"]
+	},
+	{
+		"name": "cid:img1 does not match inside cid:img10",
+		"body": "<img src=\"cid:img10\">",
+		"attachments": [
+			{ "id": "one", "filename": "one.png", "mimetype": "image/png", "content_id": "img1", "disposition": "attachment" },
+			{ "id": "ten", "filename": "ten.png", "mimetype": "image/png", "content_id": "img10", "disposition": "attachment" }
+		],
+		"forwardable": ["one"]
+	},
+	{
+		"name": "non-image referenced by cid stays a file",
+		"body": "<a href=\"cid:doc@x\">doc</a>",
+		"attachments": [{ "id": "d", "filename": "doc.pdf", "mimetype": "application/pdf", "content_id": "doc@x", "disposition": "attachment" }],
+		"forwardable": ["d"]
+	},
+	{
+		"name": "plain-text body",
+		"body": "",
+		"attachments": [{ "id": "z", "filename": "archive.zip", "mimetype": "application/zip", "content_id": "z@x" }],
+		"forwardable": ["z"]
+	}
+]

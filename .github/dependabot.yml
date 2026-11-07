@@ -1,0 +1,36 @@
+# Dependabot version updates. Dependabot reads this file from the default
+# branch (main), so it takes effect once dev is merged into main.
+# Dependabot alerts and security updates must also be enabled in the repo
+# settings (Settings > Code security); this file does not turn them on.
+version: 2
+updates:
+  # pnpm workspace: the root lockfile covers the root package and site/.
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: gradle
+    directory: /android
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-patch:
+        update-types: [minor, patch]

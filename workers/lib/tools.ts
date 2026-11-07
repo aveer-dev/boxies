@@ -34,6 +34,7 @@ import {
 	type ParticipantMessage,
 } from "./agent-safety";
 import { sendEmail } from "../email-sender";
+import { countRecipients, recipientCapError } from "./send-quota";
 import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
@@ -66,7 +67,7 @@ type ThreadReaderStub = {
 };
 
 type RateLimitStub = {
-	checkSendRateLimit: () => Promise<string | null>;
+	checkSendRateLimit: (recipients?: number) => Promise<string | null>;
 };
 
 // ── list_mailboxes ─────────────────────────────────────────────────
@@ -525,6 +526,10 @@ export async function toolSendReply(
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
+	// 50 recipients at most (AVE-125).
+	const tooMany = recipientCapError(to);
+	if (tooMany) return { error: tooMany };
+
 	// Verify and append quoted original message
 	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
 	if (!sanitizedBody) {
@@ -554,7 +559,7 @@ export async function toolSendReply(
 
 	// Reserve a send slot only once the message is verified and valid, so a
 	// refused draft doesn't use up the user's quota.
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
+	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit(countRecipients(to));
 	if (rateLimitError) {
 		return { error: rateLimitError };
 	}
@@ -625,6 +630,10 @@ export async function toolSendEmail(
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
+	// 50 recipients at most (AVE-125).
+	const tooMany = recipientCapError(params.to);
+	if (tooMany) return { error: tooMany };
+
 	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
 	if (!sanitizedBody) {
 		return { error: "Draft verification failed — refusing to send unverified content. Please try again." };
@@ -646,7 +655,7 @@ export async function toolSendEmail(
 
 	// Reserve a send slot only once the message is verified and valid, so a
 	// refused draft doesn't use up the user's quota.
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
+	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit(countRecipients(params.to));
 	if (rateLimitError) {
 		return { error: rateLimitError };
 	}

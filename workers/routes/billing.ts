@@ -20,6 +20,7 @@ import { authDb, isDomainAdmin, listMailboxesForUser } from "../auth/authz";
 import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
 import { isHostedEmailDomain } from "../auth/hooks";
 import { anyRecoveryEmail, createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
+import { issueCheckoutExchangeCode } from "../auth/checkout-exchange";
 import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	applyLifecycleEvent,
@@ -401,8 +402,11 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 
 	/**
 	 * Hosted Bridge Return Handler after Stripe checkout completes.
-	 * Redirects mobile clients to `inboxies://onboarding/domain-ready` with authenticated token,
-	 * automatically closing the in-app browser (ASWebAuthenticationSession / Custom Tabs).
+	 * Redirects mobile clients to `inboxies://onboarding/domain-ready`, automatically
+	 * closing the in-app browser (ASWebAuthenticationSession / Custom Tabs). The link
+	 * carries at most a one-time `code`, never a session token: any app can claim the
+	 * `inboxies` scheme, so the app trades the code plus the checkout session id it
+	 * started (left out of the link) at `POST /api/v1/auth/exchange`.
 	 * Redirects desktop web users to `/checkout/success` with the session cookie set.
 	 */
 	app.get("/api/v1/billing/checkout-return", async (c) => {
@@ -412,11 +416,10 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 		const userAgent = c.req.header("user-agent") || "";
 		const isMobile = clientQuery === "ios" || clientQuery === "android" || /iPhone|iPad|iPod|Android/i.test(userAgent);
 
-		// Mint the owner session only for the paid checkout this browser just completed:
+		// Sign the owner in only for the paid checkout this browser just completed:
 		// the Stripe session id is the secret, it must be provisioned for this domain,
-		// and the token is handed out exactly once.
-		let token: string | undefined;
-		let mailboxId: string | undefined;
+		// and the session (web) or exchange code (mobile) is handed out exactly once.
+		let exchangeCode: string | undefined;
 		let sessionCookie: string | undefined;
 
 		const record = await loadBillingSession(c.env.BUCKET, sessionId);
@@ -436,17 +439,21 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 				record.tokenIssuedAt = new Date().toISOString();
 				record.updatedAt = record.tokenIssuedAt;
 				await c.env.BUCKET.put(billingSessionKey(record.sessionId), JSON.stringify(record));
-				mailboxId = record.mailboxId;
-				const session = await createSessionForUser(c.env, owner.id, { headers: c.req.raw.headers });
-				token = session.token;
-				sessionCookie = await sessionCookieHeader(c.env, session);
+				if (isMobile) {
+					exchangeCode = await issueCheckoutExchangeCode(db, record.sessionId, {
+						userId: owner.id,
+						mailboxId: record.mailboxId,
+					});
+				} else {
+					const session = await createSessionForUser(c.env, owner.id, { headers: c.req.raw.headers });
+					sessionCookie = await sessionCookieHeader(c.env, session);
+				}
 			}
 		}
 
 		if (isMobile) {
-			let deepLink = `inboxies://onboarding/domain-ready?domain=${encodeURIComponent(domain)}&session_id=${encodeURIComponent(sessionId)}`;
-			if (token) deepLink += `&token=${encodeURIComponent(token)}`;
-			if (mailboxId) deepLink += `&mailbox_id=${encodeURIComponent(mailboxId)}`;
+			let deepLink = `inboxies://onboarding/domain-ready?domain=${encodeURIComponent(domain)}`;
+			if (exchangeCode) deepLink += `&code=${encodeURIComponent(exchangeCode)}`;
 
 			// 302 Redirect with HTML bridge script fallback to close in-app browser
 			return c.html(`<!DOCTYPE html>

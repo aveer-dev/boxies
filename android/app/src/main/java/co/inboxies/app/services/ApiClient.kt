@@ -3,6 +3,7 @@ package co.inboxies.app.services
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
 import co.inboxies.app.models.MoveEmailResponse
+import co.inboxies.app.models.SenderTriageDecisionResponse
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.ThreadNotesResponse
 import co.inboxies.app.models.AdminCreateMailboxResponse
@@ -58,6 +59,7 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
+import co.inboxies.app.models.CheckoutExchangeResponse
 import co.inboxies.app.models.ResetPasswordResponse
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.models.MailboxInviteRow
@@ -65,6 +67,7 @@ import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.models.RevokeSessionsResponse
 import co.inboxies.app.models.McpGrant
+import co.inboxies.app.models.SecurityActivityResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -136,10 +139,19 @@ sealed class ApiException(message: String) : Exception(message) {
         "Enter the code from your authenticator app.",
     )
 
+    /**
+     * 403 `code: "reauth_required"`: a sensitive account change needs a session that signed
+     * in or confirmed it's the user in the last 5 minutes (`Reauth.kt`). Thrown to the screen
+     * only when "Confirm it's you" was closed (or couldn't be shown); its text is the server's.
+     */
+    class ReauthRequired(val challenge: ReauthChallenge) : ApiException(
+        challenge.message.ifBlank { "For your security, confirm it's you first, then try again." },
+    )
+
     /** The server's readable `error` text, for paths that show it as-is. */
     val serverMessage: String?
         get() = when (this) {
-            is Http, is ServiceEnded, is RecipientSuppressed -> message?.takeIf { it.isNotBlank() }
+            is Http, is ServiceEnded, is RecipientSuppressed, is ReauthRequired -> message?.takeIf { it.isNotBlank() }
             else -> null
         }
 }
@@ -232,6 +244,7 @@ class ApiClient private constructor() {
 
     internal fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
         if (code == 401) TwoFactorChallenge.parse(body)?.let { return ApiException.TwoFactorRequired(it) }
+        ReauthChallenge.parse(code, body)?.let { return ApiException.ReauthRequired(it) }
         val message = httpErrorMessage(body)
         if (sentToken != null && isExpiredSessionResponse(code, message)) {
             sessionExpired.tryEmit(sentToken)
@@ -268,18 +281,26 @@ class ApiClient private constructor() {
         authed: Boolean = true,
         bearerToken: String? = null,
         headers: Map<String, String> = emptyMap(),
-    ): Pair<T, okhttp3.Headers> = withContext(Dispatchers.IO) {
-        val raw = performRaw(
-            path,
-            method,
-            query,
-            body,
-            authed,
-            bearerToken = bearerToken,
-            headers = headers,
-        )
-        Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
-    }
+    ): Pair<T, okhttp3.Headers> =
+        // A `reauth_required` 403 opens "Confirm it's you"; confirmed, the request runs once more.
+        ReauthRetry.run(confirm = ::reauthPrompt) {
+            withContext(Dispatchers.IO) {
+                val raw = performRaw(
+                    path,
+                    method,
+                    query,
+                    body,
+                    authed,
+                    bearerToken = bearerToken,
+                    headers = headers,
+                )
+                Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
+            }
+        }
+
+    /** Asks the user to confirm it's them; true once the session is fresh again. */
+    suspend fun reauthPrompt(challenge: ReauthChallenge): Boolean =
+        ReauthCoordinator.shared.confirm(challenge)
 
     inline fun <reified T> decodeBody(data: String, code: Int, contentType: String): T {
         if (code == 204 && T::class == EmptyResponse::class) {
@@ -470,12 +491,42 @@ class ApiClient private constructor() {
 
     // ── Connected apps (MCP OAuth grants) ──
 
+    /** Recent security activity: the caller's last 30 days, newest first (AVE-151). */
+    suspend fun securityActivity(): SecurityActivityResponse = request("/api/v1/me/security-activity")
+
     suspend fun listMcpGrants(): List<McpGrant> = request("/api/v1/me/mcp-grants")
 
     /** Disconnects the app: the grant and all its tokens are deleted server-side. */
     suspend fun revokeMcpGrant(id: String) {
         request<EmptyResponse>("/api/v1/me/mcp-grants/${pathEncode(id)}", method = "DELETE")
     }
+
+    // ── Re-authentication (AVE-113 / AVE-171) ──
+
+    /**
+     * Confirms it's the user with the account password (plus an authenticator or backup
+     * code when 2FA is on). The session is fresh for 5 minutes.
+     */
+    suspend fun reauthWithPassword(password: String, code: String?, useBackupCode: Boolean): ReauthResponse =
+        request(
+            "/api/v1/me/reauth",
+            method = "POST",
+            body = ReauthBodies.password(password, code, useBackupCode),
+        )
+
+    /** Confirms with a code mailed by [sendReauthEmailCode] (accounts without a password). */
+    suspend fun reauthWithEmailCode(code: String): ReauthResponse = request(
+        "/api/v1/me/reauth",
+        method = "POST",
+        body = ReauthBodies.emailCode(code),
+    )
+
+    /** Mails a 6-digit confirmation code to the recovery (or outside login) address. */
+    suspend fun sendReauthEmailCode(): ReauthEmailCodeResponse = request(
+        "/api/v1/me/reauth/email-code",
+        method = "POST",
+        body = JsonObject(emptyMap()),
+    )
 
     // ── Recovery email ──
 
@@ -598,6 +649,21 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             put("email", email)
             put("password", password)
+        },
+        authed = false,
+    )
+
+    /**
+     * Trades the one-time `code` from the Stripe checkout return link, plus the checkout
+     * session id this app started, for the new owner's session (AVE-118). A wrong, used
+     * or expired code answers 400.
+     */
+    suspend fun exchangeCheckoutCode(code: String, sessionId: String): CheckoutExchangeResponse = request(
+        "/api/v1/auth/exchange",
+        method = "POST",
+        body = buildJsonObject {
+            put("code", code)
+            put("sessionId", sessionId)
         },
         authed = false,
     )
@@ -924,6 +990,33 @@ class ApiClient private constructor() {
     suspend fun listFolders(mailboxId: String): List<Folder> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
 
+    /**
+     * Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
+     * clashes, 400 when the name has no letters or digits.
+     */
+    suspend fun createFolder(mailboxId: String, name: String): Folder =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders",
+            method = "POST",
+            body = buildJsonObject { put("name", name) },
+        )
+
+    /** Renames a custom folder; its id stays. The answer is `{ id, name }` (no unread count). */
+    suspend fun renameFolder(mailboxId: String, folderId: String, name: String): Folder =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders/${pathEncode(folderId)}",
+            method = "PUT",
+            body = buildJsonObject { put("name", name) },
+        )
+
+    /** Deletes a custom folder (204). The Worker moves its mail to the Inbox first. */
+    suspend fun deleteFolder(mailboxId: String, folderId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders/${pathEncode(folderId)}",
+            method = "DELETE",
+        )
+    }
+
     suspend fun getInboxDigest(mailboxId: String): InboxDigest =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/inbox-digest")
 
@@ -1059,6 +1152,23 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             if (remindAt != null) put("reply_later_remind_at", remindAt)
             else put("reply_later_remind_at", kotlinx.serialization.json.JsonNull)
+        },
+    )
+
+    /**
+     * Add to Reply Later with a reminder in one PUT (`reply_later: true` +
+     * `reply_later_remind_at`), as the iOS notification action does (AVE-142).
+     */
+    suspend fun setReplyLaterWithReminder(
+        mailboxId: String,
+        id: String,
+        remindAt: String,
+    ): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            put("reply_later", true)
+            put("reply_later_remind_at", remindAt)
         },
     )
 
@@ -1205,8 +1315,8 @@ class ApiClient private constructor() {
         destinationFolderId: String,
         emailId: String? = null,
         displayName: String? = null,
-    ) {
-        request<EmptyResponse>(
+    ): SenderTriageDecisionResponse =
+        request(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/approve",
             method = "POST",
             body = buildJsonObject {
@@ -1216,15 +1326,14 @@ class ApiClient private constructor() {
                 if (displayName != null) put("displayName", displayName)
             },
         )
-    }
 
     suspend fun rejectSender(
         mailboxId: String,
         sender: String,
         emailId: String? = null,
         displayName: String? = null,
-    ) {
-        request<EmptyResponse>(
+    ): SenderTriageDecisionResponse =
+        request(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/reject",
             method = "POST",
             body = buildJsonObject {
@@ -1233,6 +1342,17 @@ class ApiClient private constructor() {
                 if (displayName != null) put("displayName", displayName)
             },
         )
+
+    /** Undo a Screener Accept / Decline: the sender is undecided again (AVE-159). */
+    suspend fun deleteSenderTriage(mailboxId: String, sender: String) {
+        request<EmptyResponse>(senderTriagePath(mailboxId, sender), method = "DELETE")
+    }
+
+    /** The bounce / complaint suppressions this mailbox can see (AVE-37 / AVE-157). */
+    suspend fun listSuppressions(mailboxId: String): SuppressionList {
+        val obj = request<JsonObject>("/api/v1/mailboxes/${pathEncode(mailboxId)}/suppressions")
+        return BounceSuppression.list(obj)
+            ?: throw ApiException.Decoding(IllegalStateException("Not a suppression list"))
     }
 
     /**
@@ -1332,6 +1452,22 @@ class ApiClient private constructor() {
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/reply",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
+    )
+
+    /**
+     * Short plain-text reply from a notification (AVE-140). The Worker builds the
+     * recipients and subject; pass a fresh [idempotencyKey] per attempt.
+     */
+    suspend fun quickReply(
+        mailboxId: String,
+        emailId: String,
+        text: String,
+        idempotencyKey: String,
+    ): SendEmailResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/quick-reply",
+        method = "POST",
+        body = buildJsonObject { put("text", text) },
         headers = idempotencyHeaders(idempotencyKey),
     )
 
@@ -1604,6 +1740,9 @@ class ApiClient private constructor() {
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
         method = "DELETE",
     )
+
+    internal fun senderTriagePath(mailboxId: String, sender: String): String =
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/${pathEncode(sender)}"
 
     internal fun pathEncode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")

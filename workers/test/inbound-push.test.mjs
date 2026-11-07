@@ -72,28 +72,25 @@ function fakeMailbox({ triage = null, aliasFails = false } = {}) {
 			if (aliasFails) throw new Error("alias counter unavailable");
 		},
 		createEmail: async (folder, email) => {
-			stored.push({ folder, id: email.id });
+			stored.push({ folder, id: email.id, email });
 		},
 	};
 }
 
-function message(to, messageId) {
+function message(to, messageId, { subject = "Quarterly numbers", mime, envelopeHeaders } = {}) {
 	const raw = [
 		"From: Pat <pat@sender.example>",
 		`To: ${to}`,
-		"Subject: Quarterly numbers",
+		`Subject: ${subject}`,
 		`Message-ID: <${messageId}>`,
 		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=utf-8",
-		"",
-		"The numbers look good.",
-		"",
+		...(mime ?? ["Content-Type: text/plain; charset=utf-8", "", "The numbers look good.", ""]),
 	].join("\r\n");
 	const bytes = new TextEncoder().encode(raw);
 	return {
 		to,
 		from: "pat@sender.example",
-		headers: new Headers(),
+		headers: new Headers(envelopeHeaders ?? {}),
 		raw: new ReadableStream({
 			start(c) {
 				c.enqueue(bytes);
@@ -107,7 +104,7 @@ function message(to, messageId) {
 	};
 }
 
-async function deliver(stub, to, messageId, bucket = createBucket()) {
+async function deliver(stub, to, messageId, bucket = createBucket(), options) {
 	await bucket.put(mailboxMetadataKey(MAILBOX), "{}");
 	const env = { ...APNS, BUCKET: bucket, MAILBOX: { idFromName: (n) => n, get: () => stub } };
 	const pending = [];
@@ -115,7 +112,7 @@ async function deliver(stub, to, messageId, bucket = createBucket()) {
 	const { log, error, warn } = console;
 	console.log = console.error = console.warn = () => {};
 	try {
-		await receiveEmail(message(to, messageId), env, ctx);
+		await receiveEmail(message(to, messageId, options), env, ctx);
 		await Promise.all(pending);
 	} finally {
 		Object.assign(console, { log, error, warn });
@@ -184,6 +181,75 @@ const allowed = {
 	await deliver(stub, "k8m2p9v4@example.com", "m3@sender.example", bucket);
 	assert.equal(stub.stored.length, 1);
 	assert.equal(apnsCalls.length, 1);
+}
+
+{
+	// One-time code (AVE-175): stored on the row and leading the push body.
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: allowed });
+	await deliver(stub, MAILBOX, "m4@sender.example", createBucket(), {
+		subject: "Your verification code",
+		mime: ["Content-Type: text/plain; charset=utf-8", "", "Your verification code is 482913.", "It expires in 10 minutes.", ""],
+	});
+	assert.equal(stub.stored[0].email.otp_code, "482913");
+	assert.equal(stub.stored[0].email.calendar_invite, null);
+	assert.equal(apnsCalls.length, 1);
+	assert.match(apnsCalls[0].body.aps.alert.body, /^Code 482913 · /);
+}
+
+{
+	// Calendar invite (AVE-175) from a text/calendar alternative part.
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: allowed });
+	await deliver(stub, MAILBOX, "m5@sender.example", createBucket(), {
+		subject: "Invitation: Design review @ Thu Nov 5, 2026",
+		mime: [
+			'Content-Type: multipart/alternative; boundary="b1"',
+			"",
+			"--b1",
+			"Content-Type: text/plain; charset=utf-8",
+			"",
+			"You have been invited to Design review.",
+			"--b1",
+			'Content-Type: text/calendar; charset="UTF-8"; method=REQUEST',
+			"Content-Transfer-Encoding: 7bit",
+			"",
+			"BEGIN:VCALENDAR",
+			"METHOD:REQUEST",
+			"BEGIN:VEVENT",
+			"UID:design-review@example.com",
+			"SUMMARY:Design review",
+			"DTSTART;TZID=America/New_York:20261105T100000",
+			"DTEND;TZID=America/New_York:20261105T110000",
+			"ORGANIZER;CN=Pat:mailto:pat@sender.example",
+			"END:VEVENT",
+			"END:VCALENDAR",
+			"--b1--",
+			"",
+		],
+	});
+	const invite = stub.stored[0].email.calendar_invite;
+	assert.equal(invite?.title, "Design review");
+	assert.equal(invite?.start, "2026-11-05T15:00:00.000Z");
+	assert.equal(invite?.method, "REQUEST");
+	assert.equal(stub.stored[0].email.otp_code, null);
+}
+
+{
+	// Failed sender authentication: no code and no push copy with it.
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: allowed });
+	await deliver(stub, MAILBOX, "m6@sender.example", createBucket(), {
+		subject: "Your verification code",
+		mime: ["Content-Type: text/plain; charset=utf-8", "", "Your verification code is 482913.", ""],
+		envelopeHeaders: {
+			"Authentication-Results":
+				"mx.cloudflare.net; dkim=none; spf=fail smtp.mailfrom=sender.example; dmarc=fail (p=REJECT) header.from=sender.example policy.dmarc=reject",
+		},
+	});
+	assert.equal(stub.stored[0].email.auth_tier, "failed");
+	assert.equal(stub.stored[0].email.otp_code, null);
+	assert.ok(apnsCalls.every((call) => !/482913/.test(JSON.stringify(call.body))));
 }
 
 console.log("inbound push tests passed");

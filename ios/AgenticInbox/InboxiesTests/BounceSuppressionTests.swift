@@ -94,4 +94,70 @@ final class BounceSuppressionTests: XCTestCase {
         XCTAssertTrue(DeliveryStatusHelpers.isFailure("complained"))
         XCTAssertFalse(DeliveryStatusHelpers.isFailure("accepted"))
     }
+
+    // MARK: Settings → Bounced addresses (AVE-157)
+
+    private let listBody = """
+    {"domain":"acme.com","scope":"domain","suppressions":[
+       {"address":"Bob@Example.com","domain":"acme.com","reason":"hard_bounce","source":"dsn","detail":"550 5.1.1 user unknown","suppressedAt":"2026-10-01T12:00:00.000Z","canUnsuppress":true},
+       {"address":"carol@example.com","domain":"acme.com","reason":"complaint","source":"event","detail":"","suppressedAt":"2026-10-02T09:30:00Z","canUnsuppress":false},
+       {"domain":"acme.com"},
+       "junk"
+    ]}
+    """
+
+    func testParsesSuppressionList() throws {
+        let list = try XCTUnwrap(BounceSuppression.list(data: Data(listBody.utf8)))
+        XCTAssertEqual(list.domain, "acme.com")
+        XCTAssertEqual(list.scope, .domain)
+        XCTAssertEqual(list.suppressions.map(\.address), ["bob@example.com", "carol@example.com"])
+        XCTAssertEqual(list.suppressions[0].reason, .hardBounce)
+        XCTAssertTrue(list.suppressions[0].canUnsuppress)
+        XCTAssertEqual(list.suppressions[1].reason, .complaint)
+        XCTAssertNil(list.suppressions[1].detail, "an empty detail is dropped")
+        XCTAssertFalse(list.suppressions[1].canUnsuppress)
+    }
+
+    func testSuppressionListDefaultsAndRejects() throws {
+        let empty = try XCTUnwrap(BounceSuppression.list(data: Data(#"{"domain":"acme.com","scope":"mailbox","suppressions":[]}"#.utf8)))
+        XCTAssertEqual(empty.scope, .mailbox)
+        XCTAssertTrue(empty.suppressions.isEmpty)
+        let unknownScope = try XCTUnwrap(BounceSuppression.list(data: Data(#"{"suppressions":[]}"#.utf8)))
+        XCTAssertEqual(unknownScope.scope, .mailbox)
+        XCTAssertEqual(unknownScope.domain, "")
+        XCTAssertNil(BounceSuppression.list(data: Data(#"{"error":"Invalid mailbox email address"}"#.utf8)))
+        XCTAssertNil(BounceSuppression.list(data: Data("<html>".utf8)))
+    }
+
+    func testListRowCopy() throws {
+        let list = try XCTUnwrap(BounceSuppression.list(data: Data(listBody.utf8)))
+        XCTAssertEqual(BounceSuppression.metaLine(list.suppressions[0], locale: enUS, timeZone: utc), "Bounced · Oct 1, 2026")
+        XCTAssertEqual(BounceSuppression.metaLine(list.suppressions[1], locale: enUS, timeZone: utc), "Marked as spam · Oct 2, 2026")
+        XCTAssertEqual(
+            BounceSuppression.confirmMessage(list.suppressions[0]),
+            "Mail will go to bob@example.com again. If it bounces again, it's suppressed again."
+        )
+        XCTAssertEqual(
+            BounceSuppression.confirmMessage(list.suppressions[1]),
+            "Mail will go to carol@example.com again. If it reports spam again, it's suppressed again."
+        )
+        XCTAssertEqual(BounceSuppression.unsuppressedToast("bob@example.com"), "bob@example.com un-suppressed")
+    }
+
+    func testIntroTextFollowsScope() throws {
+        let admin = try XCTUnwrap(BounceSuppression.list(data: Data(listBody.utf8)))
+        XCTAssertEqual(
+            BounceSuppression.introText(admin),
+            "After a hard bounce or a spam report, mail from acme.com stops going to that address, which protects your sending reputation. As a domain admin you see every mailbox's."
+        )
+        let member = SuppressionList(domain: "acme.com", scope: .mailbox, suppressions: [])
+        XCTAssertTrue(BounceSuppression.introText(member).hasSuffix("You see the ones this mailbox's sends caused."))
+        XCTAssertTrue(BounceSuppression.introText(nil).contains("mail from this domain stops"))
+    }
+
+    func testAlreadyLiftedIsA404() {
+        XCTAssertTrue(BounceSuppression.isAlreadyLifted(APIError.http(404, "Not suppressed")))
+        XCTAssertFalse(BounceSuppression.isAlreadyLifted(APIError.http(403, "Ask a domain admin")))
+        XCTAssertFalse(BounceSuppression.isAlreadyLifted(APIError.invalidURL))
+    }
 }

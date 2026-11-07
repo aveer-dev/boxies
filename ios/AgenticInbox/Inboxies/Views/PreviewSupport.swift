@@ -43,6 +43,14 @@ enum PreviewSupport {
         return app
     }
 
+    /// `-previewTags`: the fixture mailbox plus a few custom folders (AVE-158).
+    @MainActor
+    static func tagsPreviewModel() -> AppModel {
+        let app = appModel()
+        app.folders += PreviewTags.folders
+        return app
+    }
+
     @MainActor
     static func authStore() -> AuthStore {
         let store = AuthStore(persistsSession: false)
@@ -205,6 +213,65 @@ enum PreviewSupport {
         deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
     )
 
+    /// `-previewDetail -previewCode` (AVE-176): sign-in mail with a one-time code, so the
+    /// reader pins the Code card above the bottom bar. Android twin: AVE-177.
+    static let codeEmail = Email(
+        id: "preview-code",
+        folderId: "inbox",
+        subject: "Your Acme sign-in code",
+        sender: "no-reply@acme.example",
+        senderName: "Acme",
+        recipient: "you@inboxies.email",
+        date: "2026-11-06T14:02:00.000Z",
+        read: false,
+        starred: false,
+        body: "<p>Hi Alex,</p><p>Use this code to finish signing in to Acme:</p><p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">482 913</p><p>It expires in 10 minutes. If you didn’t try to sign in, you can ignore this email.</p><p>— The Acme team</p>",
+        snippet: "Use this code to finish signing in to Acme: 482 913",
+        authTier: "verified",
+        otp: EmailOtp(code: "482913")
+    )
+
+    /// `-previewDetail -previewInvite` (AVE-176): calendar invite with a join link and a
+    /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant,
+    /// `-previewInviteAddress` for an in-person invite (address only, Directions),
+    /// `-previewInviteExpanded` to open the details. Add `-previewInviteFreeBusy
+    /// free|conflict|added|ask` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
+    /// "You're free", "Conflicts with Team sync +1 more", the "Added to Work · Undo"
+    /// toast, or the "Check availability" link before access.
+    static func inviteEmail(cancelled: Bool, inPerson: Bool = false) -> Email {
+        Email(
+            id: "preview-invite",
+            folderId: "inbox",
+            subject: cancelled ? "Canceled: Design review" : "Invitation: Design review @ Thu Nov 12",
+            sender: "pat@studio.example",
+            senderName: "Pat Lee",
+            recipient: "you@inboxies.email",
+            date: "2026-11-06T13:30:00.000Z",
+            read: false,
+            starred: false,
+            body: cancelled
+                ? "<p>This event has been cancelled.</p><p>Design review · Thursdays 10–11am</p>"
+                : "<p>Pat Lee has invited you to <b>Design review</b>.</p><p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" + (inPerson ? "<p>We’ll meet in Room 4B, 200 Market St.</p>" : "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"),
+            snippet: cancelled ? "This event has been cancelled." : "Pat Lee has invited you to Design review.",
+            hasAttachment: true,
+            authTier: "verified",
+            invite: EmailInvite(
+                method: cancelled ? "CANCEL" : "REQUEST",
+                cancelled: cancelled,
+                uid: "design-review@studio.example",
+                sequence: cancelled ? 2 : 0,
+                title: "Design review",
+                start: "2026-11-12T15:00:00.000Z",
+                end: "2026-11-12T16:00:00.000Z",
+                timezone: "America/New_York",
+                location: "Room 4B, 200 Market St",
+                organizer: EmailInviteOrganizer(email: "pat@studio.example", name: "Pat Lee"),
+                meetingUrl: inPerson ? nil : "https://meet.google.com/abc-defg-hij",
+                recurrence: "FREQ=WEEKLY;BYDAY=TH"
+            )
+        )
+    }
+
     /// `-previewDetail -previewNewsletter` (AVE-89): a long marketing mail with a fixed 640px card,
     /// a long unbroken URL and a rigid 900px table, for the fit-to-width / sideways-scroll body.
     /// Android twin: `PreviewSupport.newsletterEmail` (`run-debug-preview.sh newsletter`).
@@ -239,6 +306,31 @@ enum PreviewSupport {
         body: promoHTML,
         snippet: "Grab everything for spooky season in one easy order."
     )
+
+    /// `-previewMailbox -previewForwardAttachments` (AVE-181): forward a mail with two files and
+    /// one inline `cid:` logo, so the composer shows "Include 2 attachments" (the logo doesn't count).
+    /// Android twin: `PreviewSupport.forwardAttachmentsEmail` (`run-debug-preview.sh forwardAttachments`).
+    static let forwardAttachmentsEmail: Email = {
+        var email = Email(
+            id: "preview-forward-attachments",
+            folderId: "inbox",
+            subject: "Q3 board pack",
+            sender: "maya@northwind.example",
+            senderName: "Maya Chen",
+            recipient: "you@inboxies.email",
+            date: "2026-11-03T15:20:00.000Z",
+            read: true,
+            starred: false,
+            body: #"<p><img src="cid:logo@northwind" width="96" alt="Northwind"></p><p>Hi! The board pack and the revenue sheet are attached. Shout if anything looks off.</p><p>Maya</p>"#,
+            snippet: "Hi! The board pack and the revenue sheet are attached."
+        )
+        email.attachments = [
+            Attachment(id: "att-pack", filename: "Q3 board pack.pdf", mimetype: "application/pdf", size: 1_240_000, disposition: "attachment"),
+            Attachment(id: "att-sheet", filename: "Revenue by region.xlsx", mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 86_000, disposition: "attachment"),
+            Attachment(id: "att-logo", filename: "logo.png", mimetype: "image/png", size: 4_200, contentId: "<logo@northwind>", disposition: "inline"),
+        ]
+        return email
+    }()
 
     static let promoHTML = """
         <html><head><style type="text/css">body{margin:0;padding:0} .mso td{padding:0}</style></head><body>
@@ -299,6 +391,48 @@ enum PreviewSupport {
     /// `-previewAIUsage normal|warning|exhausted` (AVE-45): stub usage snapshot
     /// (12/50, 42/50, 50/50 chats) so the meter renders without a backend. Nil
     /// outside DEBUG previews; `AppModel.loadAIUsage()` returns it instead of fetching.
+    /// `-previewReauth <variant>`: the "Confirm it's you" challenge to show (AVE-170).
+    /// `password` (default) · `twoFactor` · `passkey` · `emailCode`.
+    static var reauthChallengeFixture: ReauthChallenge? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewReauth") else { return nil }
+        let variant = index + 1 < args.count ? args[index + 1] : "password"
+        let message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
+        switch variant {
+        case "twoFactor":
+            return ReauthChallenge(methods: [.password, .passkey], twoFactor: true, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "passkey":
+            return ReauthChallenge(methods: [.passkey], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "emailCode":
+            return ReauthChallenge(methods: [.emailCode], twoFactor: false, emailCodeTo: "a•••x@gmail.com", maxAgeSeconds: 300, message: message)
+        default:
+            return ReauthChallenge(methods: [.password, .passkey], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    /// Which Recent security activity state `-previewSessions -previewSecurityActivity [empty|error]`
+    /// shows (AVE-151; Android `securityActivity` / `securityActivityEmpty` / `securityActivityError`).
+    /// Nil without the flag (the sessions preview then shows the fixture events unscrolled).
+    enum SecurityActivityPreview { case events, empty, error }
+
+    static var securityActivityPreview: SecurityActivityPreview? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewSecurityActivity") else { return nil }
+        switch index + 1 < args.count ? args[index + 1] : "" {
+        case "empty": return .empty
+        case "error": return .error
+        default: return .events
+        }
+        #else
+        return nil
+        #endif
+    }
+
     static var aiUsageFixture: AIUsage? {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
@@ -370,6 +504,18 @@ enum PreviewSupport {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)
             app.replyLaterCount = app.emails.count
+        } else if args.contains("-previewDetail"),
+                  args.contains("-previewCode") || args.contains("-previewInvite") {
+            // AVE-176: reader with the Code card / Invite card pinned at the bottom.
+            let email = args.contains("-previewCode")
+                ? codeEmail
+                : inviteEmail(
+                    cancelled: args.contains("-previewInviteCancelled"),
+                    inPerson: args.contains("-previewInviteAddress")
+                )
+            app.emails.insert(email, at: 0)
+            app.selectedEmail = email
+            app.threadEmails = [email]
         } else if args.contains("-previewDetail"), args.contains("-previewNewsletter") {
             app.emails.insert(newsletterEmail, at: 0)
             app.selectedEmail = newsletterEmail
@@ -391,6 +537,30 @@ enum PreviewSupport {
             || args.contains("-previewReminderToast") {
             applyReminderFixtures(to: app, args: args)
         }
+        if args.contains("-previewScreenerUndo"), app.selectedTab == .folder("screener"),
+           let decided = app.emails.first {
+            // Just declined the first sender: their row is gone and the toast offers
+            // Undo (AVE-159). Add `-previewScreenerAccept` for the Accept → Promotions copy.
+            app.emails.removeAll { screenerSenderKeyMatches($0, decided) }
+            app.screenerQueue.removeAll { screenerSenderKeyMatches($0, decided) }
+            let destination: String? = args.contains("-previewScreenerAccept") ? "promotions" : nil
+            // `-previewScreener` (reader open): Accept keeps it open on the refiled
+            // message, so the Screener bar is gone (AVE-182). Decline closes it.
+            if let open = app.selectedEmail, screenerSenderKeyMatches(open, decided) {
+                if let destination {
+                    app.selectedEmail?.folderId = destination
+                    app.selectedEmail?.folderName = nil
+                    for index in app.threadEmails.indices where screenerSenderKeyMatches(app.threadEmails[index], decided) {
+                        app.threadEmails[index].folderId = destination
+                        app.threadEmails[index].folderName = nil
+                    }
+                } else {
+                    app.selectedEmail = nil
+                    app.threadEmails = []
+                }
+            }
+            app.showToast(ScreenerDecision.toastTitle(destinationFolderId: destination), isUndo: true, duration: 0)
+        }
         if args.contains("-previewToast") {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo: true, duration: 0)
@@ -402,6 +572,11 @@ enum PreviewSupport {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    @MainActor
+    private static func screenerSenderKeyMatches(_ lhs: Email, _ rhs: Email) -> Bool {
+        AppModel.screenerSenderKey(lhs) == AppModel.screenerSenderKey(rhs)
     }
 
     // MARK: Reply Later reminders (AVE-86)
@@ -863,7 +1038,10 @@ struct PreviewMailboxRoot: View {
             .environment(auth)
             .environment(app)
             .task {
-                if ProcessInfo.processInfo.arguments.contains("-previewReplyQuote") {
+                if ProcessInfo.processInfo.arguments.contains("-previewForwardAttachments") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .forward, original: PreviewSupport.forwardAttachmentsEmail)
+                } else if ProcessInfo.processInfo.arguments.contains("-previewReplyQuote") {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     await app.startCompose(mode: .reply, original: PreviewSupport.promoEmail)
                 } else if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
@@ -902,9 +1080,12 @@ struct PreviewAdminAuthRoot: View {
             } else if args.contains("-previewInviteAcceptSignedIn") {
                 InviteAcceptPreview(signedIn: true)
             } else if args.contains("-previewSignInMethods") {
+                // Add `-previewReauth [password|twoFactor|passkey|emailCode]` for the
+                // "Confirm it's you" sheet over it, no API (AVE-170).
                 NavigationStack {
                     SignInMethodsPreview()
                 }
+                .reauthPromptHost()
             } else if args.contains("-previewMembers") {
                 NavigationStack {
                     SharingSettingsView()
@@ -917,6 +1098,20 @@ struct PreviewAdminAuthRoot: View {
                     SendersSettingsView(initialTab: args.contains("-previewSendersBlocked") ? .blocked : .allowed)
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSuppressions") {
+                // Settings → Outgoing mail → Bounced addresses with fixture rows, no API
+                // (AVE-157; Android: `suppressions`).
+                NavigationStack {
+                    SuppressionsSettingsView()
+                }
+                .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewTags") {
+                // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
+                // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.
+                NavigationStack {
+                    TagsSettingsView()
+                }
+                .environment(PreviewSupport.tagsPreviewModel())
             } else if args.contains("-previewSettings") {
                 // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
                 // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).
@@ -924,6 +1119,8 @@ struct PreviewAdminAuthRoot: View {
                 SettingsSheetView()
                     .environment(PreviewSupport.settingsPreviewModel(screenerOff: args.contains("-previewScreenerOff")))
             } else if args.contains("-previewSessions") {
+                // Add `-previewSecurityActivity [empty|error]` to scroll to Recent security
+                // activity in that state (AVE-151; Android: `securityActivity*`).
                 NavigationStack {
                     SessionsSettingsView()
                 }
@@ -989,6 +1186,11 @@ private struct SignInMethodsPreview: View {
     var body: some View {
         if ready {
             SignInMethodsSettingsView()
+                .task {
+                    guard let challenge = PreviewSupport.reauthChallengeFixture else { return }
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    ReauthCoordinator.shared.presentForPreview(challenge)
+                }
         } else {
             Color.clear.onAppear {
                 app.setIdentities([

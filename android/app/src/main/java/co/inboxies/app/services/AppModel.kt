@@ -12,6 +12,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.SpamVerdictToast
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -41,6 +43,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
+import co.inboxies.app.ui.widget.InboxWidgetSnapshot
+import co.inboxies.app.widget.InboxWidgetPublisher
+import co.inboxies.app.widget.make
 import java.time.Instant
 import java.util.UUID
 
@@ -345,6 +350,74 @@ class AppModel {
         _screenerQueue.value = queue
     }
 
+    // Custom folders ("tags", AVE-158)
+
+    /**
+     * Creates a tag. Names the Worker would refuse throw [CustomFolders.ValidationException]
+     * with the Worker's sentence, before any request.
+     */
+    suspend fun createCustomFolder(raw: String): Folder {
+        val name = CustomFolders.normalizedName(raw)
+        CustomFolders.validateCreate(name, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val created = if (isDebugPreview) {
+            Folder(id = CustomFolders.slug(name), name = name, unreadCount = 0)
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val folder = ApiClient.shared.createFolder(mailboxId, name)
+            if (_selectedMailboxId.value != mailboxId) return folder
+            folder
+        }
+        _folders.update { list -> list.filterNot { it.id == created.id } + created }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+        return created
+    }
+
+    /** Renames a tag; its id (and the mail in it) stay put. */
+    suspend fun renameCustomFolder(folder: Folder, raw: String) {
+        val name = CustomFolders.normalizedName(raw)
+        if (name == folder.name) return
+        CustomFolders.validateRename(name, folder, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val newName = if (isDebugPreview) {
+            name
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val renamed = ApiClient.shared.renameFolder(mailboxId, folder.id, name)
+            if (_selectedMailboxId.value != mailboxId) return
+            renamed.name
+        }
+        _folders.update { list -> list.map { if (it.id == folder.id) it.copy(name = newName) else it } }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+    }
+
+    /**
+     * Deletes a tag. The Worker moves its mail to the Inbox first; if the tag is open, the
+     * list goes back to Inbox.
+     */
+    suspend fun deleteCustomFolder(folder: Folder) {
+        if (!CustomFolders.isCustom(folder)) return
+        val mailboxId = _selectedMailboxId.value
+        if (!isDebugPreview) {
+            mailboxId ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            ApiClient.shared.deleteFolder(mailboxId, folder.id)
+            if (_selectedMailboxId.value != mailboxId) return
+            db.deleteFolder(mailboxId, folder.id)
+        }
+        val unread = _folders.value.firstOrNull { it.id == folder.id }?.unreadCount ?: 0
+        _folders.update { list -> list.filterNot { it.id == folder.id } }
+        adjustFolderUnread(FolderIds.INBOX, unread)
+        if (_selectedTab.value == HomeTab.Folder(folder.id)) {
+            selectTab(HomeTab.Folder(FolderIds.INBOX))
+        }
+        if (!isDebugPreview && mailboxId != null) {
+            // Settle counts with the server (the moved mail lands in Inbox).
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
+                ifStillSelected(mailboxId) { _folders.value = fresh }
+            }
+        }
+    }
+
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
         _folders.update { list ->
@@ -462,6 +535,8 @@ class AppModel {
     fun onAppBackgrounded() {
         isAppInForeground = false
         streamClient.stop()
+        // Leave the "Today's inbox" widget current (AVE-150).
+        publishInboxWidgetNow()
     }
 
     private fun handleIncomingRealTimeEmail(mailboxId: String, email: Email) {
@@ -2017,6 +2092,65 @@ class AppModel {
     var isDebugPreview: Boolean = false
         private set
 
+    // region "Today's inbox" widget (AVE-150)
+
+    // Declared after every state it reads, so the collectors start on initialised fields.
+    init {
+        // Debounced: list refreshes, SSE, reads and archives arrive in bursts. The
+        // publisher also skips writes whose content didn't change.
+        scope.launch {
+            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount) { _, _, _, _ -> Unit }
+                .collectLatest {
+                    delay(INBOX_WIDGET_DEBOUNCE_MS)
+                    publishInboxWidgetNow()
+                }
+        }
+        scope.launch {
+            _mailboxes.collect { list ->
+                if (publishesInboxWidget && list.isNotEmpty()) InboxWidgetPublisher.publishMailboxes(list)
+            }
+        }
+    }
+
+    private val publishesInboxWidget: Boolean
+        get() = !isDebugPreview && bootstrappedToken != null
+
+    /**
+     * Writes the active mailbox's Inbox to the widget now (also when the app goes to the
+     * background). Built from the cached Inbox, not the visible list, so it's right
+     * whichever folder is open. iOS twin: `AppModel.publishInboxWidgetNow()`.
+     */
+    fun publishInboxWidgetNow() {
+        if (!publishesInboxWidget) return
+        val mailbox = selectedMailbox ?: return
+        val inboxRows = db.getEmails(mailbox.id, FolderIds.INBOX)
+        val serverNewCount = _inboxNewTotal.value
+            ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
+            ?.count
+        // The Inbox hasn't loaded for this mailbox yet: keep the last snapshot rather
+        // than claim inbox zero.
+        if (inboxRows.isEmpty() && serverNewCount == null) return
+        InboxWidgetPublisher.publish(
+            InboxWidgetSnapshot.make(
+                mailbox = mailbox,
+                inboxRows = inboxRows,
+                serverNewCount = serverNewCount,
+                replyLaterCount = _replyLaterCount.value,
+            ),
+        )
+    }
+
+    /** Widget tap outside the cards: the Inbox of the widget's mailbox. */
+    suspend fun openInboxFromWidget(mailboxId: String?) {
+        if (mailboxId != null && mailboxId != _selectedMailboxId.value && _mailboxes.value.any { it.id == mailboxId }) {
+            loadMailbox(mailboxId)
+        }
+        val inbox = HomeTab.Folder(FolderIds.INBOX)
+        if (_selectedTab.value != inbox || _selectedEmail.value != null) selectTab(inbox)
+    }
+
+    // endregion
+
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return
         // Private-email replies are pinned to the alias by the server.
@@ -2049,12 +2183,16 @@ class AppModel {
                 val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
                     html,
                     text,
-                    form.attachments.map { it.size },
+                    form.allAttachmentBytes(),
                 )
                 if (estimated > co.inboxies.app.util.OutboundLimits.MAX_MESSAGE_BYTES) {
                     error(co.inboxies.app.util.OutboundLimits.SIZE_ERROR)
                 }
-                val payload = form.toSendPayload()
+                // The original's files go out like any other attachment (AVE-181).
+                val forwarded = form.loadForwardedAttachments { mailbox, email, attachment ->
+                    ApiClient.shared.getAttachment(mailbox, email, attachment)
+                }
+                val payload = form.toSendPayload(forwarded)
                 when (form.mode) {
                     ComposeMode.Reply, ComposeMode.ReplyAll, ComposeMode.Forward ->
                         sendReplyOrForward(form, mailboxId, payload)
@@ -2166,9 +2304,22 @@ class AppModel {
         pendingMessage: String?,
         completedMessage: String,
     ) {
+        scheduleUndoableAction(
+            action = UndoableAction(message = completedMessage, execute = commit, rollback = rollback),
+            optimistic = optimistic,
+            pendingMessage = pendingMessage,
+        )
+    }
+
+    /** Shows [action]'s Undo toast and commits it when the toast times out or the next action starts. */
+    private fun scheduleUndoableAction(
+        action: UndoableAction,
+        optimistic: () -> Unit,
+        pendingMessage: String?,
+    ) {
+        val completedMessage = action.message
         optimistic()
         commitPendingActionImmediately()
-        val action = UndoableAction(message = completedMessage, execute = commit, rollback = rollback)
         val actionId = action.id
         _pendingUndoAction.value = action
         pendingUndoJob = scope.launch {
@@ -2505,33 +2656,67 @@ class AppModel {
         }
     }
 
+    /** Screener-lite: allow the sender and file their queued mail to a purpose box. */
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
+        decideScreenerSender(email, destinationFolderId)
+    }
+
+    /** Screener-lite: reject the sender into Screened out (silent). */
+    suspend fun rejectScreenerSender(email: Email) {
+        decideScreenerSender(email, destinationFolderId = null)
+    }
+
+    /** Accept ([destinationFolderId]) or Decline (null), then a toast with Undo (AVE-159). */
+    private suspend fun decideScreenerSender(email: Email, destinationFolderId: String?) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return
         val sender = email.sender.trim().lowercase()
         if (sender.isEmpty()) return
+        val localFolderId = destinationFolderId ?: FolderIds.SCREENED_OUT
         try {
-            ApiClient.shared.approveSender(
-                mailboxId = mailboxId,
-                sender = sender,
-                destinationFolderId = destinationFolderId,
-                emailId = email.id,
-                displayName = email.senderName,
-            )
+            val response = if (destinationFolderId != null) {
+                ApiClient.shared.approveSender(
+                    mailboxId = mailboxId,
+                    sender = sender,
+                    destinationFolderId = destinationFolderId,
+                    emailId = email.id,
+                    displayName = email.senderName,
+                )
+            } else {
+                ApiClient.shared.rejectSender(
+                    mailboxId = mailboxId,
+                    sender = sender,
+                    emailId = email.id,
+                    displayName = email.senderName,
+                )
+            }
             val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
             }.distinctBy { it.id }
-            queued.forEach { db.moveEmail(it.id, destinationFolderId) }
+            queued.forEach { db.moveEmail(it.id, localFolderId) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
             _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
+            val restoreIds = ScreenerDecision.restoreIds(response, email.id)
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
-                _selectedEmail.value = null
-                _threadEmails.value = emptyList()
+                if (destinationFolderId != null) {
+                    // Accept keeps the reader open (AVE-182): the message is
+                    // filed where it was accepted to, so the Screener bar goes.
+                    refileOpenThread(queuedIds + restoreIds, localFolderId)
+                } else {
+                    _selectedEmail.value = null
+                    _threadEmails.value = emptyList()
+                }
             }
+            showScreenerUndoToast(
+                ScreenerDecision.toastTitle(destinationFolderId),
+                mailboxId = mailboxId,
+                sender = sender,
+                restoreIds = restoreIds,
+            )
             loadEmailsForCurrentTab(showLoading = false)
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
                 ifStillSelected(mailboxId) { _folders.value = folders }
@@ -2541,39 +2726,67 @@ class AppModel {
         }
     }
 
-    suspend fun rejectScreenerSender(email: Email) {
-        val mailboxId = _selectedMailboxId.value ?: return
-        if (blockIfReadOnly()) return
-        val sender = email.sender.trim().lowercase()
-        if (sender.isEmpty()) return
-        try {
-            ApiClient.shared.rejectSender(
-                mailboxId = mailboxId,
-                sender = sender,
-                emailId = email.id,
-                displayName = email.senderName,
-            )
-            val queued = (_emails.value + _screenerQueue.value).filter {
-                it.sender.trim().lowercase() == sender &&
-                    (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }.distinctBy { it.id }
-            queued.forEach { db.moveEmail(it.id, FolderIds.SCREENED_OUT) }
-            val queuedIds = queued.map { it.id }.toSet()
-            _emails.update { list -> list.filterNot { it.id in queuedIds } }
-            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
-            if (_selectedEmail.value?.id in queuedIds ||
-                _selectedEmail.value?.sender?.trim()?.lowercase() == sender
-            ) {
-                _selectedEmail.value = null
-                _threadEmails.value = emptyList()
-            }
-            loadEmailsForCurrentTab(showLoading = false)
-            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-                ifStillSelected(mailboxId) { _folders.value = folders }
-            }
-        } catch (e: Exception) {
-            _errorMessage.value = e.message
+    /**
+     * Decision toast with Undo. The decision is already on the server, so Undo
+     * calls `DELETE sender-triage/:sender` and moves the refiled mail back to the
+     * Screener (same shape as [showSpamVerdictUndoToast]). If the DELETE fails the
+     * decision stands and an error toast says so.
+     */
+    private fun showScreenerUndoToast(
+        message: String,
+        mailboxId: String,
+        sender: String,
+        restoreIds: List<String>,
+    ) {
+        commitPendingActionImmediately()
+        val action = UndoableAction(
+            message = message,
+            execute = {},
+            rollback = { scope.launch { undoScreenerDecision(mailboxId, sender, restoreIds) } },
+        )
+        val actionId = action.id
+        _pendingUndoAction.value = action
+        showToast(message, isUndo = true, durationMs = 6000)
+        pendingUndoJob = scope.launch {
+            delay(6000)
+            if (_pendingUndoAction.value?.id == actionId) _pendingUndoAction.value = null
         }
+    }
+
+    /** Re-files messages of the open reader in place, without closing it. */
+    private fun refileOpenThread(ids: Set<String>, folderId: String) {
+        _selectedEmail.update { selected ->
+            if (selected != null && selected.id in ids) {
+                selected.copy(folderId = folderId, folderName = null)
+            } else {
+                selected
+            }
+        }
+        _threadEmails.update { thread ->
+            thread.map { if (it.id in ids) it.copy(folderId = folderId, folderName = null) else it }
+        }
+    }
+
+    private suspend fun undoScreenerDecision(mailboxId: String, sender: String, restoreIds: List<String>) {
+        val deleted = runCatching { ApiClient.shared.deleteSenderTriage(mailboxId, sender) }
+        if (deleted.isFailure) {
+            showToast("Couldn't undo", isError = true)
+            return
+        }
+        // Undecided again: put what the decision filed back in the Screening room.
+        // Best effort per message; the next folder sync settles any that failed.
+        restoreIds.forEach { id ->
+            db.moveEmail(id, FolderIds.SCREENER)
+            runCatching { ApiClient.shared.moveEmail(mailboxId, id, FolderIds.SCREENER) }
+        }
+        // A reader left open after Accept (AVE-182) shows the Screener bar again.
+        refileOpenThread(restoreIds.toSet(), FolderIds.SCREENER)
+        refreshScreenerQueue()
+        loadEmailsForCurrentTab(showLoading = false)
+        runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+            ifStillSelected(mailboxId) { _folders.value = folders }
+        }
+        showToast("Undone")
     }
 
     suspend fun markEmailsRead(ids: Set<String>, read: Boolean) {
@@ -2612,12 +2825,67 @@ class AppModel {
         }
     }
 
+    /**
+     * Multi-select archive: one undoable action for the whole selection, so Undo restores
+     * every row (AVE-163). The server calls run per id inside that single commit.
+     */
     suspend fun archiveEmails(ids: Set<String>) {
-        ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }.forEach { archiveEmail(it) }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val targets = ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }
+        if (targets.isEmpty()) return
+        if (blockIfReadOnly()) return
+        val action = bulkUndoableAction(
+            ids = targets.map { it.id },
+            message = "Archived",
+            perform = { id ->
+                ApiClient.shared.moveEmail(mailboxId, id, FolderIds.ARCHIVE)
+                db.moveEmail(id, FolderIds.ARCHIVE)
+            },
+            onFailures = { _, error ->
+                loadEmailsForCurrentTab(showLoading = false)
+                val ended = noteServiceEnded(error)
+                showToast(if (ended) error.message.orEmpty() else "Couldn't archive", isError = true)
+            },
+            rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
+        )
+        scheduleUndoableAction(
+            action = action,
+            optimistic = { targets.forEach { removeEmailLocally(it) } },
+            pendingMessage = "Archiving...",
+        )
     }
 
+    /**
+     * Multi-select delete: one undoable action for the whole selection (AVE-163). Each row
+     * keeps [deleteEmail]'s Trash-vs-permanent rule.
+     */
     suspend fun deleteEmails(ids: Set<String>) {
-        ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }.forEach { deleteEmail(it) }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val targets = ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }
+        if (targets.isEmpty()) return
+        if (blockIfReadOnly()) return
+        val permanentIds = targets
+            .filter { it.isDraft || it.folderId == FolderIds.TRASH }
+            .mapTo(mutableSetOf()) { it.id }
+        val action = bulkUndoableAction(
+            ids = targets.map { it.id },
+            message = if (permanentIds.size == targets.size) "Deleted" else "Moved to Trash",
+            perform = { id ->
+                ApiClient.shared.deleteEmail(mailboxId, id)
+                if (id in permanentIds) db.deleteEmail(id) else db.moveEmail(id, FolderIds.TRASH)
+            },
+            onFailures = { _, error ->
+                loadEmailsForCurrentTab(showLoading = false)
+                val ended = noteServiceEnded(error)
+                showToast(if (ended) error.message.orEmpty() else "Couldn't delete", isError = true)
+            },
+            rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
+        )
+        scheduleUndoableAction(
+            action = action,
+            optimistic = { targets.forEach { removeEmailLocally(it) } },
+            pendingMessage = "Deleting...",
+        )
     }
 
     fun clearSelectedEmail() {
@@ -2934,6 +3202,8 @@ class AppModel {
     companion object {
         private const val AUTO_CONVERSATION_ID = "auto"
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
+        /** Quiet period before the widget snapshot is written (iOS uses 1 s too). */
+        private const val INBOX_WIDGET_DEBOUNCE_MS = 1_000L
 
         /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
         const val REMINDER_TOAST_DURATION_MS = 5_000L

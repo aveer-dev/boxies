@@ -205,10 +205,14 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
 | Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
 | Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
+| Confirm it's you | `previewReauth` · `previewReauthTwoFactor` · `previewReauthPasskey` · `previewReauthEmailCode` | `reauth` · `reauthTwoFactor` · `reauthPasskey` · `reauthEmailCode` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API: password · password + authenticator code · passkey · emailed code. Peer of iOS `-previewSignInMethods -previewReauth <password\|twoFactor\|passkey\|emailCode>` (AVE-171) |
 | Members | `previewMembers` | `members` | Mailbox members + pending invites |
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
+| Security activity | `previewSecurityActivity` · `previewSecurityActivityEmpty` · `previewSecurityActivityError` | `securityActivity` · `securityActivityEmpty` · `securityActivityError` | Devices & sessions scrolled to Recent security activity: fixture events · empty · couldn't load. Peer of iOS `-previewSessions -previewSecurityActivity [empty\|error]` (AVE-151) |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
+| Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
+| Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
@@ -216,9 +220,14 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
 | Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
+| Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
+| Screener reader after Accept | `previewScreenerReaderAccept` | `screenerReaderAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`). AVE-182 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
+| Code card | `previewCode` | `code` | Sign-in mail in the reader with the Code card pinned above the bottom bar: 22.sp monospaced code + Copy (sensitive clip). Peer of iOS `-previewDetail -previewCode` (AVE-177) |
+| Invite card | `previewInvite` · `previewInviteExpanded` · `previewInviteAddress` · `previewInviteAddressExpanded` · `previewInviteCancelled` | `inviteCard` · `inviteCardExpanded` · `inviteCardAddress` · `inviteCardAddressExpanded` · `inviteCardCancelled` | Reader with the Invite card: Meet link (Join) · details open · in person (Directions via `geo:`) · in person, details open · cancelled (no actions). Peer of iOS `-previewDetail -previewInvite [-previewInviteAddress] [-previewInviteExpanded] [-previewInviteCancelled]` |
+| Invite free/busy | `previewInviteFree` · `previewInviteConflict` · `previewInviteAdded` · `previewInviteAsk` | `inviteCardFree` · `inviteCardConflict` · `inviteCardAdded` · `inviteCardAsk` | Invite card on fixture calendars (`PreviewInviteCalendar`, no CalendarContract or permission dialog): "You're free" + calendar picker · "Conflicts with Team sync +1 more" · added in one tap, pinned "Added to Work · Undo" toast · "Check availability" before access. Peer of iOS `… -previewInvite -previewInviteFreeBusy free\|conflict\|added\|ask` (AVE-206) |
 | Notes to self (list) | `previewNotes` | `notes` | Inbox rows with a sticky-note strip and "N private notes" chip |
 | Notes to self (detail) | `previewNotesDetail` | `notesDetail` | Q3 thread open: draggable sticky + inline private notes (in-memory edits) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |
@@ -226,6 +235,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Toast | `previewToast` | `toast` | Inbox with a pinned "Archived · Undo" toast above the bottom bar (AVE-134) |
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
+| Widget mocks | `previewWidgets` | `widgets` | "Today's inbox" widget design mocks, 2×2/4×2 × new mail/inbox zero, grey-scale palette only (ink bloom, no `accent`); Light/Dark pill flips the screen (AVE-138, `ui/widget/`) |
+| Widget data | `--es previewWidgetData mail` / `zero` (not a `PreviewMode`) | `widgetData` / `widgetZero` (`PIN=1` asks the launcher to add the widget) | Writes the sample snapshot so the real Glance "Today's inbox" widget (`widget/TodayInboxWidget.kt`) shows data without signing in; place it from the launcher's widget picker, then flip system dark mode to check both themes (AVE-150) |
 | Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |
 | Service ended (member) | `previewServiceEndedMember` | `serviceEndedMember` | Read-only inbox + "Ask an admin" |
 | Service ending | `previewServiceEnding` | `serviceEnding` | Admin "Keep subscription" notice |

@@ -18,6 +18,9 @@ enum APIError: LocalizedError {
     /// 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right,
     /// and the account wants an authenticator or backup code before it hands out a session.
     case twoFactorRequired(TwoFactorChallenge)
+    /// 403 `code: "reauth_required"`: a sensitive account change needs a session that
+    /// signed in or confirmed it's the user in the last 5 minutes (`Reauth.swift`).
+    case reauthRequired(ReauthChallenge)
 
     /// True for a write refused because the domain's service ended.
     var isServiceEnded: Bool {
@@ -46,6 +49,10 @@ enum APIError: LocalizedError {
             return message.isEmpty ? "Not sent: a recipient is suppressed." : message
         case .twoFactorRequired:
             return "Enter the code from your authenticator app."
+        case .reauthRequired(let challenge):
+            return challenge.message.isEmpty
+                ? "For your security, confirm it's you first, then try again."
+                : challenge.message
         }
     }
 }
@@ -109,16 +116,24 @@ final class APIClient: @unchecked Sendable {
         bearerToken: String? = nil,
         headers: [String: String] = [:]
     ) async throws -> (T, HTTPURLResponse) {
-        let (data, http) = try await perform(
-            path: path,
-            method: method,
-            query: query,
-            body: body,
-            authed: authed,
-            bearerToken: bearerToken,
-            headers: headers
-        )
-        return (try decodeResponse(data: data, http: http), http)
+        // A `reauth_required` 403 opens "Confirm it's you"; confirmed, the request runs once more.
+        try await ReauthRetry.run(confirm: reauthPrompt) {
+            let (data, http) = try await perform(
+                path: path,
+                method: method,
+                query: query,
+                body: body,
+                authed: authed,
+                bearerToken: bearerToken,
+                headers: headers
+            )
+            return (try decodeResponse(data: data, http: http), http)
+        }
+    }
+
+    /// Asks the user to confirm it's them; true once the session is fresh again.
+    private func reauthPrompt(_ challenge: ReauthChallenge) async -> Bool {
+        await ReauthCoordinator.shared.confirm(challenge)
     }
 
     private func decodeResponse<T: Decodable>(data: Data, http: HTTPURLResponse) throws -> T {
@@ -227,6 +242,9 @@ final class APIClient: @unchecked Sendable {
                 }
                 if let blocked = BounceSuppression.error(statusCode: http.statusCode, data: data) {
                     throw blocked
+                }
+                if let challenge = ReauthChallenge.parse(statusCode: http.statusCode, data: data) {
+                    throw APIError.reauthRequired(challenge)
                 }
                 if http.statusCode == 401, let challenge = TwoFactorChallenge.parse(data) {
                     throw APIError.twoFactorRequired(challenge)
@@ -339,6 +357,33 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: Re-authentication (AVE-113 / AVE-170)
+
+    /// Confirms it's the user with the account password (plus an authenticator
+    /// or backup code when 2FA is on). The session is fresh for 5 minutes.
+    func reauthWithPassword(password: String, code: String?, useBackupCode: Bool) async throws -> ReauthResponse {
+        var body: [String: Any] = ["method": "password", "password": password]
+        if let code {
+            body["code"] = code.filter { !$0.isWhitespace }
+            body["codeType"] = useBackupCode ? "backup_code" : "totp"
+        }
+        return try await request(path: "/api/v1/me/reauth", method: "POST", body: body)
+    }
+
+    /// Confirms with a code mailed by `sendReauthEmailCode` (accounts without a password).
+    func reauthWithEmailCode(_ code: String) async throws -> ReauthResponse {
+        try await request(
+            path: "/api/v1/me/reauth",
+            method: "POST",
+            body: ["method": "email_code", "code": code.trimmingCharacters(in: .whitespacesAndNewlines)]
+        )
+    }
+
+    /// Mails a 6-digit confirmation code to the recovery (or outside login) address.
+    func sendReauthEmailCode() async throws -> ReauthEmailCodeResponse {
+        try await request(path: "/api/v1/me/reauth/email-code", method: "POST", body: [:] as [String: Any])
+    }
+
     // MARK: Sessions
 
     func listSessions() async throws -> [AccountSession] {
@@ -358,6 +403,11 @@ final class APIClient: @unchecked Sendable {
     }
 
     // MARK: Connected apps (MCP OAuth grants)
+
+    /// Recent security activity: the caller's last 30 days, newest first (AVE-151).
+    func securityActivity() async throws -> SecurityActivityResponse {
+        try await request(path: "/api/v1/me/security-activity")
+    }
 
     func listMcpGrants() async throws -> [McpGrant] {
         try await request(path: "/api/v1/me/mcp-grants")
@@ -501,6 +551,18 @@ final class APIClient: @unchecked Sendable {
             path: "/api/v1/auth/password",
             method: "POST",
             body: ["email": email, "password": password],
+            authed: false
+        )
+    }
+
+    /// Trades the one-time `code` from the Stripe checkout return link, plus the
+    /// checkout session id this app started, for the new owner's session (AVE-118).
+    /// A wrong, used or expired code answers 400.
+    func exchangeCheckoutCode(code: String, sessionId: String) async throws -> CheckoutExchangeResponse {
+        try await request(
+            path: "/api/v1/auth/exchange",
+            method: "POST",
+            body: ["code": code, "sessionId": sessionId],
             authed: false
         )
     }
@@ -819,6 +881,33 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders")
     }
 
+    /// Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
+    /// clashes, 400 when the name has no letters or digits.
+    func createFolder(mailboxId: String, name: String) async throws -> Folder {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders",
+            method: "POST",
+            body: ["name": name]
+        )
+    }
+
+    /// Renames a custom folder; its id stays. System folders answer 400.
+    func renameFolder(mailboxId: String, folderId: String, name: String) async throws -> RenamedFolder {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders/\(folderId.urlPathEncoded)",
+            method: "PUT",
+            body: ["name": name]
+        )
+    }
+
+    /// Deletes a custom folder (204). The Worker moves its mail to the Inbox first.
+    func deleteFolder(mailboxId: String, folderId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders/\(folderId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
     func getInboxDigest(mailboxId: String) async throws -> InboxDigest {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest")
     }
@@ -1096,14 +1185,14 @@ final class APIClient: @unchecked Sendable {
         destinationFolderId: String,
         emailId: String? = nil,
         displayName: String? = nil
-    ) async throws {
+    ) async throws -> SenderTriageDecisionResponse {
         var body: [String: Any] = [
             "sender": sender,
             "destinationFolderId": destinationFolderId,
         ]
         if let emailId { body["emailId"] = emailId }
         if let displayName { body["displayName"] = displayName }
-        let _: EmptyResponse = try await request(
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/approve",
             method: "POST",
             body: body
@@ -1115,15 +1204,27 @@ final class APIClient: @unchecked Sendable {
         sender: String,
         emailId: String? = nil,
         displayName: String? = nil
-    ) async throws {
+    ) async throws -> SenderTriageDecisionResponse {
         var body: [String: Any] = ["sender": sender]
         if let emailId { body["emailId"] = emailId }
         if let displayName { body["displayName"] = displayName }
-        let _: EmptyResponse = try await request(
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/reject",
             method: "POST",
             body: body
         )
+    }
+
+    /// Undo a Screener Accept / Decline: the sender is undecided again (AVE-159).
+    func deleteSenderTriage(mailboxId: String, sender: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: Self.senderTriagePath(mailboxId: mailboxId, sender: sender),
+            method: "DELETE"
+        )
+    }
+
+    static func senderTriagePath(mailboxId: String, sender: String) -> String {
+        "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/\(sender.urlPathEncoded)"
     }
 
     func deleteEmail(mailboxId: String, id: String, bearerToken: String? = nil) async throws {
@@ -1207,6 +1308,22 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Server-composed reply (AVE-140): the Worker fills To, the thread's sender and the
+    /// Re: subject from the original. Used by the notification Reply action.
+    func quickReply(
+        mailboxId: String,
+        emailId: String,
+        text: String,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/quick-reply",
+            method: "POST",
+            body: ["text": text, "quote_time_zone": TimeZone.current.identifier],
+            headers: Self.idempotencyHeaders(idempotencyKey)
+        )
+    }
+
     func forwardEmail(
         mailboxId: String,
         emailId: String,
@@ -1221,6 +1338,19 @@ final class APIClient: @unchecked Sendable {
             bearerToken: bearerToken,
             headers: Self.idempotencyHeaders(idempotencyKey)
         )
+    }
+
+    /// The bounce / complaint suppressions this mailbox can see (AVE-37 / AVE-157).
+    func listSuppressions(mailboxId: String) async throws -> SuppressionList {
+        let (data, _) = try await requestData(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/suppressions"
+        )
+        guard let list = BounceSuppression.list(data: data) else {
+            throw APIError.decoding(
+                DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Not a suppression list"))
+            )
+        }
+        return list
     }
 
     /// Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
@@ -1241,9 +1371,16 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func getAttachment(mailboxId: String, emailId: String, attachmentId: String) async throws -> Data {
-        let (data, _) = try await requestData(
-            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)"
+    /// `bearerToken` pins the download to a session (a forward sent after sign-out in the undo window).
+    func getAttachment(mailboxId: String, emailId: String, attachmentId: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, _) = try await perform(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)",
+            method: "GET",
+            query: [:],
+            body: nil,
+            authed: true,
+            bearerToken: bearerToken,
+            headers: [:]
         )
         return data
     }

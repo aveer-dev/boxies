@@ -5,14 +5,15 @@
 // policy the owner still has to state or approve (site/README.md, Q18).
 //
 // The same copy rules as the rest of the site apply: check-claims scans
-// /legal too, so encryption lines sit in data-claim="negated" clauses and
-// flag-dependent surfaces (Android, AutoFill, the Chrome extension) only
-// appear when their flag is on.
+// /legal too, so encryption lines sit in data-claim="negated" clauses, the
+// clauses about the source code sit in data-claim="dev", and flag-dependent
+// surfaces (Android, AutoFill, the Chrome extension) only appear when their
+// flag is on.
 import { APP_HOST, GITHUB_URL, SUPPORT_EMAIL, flags } from "../config";
 import type { LegalDoc } from "./types";
 
 /** The date these documents last changed. Bump it with any edit to the copy below. */
-export const legalUpdated = "2026-10-28";
+export const legalUpdated = "2026-10-30";
 
 const MAIL_US = `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`;
 
@@ -32,7 +33,7 @@ export const privacy: LegalDoc = {
 			title: "Who we are",
 			body: [
 				`“Inboxies”, “we” and “us” mean the team that runs the hosted Inboxies service and this website. We decide how your data is used, so we’re the controller of it under laws like the GDPR. For anything in this policy, write to ${MAIL_US}.`,
-				`Inboxies is open source. If you use an install that someone else runs on their own Cloudflare account, that operator controls your data there and this policy doesn’t apply to it. See [Self-hosted installs](#privacy-self-hosted).`,
+				`Anyone can run their own copy of Inboxies. If you use a copy that someone else runs, that operator controls your data there and this policy doesn’t apply to it. See [Copies run by others](#privacy-self-hosted).`,
 			],
 			src: "site/src/config.ts SUPPORT_EMAIL; LICENSE (Apache-2.0)",
 			ownerConfirm: "legal entity name and postal address of the controller (and an EU/UK representative if needed)",
@@ -45,7 +46,7 @@ export const privacy: LegalDoc = {
 				"**Your mail.** Every message you receive and send: senders and recipients, subject, body, attachments, headers and the full raw message, along with drafts, folders, read and starred state, and the results of SPF, DKIM and DMARC checks. That includes mail from people who don’t use Inboxies but write to you.",
 				"**What you set up.** Mailbox settings, signature, forwarding and auto-reply, filters, your Screener decisions about senders, Reply Later, private email addresses and their labels, the people you share a mailbox with, and the assistant instructions you write.",
 				"**Ask AI.** Your conversations with the assistant and the drafts it prepares.",
-				"**Devices and sessions.** For each signed-in session we keep its IP address, browser or device description and expiry. If you allow notifications, we store your device’s push token.",
+				"**Devices and sessions.** For each signed-in session we keep its IP address, browser or device description and expiry. If you allow notifications, we store your device’s push token. For each AI app you connect, we keep its name, the permissions and mailboxes you gave it, and when you connected it.",
 				"**Domains and payments.** For a custom domain: the domain, its DNS records, who its admins are, and its subscription status. If you buy a domain, Stripe collects your card and billing details; we receive a customer identifier and the payment’s status, never your card number.",
 				"**Support.** What you send us by email or through the contact form on this site.",
 				"**Security records.** A log of significant account actions, such as an account being deleted or an admin assigning a mailbox, with who did it and when.",
@@ -69,10 +70,10 @@ export const privacy: LegalDoc = {
 						"To meet legal obligations, such as keeping payment records.",
 					],
 				},
-				"We don’t sell your personal data, we don’t share it for advertising, and there are no ads in Inboxies. We don’t use analytics, tracking or crash-reporting tools in the apps, the web app or this site.",
+				"We don’t sell your personal data, we don’t share it for advertising, and there are no ads in Inboxies. The apps have no analytics, tracking or crash-reporting tools. This website and the web app count page views with Cloudflare Web Analytics, which uses no cookies, and the web app’s page addresses don’t contain your email address or other account details, as [Analytics, this website and its contact form](#privacy-site) explains.",
 				"Under the GDPR and UK GDPR, we rely on: performance of our contract with you for running the service and billing; our legitimate interests for spam protection, security and abuse prevention; legal obligation for tax and payment records; and your consent for notifications, which you can withdraw in Settings at any time.",
 			],
-			src: "workers/index.ts (inbound pipeline); workers/lib/classify-email.ts; workers/lib/sender-triage.ts; workers/auth/rate-limit.ts; workers/lib/service-reminders.ts; workers/auth/mail.ts; no analytics/crash SDKs in app/, ios/, android/, extension/, site/ (ios PrivacyInfo.xcprivacy NSPrivacyTracking false)",
+			src: "workers/index.ts (inbound pipeline); workers/lib/classify-email.ts; workers/lib/sender-triage.ts; workers/auth/rate-limit.ts; workers/lib/service-reminders.ts; workers/auth/mail.ts; no analytics/crash SDKs in app/, ios/, android/, extension/ (ios PrivacyInfo.xcprivacy NSPrivacyTracking false); inboxies.co and inboxies.app: Cloudflare Web Analytics beacon injected at the edge by each zone's automatic setup (AVE-126); app URLs: shared/mailbox-url.ts, shared/tag-url.ts",
 			ownerConfirm: "no sale / no ads as a standing commitment (README Q9); lawful bases",
 		},
 		{
@@ -90,15 +91,16 @@ export const privacy: LegalDoc = {
 			id: "privacy-ai",
 			title: "AI and your mail",
 			body: [
-				"Inboxies uses AI models in three places:",
+				"Inboxies uses AI models in four places:",
 				{
 					list: [
 						"**Spam check.** Incoming mail that its headers don’t already settle is checked for spam by a small model, which reads the sender, the subject and the first 2,000 characters of the text.",
-						"**Draft replies.** When mail arrives from a sender you’ve let in, the assistant reads that email and its thread to prepare a draft reply for you to review. It doesn’t draft for mail in the Screener, Spam, bulk mail, spoofed senders, or mail a filter files away or tells it to skip. Before drafting, the message and thread are checked for prompt injection.",
+						"**Draft replies.** When mail addressed to you arrives in your Inbox from a sender you’ve let in, the assistant reads that email and its thread to prepare a draft reply for you to review. It doesn’t draft for newsletters, notifications or other automated mail, mail outside your Inbox (including the Screener, Spam, Promotions and Updates), spoofed senders, or mail a filter tells it to skip. Before drafting, the message and thread are checked for prompt injection.",
+						"**Summaries.** On the web, when you open a longer message, a small model writes a short summary that’s shown above it and saved with the message. It isn’t made for mail in the Screener, Spam, Trash or Drafts.",
 						"**Ask AI.** When you ask the assistant something, it can search and read your mail to answer, draft emails, mark mail read and move it between folders. It saves drafts; it doesn’t send.",
 					],
 				},
-				"These models run on Cloudflare Workers AI: Kimi K2.5 for chat and drafts, and Llama models for the spam check, the injection check and tidying drafts. Your mail isn’t sent to any other AI company. Inboxies doesn’t train any AI model on your mail.",
+				"These models run on Cloudflare, which also stores your mail. Your mail isn’t sent to any other AI company. Inboxies doesn’t train any AI model on your mail.",
 				"There’s no switch to turn the assistant off for a mailbox yet. To stop drafts for particular senders, lists or subjects, add a filter with “Skip auto-draft”. Mailbox owners can change how it writes in Settings → AI prompt.",
 			],
 			src: "workers/lib/classify-email.ts:80-81,262-310 (From, Subject, 2,000 chars; llama-3.1-8b-instruct-fast); workers/agent/index.ts:287,315-471 (kimi-k2.5; auto-draft gates; injection scan); workers/lib/ai.ts:32,138; workers/lib/inbox-filters.ts:32 (skipAutoDraft); site faqs.ts ai-reads, ai-models, ai-off",
@@ -113,12 +115,12 @@ export const privacy: LegalDoc = {
 					list: [
 						"**You**, and the owners and members you share a mailbox with.",
 						"**Domain admins.** On a custom domain, its admins can create, reassign and delete mailboxes on it, including assigning one to themselves, and can export every mailbox on the domain.",
-						"**Tools you connect.** An outside AI tool you connect over MCP acts with your access and can read, send and delete what you can.",
+						"**Apps you connect.** An AI app you connect can read the mailboxes you pick for it and, if you allow it, write drafts, send, move and delete mail in them.",
 						"**Us.** Mail isn’t end-to-end encrypted, so the people who run Inboxies can technically access stored mail, as with most hosted email. We don’t look at your mail except to fix a problem you’ve asked us to, to investigate abuse or a security incident, or where the law requires it.",
 					],
 				},
 			],
-			src: "workers/routes/admin-invites.ts:339-430 (assign incl. self); workers/routes/export-and-offboarding.ts:128-141; workers/mcp/index.ts (13 tools); site faqs.ts who-reads; workers/routes/ops.ts (no mail-reading route)",
+			src: "workers/routes/admin-invites.ts:339-430 (assign incl. self); workers/routes/export-and-offboarding.ts:128-141; shared/mcp-consent.ts, workers/mcp/scopes.ts (read always, draft/send/manage chosen); site faqs.ts who-reads; workers/routes/ops.ts (no mail-reading route)",
 			ownerConfirm: "the staff access policy (README Q10)",
 		},
 		{
@@ -128,7 +130,7 @@ export const privacy: LegalDoc = {
 				"We use a small number of service providers. They process data for us under their own terms and privacy commitments.",
 				{
 					table: [
-						["Cloudflare", "Runs everything: hosting, storage (Durable Objects, R2 and D1), receiving and sending mail (Email Routing and Email Service), the AI models (Workers AI), DNS for custom domains, and domain registration (Cloudflare Registrar)."],
+						["Cloudflare", "Runs everything: hosting, storage, receiving and sending mail, the AI models, DNS for custom domains, domain registration, and page view counts for this website and the web app (Web Analytics)."],
 						["Stripe", "Payments for domains you buy: card details, billing address and invoices. We share the domain, your username, display name and price."],
 						["Apple", "Sign in with Apple, and notifications to iPhone (the sender, subject and a short preview of a new email pass through Apple’s push service)."],
 						[
@@ -157,7 +159,7 @@ export const privacy: LegalDoc = {
 			body: [
 				{
 					table: [
-						["Mail and attachments", "Until you delete them. Deleting moves mail to Trash; deleting it from Trash, or emptying Trash, erases it. Trash and Spam aren’t emptied automatically."],
+						["Mail and attachments", "Until you delete them. Deleting moves mail to Trash. Mail in Trash or Spam is erased 30 days after it got there, and deleting it from Trash, or emptying Trash, erases it sooner."],
 						["A deleted mailbox", "Its messages, attachments, settings, search index, private email addresses and assistant history are erased at once."],
 						["A deleted account", "Your sign-in methods, sessions and memberships are erased, along with every mailbox you’re the only owner of. You’re removed from mailboxes that have other owners."],
 						[".mbox exports", "7 days, then the file is deleted. An export made before a mailbox was deleted lasts its 7 days."],
@@ -183,7 +185,7 @@ export const privacy: LegalDoc = {
 					list: [
 						"**See and take your data.** Your mail is in the apps. Domain admins can export every mailbox on a domain to .mbox from Admin → Export.",
 						`**Correct it.** Change your backup email, password, sign-in methods and the name your mail is sent from in Settings, or write to ${MAIL_US} to fix anything else.`,
-						"**Delete it.** Delete a mailbox in its settings, or your whole account in Settings → Account → Delete account, on the web or in the iPhone app.",
+						"**Delete it.** Delete a mailbox in its settings, or your whole account in Settings → Account → Delete account in the apps, or Settings → Your account → Delete account on the web.",
 						"**Control what reaches you.** Keep new senders in the Screener, leave remote images in Spam blocked, turn notifications off, and sign out other sessions from Settings.",
 					],
 				},
@@ -206,7 +208,7 @@ export const privacy: LegalDoc = {
 			id: "privacy-cookies",
 			title: "Cookies and local storage",
 			body: [
-				"Inboxies uses one cookie: the session cookie that keeps you signed in to the web app. It’s strictly necessary, so there’s no cookie banner. This website sets no cookies at all.",
+				"Inboxies uses one cookie: the session cookie that keeps you signed in to the web app. It’s strictly necessary, so there’s no cookie banner. This website sets no cookies at all, and Web Analytics sets none on the website or the web app.",
 				{
 					table: [
 						["Web app session cookie", "Keeps you signed in, for up to 30 days. Not readable by scripts."],
@@ -220,12 +222,14 @@ export const privacy: LegalDoc = {
 		},
 		{
 			id: "privacy-site",
-			title: "This website and its contact form",
+			title: "Analytics, this website and its contact form",
 			body: [
-				"inboxies.co has no analytics, no trackers and no third-party scripts, and its fonts are served from our own domain.",
+				`This website (inboxies.co) and the web app (${APP_HOST}) use Cloudflare Web Analytics to count page views, see how people move around them, and see how fast pages load. Cloudflare adds a small script to their pages that reports the page you viewed (without anything after the “?” in its address), the page or site that sent you, your country, your browser, operating system and type of device, and page load timings. In the web app it also reports each move to a new screen, the same way. It sets no cookies and stores nothing in your browser, and Cloudflare says it doesn’t collect visitors’ personal data, fingerprint them, or track them across other sites. Your browser fetches the script from Cloudflare, which already serves every page of the website and the web app.`,
+				"The web app’s page addresses don’t contain your email address, mailbox addresses, invite codes, search terms or other account details. A mailbox is named by its place in your list of mailboxes (the first is 0), a tag you created by its place in that mailbox’s list of tags, an email by a random ID, and a built-in folder such as Inbox or Sent by its name. Older links that had an address or a tag’s name in them are redirected before the page loads.",
+				"The apps don’t use Web Analytics or any other analytics. On the website, that script is the only third-party script, and the fonts are served from our own domain.",
 				`The contact form sends your name, email, Inboxies address (if you give one), topic and message, with the page you came from and your browser’s description, to ${SUPPORT_EMAIL} as an email. The website doesn’t store it, and its logs record only whether a message was sent and its topic. Our support mailbox runs on Inboxies, so your message is handled like any other mail there, spam check included.`,
 			],
-			src: "site/src/pages/api/contact.ts:7,40-43,216-248; @fontsource/inter; no analytics in site/",
+			src: "site/src/pages/api/contact.ts:7,40-43,216-248; @fontsource/inter; Cloudflare Web Analytics on inboxies.co and inboxies.app via each zone's automatic setup (not in site/ or app/ code; AVE-126). App URLs carry no account details: shared/mailbox-url.ts (mailbox index, /invite?token=), shared/tag-url.ts (tag index: /tags/<n>), workers/lib/legacy-app-urls.ts (old-link redirects). Claims per developers.cloudflare.com/web-analytics/about/, /data-metrics/dimensions/, /data-metrics/data-origin-and-collection/, /faq/ (no query strings) and cloudflare.com/web-analytics/ (no cookies or localStorage, no fingerprinting)",
 		},
 		{
 			id: "privacy-children",
@@ -238,9 +242,10 @@ export const privacy: LegalDoc = {
 		},
 		{
 			id: "privacy-self-hosted",
-			title: "Self-hosted installs",
+			title: "Copies run by others",
+			claim: "dev",
 			body: [
-				`Anyone can run Inboxies on their own Cloudflare account from [the source code](${GITHUB_URL}). On a self-hosted install, mail and accounts live in that operator’s account, and we have no access to it. Their own privacy terms apply there.`,
+				`Inboxies is open source, and anyone can run it on their own Cloudflare account from [the source code](${GITHUB_URL}). On a self-hosted copy, mail and accounts live in that operator’s account, and we have no access to them. Their own privacy terms apply there.`,
 			],
 			src: "LICENSE; site faqs.ts self-host",
 		},
@@ -296,9 +301,9 @@ export const terms: LegalDoc = {
 			title: "The assistant",
 			body: [
 				"Drafts and answers from the assistant are generated by AI. They can be wrong, incomplete or inappropriate, and they aren’t professional advice. The assistant saves drafts and never sends on its own. Read anything it writes before you send it: what you send is yours. The spam check and the Screener can also make mistakes, so look in Screener and Spam if you’re expecting something.",
-				"If you connect an outside tool over MCP, it acts with your access, including sending and deleting mail. You’re responsible for what it does.",
+				"If you connect an outside AI app, it acts with the permissions you give it, which can include sending and deleting mail. You’re responsible for what it does.",
 			],
-			src: "workers/agent/index.ts (drafts only, source agent); site faqs.ts ai-sending, mcp",
+			src: "workers/agent/index.ts (drafts only, source agent); workers/mcp/scopes.ts (send, manage); site faqs.ts ai-sending, ai-tools",
 		},
 		{
 			id: "terms-limits",
@@ -307,7 +312,8 @@ export const terms: LegalDoc = {
 				"To keep mail flowing and stop abuse, Inboxies sets limits. Today they include:",
 				{
 					records: [
-						["Sending", "20 an hour, 100 a day per mailbox"],
+						["Sending", "100 recipients an hour, 300 a day per mailbox"],
+						["Recipients per message", "50, across To, Cc and Bcc"],
 						["Largest message you send", "5 MiB, attachments included"],
 						["Largest message you receive", "25 MiB"],
 						["Filters", "50 per mailbox"],
@@ -363,10 +369,11 @@ export const terms: LegalDoc = {
 		{
 			id: "terms-open-source",
 			title: "Open source",
+			claim: "dev",
 			body: [
-				`The Inboxies source code is available under the Apache License 2.0 at [GitHub](${GITHUB_URL}). That license governs the code; these terms govern the hosted service. The Inboxies name and logo aren’t licensed for use on your own install.`,
+				`The Inboxies source code is available under the Apache License 2.0 on [GitHub](${GITHUB_URL}). That license governs the code; these terms govern the hosted service. The Inboxies name and logo aren’t licensed for use on your own copy.`,
 			],
-			src: "LICENSE; site Footer (Apache-2.0)",
+			src: "LICENSE; gh repo view (public again 30 Oct 2026)",
 			ownerConfirm: "trademark line",
 		},
 		{

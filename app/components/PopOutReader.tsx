@@ -4,7 +4,7 @@
 
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import EmailPanel from "~/components/EmailPanel";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useShortcut } from "~/lib/shortcuts";
@@ -34,7 +34,7 @@ export default function PopOutReader() {
 }
 
 function PopOutSheet({ emailId, from }: { emailId: string; from?: string }) {
-	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const closePopOut = useUIStore((s) => s.closePopOut);
 	const sheetRef = useRef<HTMLDivElement>(null);
 	const overlayRef = useRef<HTMLDivElement>(null);

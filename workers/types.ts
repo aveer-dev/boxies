@@ -25,8 +25,8 @@ export interface Env extends Cloudflare.Env {
 	 */
 	MAILBOX_CREATE_POLICY?: string;
 	/**
-	 * "false" requires the emailed code to accept an invite. Otherwise app
-	 * builds that predate invite codes can still create an account without one.
+	 * "true" lets app builds that predate invite codes create an account from
+	 * an invite without the emailed code. Unset or anything else: the code is required.
 	 */
 	LEGACY_INVITE_ACCEPT?: string;
 	/** From address for invite emails (defaults to noreply@`MAIL_DOMAIN` / first `DOMAINS` / fallback). */

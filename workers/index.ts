@@ -43,9 +43,11 @@ import {
 	senderNameFromRawHeaders,
 } from "../shared/sender";
 import { SendEmailRequestSchema } from "./lib/schemas";
-import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
+import { countRecipients } from "./lib/send-quota";
+import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
+import { attachmentResponseHeaders } from "../shared/attachment-risk";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -54,6 +56,8 @@ import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-ag
 import { getPlanTier, tryConsumeAiQuota } from "./lib/ai-quota";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
+import { detectMailCards } from "./lib/mail-cards";
+import { mailCardsAllowed } from "../shared/mail-cards";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import type { AiSummaryResponse } from "../shared/ai-summaries";
@@ -82,6 +86,7 @@ import {
 } from "./auth/mailboxes";
 import type { MailboxRole } from "./auth/schema";
 import { registerAccountRoutes } from "./routes/account";
+import { registerReauthRoutes } from "./routes/reauth";
 import { registerAdminAndInviteRoutes } from "./routes/admin-invites";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
@@ -98,6 +103,7 @@ import {
 import { getDomainMetadata } from "./lib/domain-registry";
 import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { dispatchPushToDevices } from "./lib/push-dispatch";
+import { MAIL_NOTIFICATION_CATEGORY } from "./lib/apns";
 import { parseReminderInput } from "./lib/reply-later-reminders";
 import {
 	aliasMetadataKey,
@@ -145,6 +151,7 @@ import {
 	type ClassifyAi,
 	type EmailClassification,
 } from "./lib/classify-email";
+import { directMailFlag } from "./lib/direct-mail";
 import {
 	appendXLoop,
 	autoReplySubject,
@@ -288,6 +295,7 @@ app.get("/api/v1/config", (c) => {
 });
 
 registerAccountRoutes(app);
+registerReauthRoutes(app);
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
@@ -565,7 +573,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
 		throw e;
 	}
-	const rateLimitError = await (stub as any).checkSendRateLimit();
+	// The quota counts recipients (AVE-125); the schema already capped them at 50.
+	const rateLimitError = await (stub as any).checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
 
 	if (!resolvedThreadId) {
@@ -1231,6 +1240,8 @@ app.post("/api/v1/mailboxes/:mailboxId/test-push", async (c: AppContext) => {
 // -- Reply / Forward ------------------------------------------------
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
+// Short reply composed by the Worker (notification / watch actions, AVE-140).
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/quick-reply", handleQuickReply);
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 
 // -- Folders --------------------------------------------------------
@@ -1429,6 +1440,14 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/reject", async (c: AppConte
 	return c.json({ triage, moved });
 });
 
+/**
+ * Change a Screener decision in place: switch allowed ↔ rejected or move an
+ * accepted sender's destination, optionally refiling their queued mail.
+ * No client calls this today (AVE-159): iOS and Android undo a decision with
+ * `DELETE sender-triage/:sender`, and Settings → Senders changes a decline by
+ * removing its block rule. Kept as API surface for a future "change decision"
+ * control rather than removed.
+ */
 app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppContext) => {
 	const stub = c.var.mailboxStub as any;
 	const sender = normalizeTriageSender(
@@ -1512,6 +1531,11 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 	return c.json({ triage, moved });
 });
 
+/**
+ * Back to undecided: the sender's next message waits in the Screener again.
+ * Native Undo after Accept / Decline calls this (AVE-159), then moves the
+ * messages the decision refiled back to the Screener itself.
+ */
 app.delete("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppContext) => {
 	const stub = c.var.mailboxStub as any;
 	const sender = normalizeTriageSender(
@@ -1521,6 +1545,10 @@ app.delete("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCo
 	const ok = await stub.deleteSenderTriage(sender);
 	// Back to undecided: a leftover address block rule would keep them out.
 	const clearedRule = await stub.clearAddressBlockRule(sender);
+	// An Accept into Promotions / Updates also pinned that box (source
+	// "screener"); undoing the Accept drops it. A box the user chose elsewhere stays.
+	const existingPref = await stub.getSenderPreference(sender);
+	if (existingPref?.source === "screener") await stub.deleteSenderPreference(sender);
 	return ok || clearedRule ? c.body(null, 204) : c.json({ error: "Not found" }, 404);
 });
 
@@ -1624,11 +1652,8 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 	if (!attachment) return c.json({ error: "Attachment not found" }, 404);
 	const obj = await c.env.BUCKET.get(attachmentKey(emailId, attachmentId, attachment.filename));
 	if (!obj) return c.json({ error: "Attachment file not found" }, 404);
-	const headers = new Headers();
-	headers.set("Content-Type", attachment.mimetype);
-	const sanitized = attachment.filename.replace(/[\x00-\x1f"\\]/g, "_");
-	headers.set("Content-Disposition", `attachment; filename="${sanitized}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
-	return new Response(obj.body, { headers });
+	// Always a download, never rendered: see shared/attachment-risk.ts (AVE-114).
+	return new Response(obj.body, { headers: attachmentResponseHeaders(attachment) });
 });
 
 // -- Receive inbound email ------------------------------------------
@@ -1674,7 +1699,7 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 type AutomationStub = {
 	claimAutoReply: (sender: string) => Promise<boolean>;
 	releaseAutoReply: (sender: string) => Promise<void>;
-	checkSendRateLimit: () => Promise<string | null>;
+	checkSendRateLimit: (recipients?: number) => Promise<string | null>;
 	releaseSendSlot: () => Promise<void>;
 	createEmail: (
 		folder: string,
@@ -1803,7 +1828,8 @@ export async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const rateLimitError = await stub.checkSendRateLimit();
+	// One recipient: the sender being auto-replied to.
+	const rateLimitError = await stub.checkSendRateLimit(1);
 	if (rateLimitError) {
 		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
 		await stub.releaseAutoReply(sender).catch(() => {});
@@ -2226,6 +2252,22 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			rawMime: rawEmail,
 		});
 
+		// Direct-mail signals (AVE-172 / AVE-173): stored per message to drive
+		// needs_reply, and gating the auto-draft below.
+		const directMailInput = {
+			headers: storedHeaders,
+			sender: fromRaw,
+			replyTo: (parsedEmail.replyTo || []).map((a) => a.address),
+			recipients: [...allRecipients, ...ccRecipients],
+			ownAddresses: [message.to, mailboxId, routedAliasMeta?.aliasEmail],
+		};
+		// Reader cards (AVE-175): one-time code and calendar invite. Never for
+		// senders that failed authentication; Spam is gated where they're read
+		// and pushed, since the folder can still change.
+		const authTier = storedAuthTier(auth);
+		const mailCards = mailCardsAllowed({ auth_tier: authTier })
+			? detectMailCards(parsedEmail)
+			: { otp: null, invite: null };
 		const inboundEmail = {
 			id: messageId, subject: parsedEmail.subject || "",
 			sender: fromAddress, sender_name: senderName, recipient,
@@ -2240,8 +2282,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			// Why it was filed where it was (AVE-94); the reason is set below,
 			// once the folder is decided.
 			classification_reason: classification.reason as string | null,
-			auth_tier: storedAuthTier(auth),
+			auth_tier: authTier,
 			matched_rule_id: null as string | null,
+			direct_mail: directMailFlag(directMailInput),
+			otp_code: mailCards.otp?.code ?? null,
+			calendar_invite: mailCards.invite,
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -2453,10 +2498,12 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
-		// Auto-draft personal ham only. Spam, bulk, and Screener skip the agent.
+		// Auto-draft direct personal mail only (AVE-172). Spam, bulk, Screener,
+		// notifications, no-reply senders, Bcc/list delivery, and anything not
+		// filed to Inbox skip the agent.
 		if (
 			!triageDecision.skipAutoDraft &&
-			shouldAutoDraft(classification, auth) &&
+			shouldAutoDraft(classification, auth, { ...directMailInput, folderId: filedFolder }) &&
 			!filterHit?.skipAutoDraft
 		) {
 			ctx.waitUntil(
@@ -2500,6 +2547,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 					const alert = composePushAlert({
 						subject: parsedEmail.subject,
 						snippet: inboundEmail.snippet,
+						oneTimeCode: mailCardsAllowed({ folder_id: filedFolder, auth_tier: authTier })
+							? inboundEmail.otp_code
+							: null,
 					});
 					const result = await dispatchPushToDevices(env, stub as any, {
 						title: senderName || fromAddress,
@@ -2509,6 +2559,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 						mailboxId,
 						emailId: messageId,
 						folderId: filedFolder,
+						threadId,
+						category: MAIL_NOTIFICATION_CATEGORY,
 					});
 					console.log(
 						`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,

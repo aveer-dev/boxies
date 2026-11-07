@@ -7,7 +7,9 @@ enum SettingsDestination: Hashable {
     case forwarding
     case autoReply
     case filters
+    case tags
     case senders
+    case suppressions
     case aliases
     case sharing
     case signInMethods
@@ -80,6 +82,8 @@ struct SettingsSheetView: View {
                         settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
                         settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
                         settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                        // Custom folders, shown as tags like web (AVE-158).
+                        settingsNavRow(CustomFolders.pageTitle, systemImage: "number", destination: .tags)
                         settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
                         settingsNavRow("Private email", destination: .aliases) {
                             PrivateEmailLogoView(size: 18, showTile: false)
@@ -106,6 +110,18 @@ struct SettingsSheetView: View {
                     if let mailbox, mailbox.isReadOnly {
                         Text("The subscription for \(mailbox.domain) ended, so this mailbox's settings are read-only until it's renewed.")
                     }
+                }
+                .listRowSeparator(.hidden)
+
+                // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+                Section {
+                    settingsNavRow(
+                        BounceSuppression.pageTitle,
+                        systemImage: "nosign",
+                        destination: .suppressions
+                    )
+                } header: {
+                    Text("Outgoing mail")
                 }
                 .listRowSeparator(.hidden)
 
@@ -205,8 +221,12 @@ struct SettingsSheetView: View {
                     AutoReplySettingsView()
                 case .filters:
                     FiltersSettingsView()
+                case .tags:
+                    TagsSettingsView()
                 case .senders:
                     SendersSettingsView()
+                case .suppressions:
+                    SuppressionsSettingsView()
                 case .aliases:
                     AliasesSettingsView()
                 case .sharing:
@@ -270,6 +290,9 @@ struct SettingsSheetView: View {
                 screenerEnabled = app.isScreenerEnabled
             }
         }
+        // Sign-in & recovery, passkeys and Delete account answer `reauth_required`
+        // until the user confirms it's them (AVE-170).
+        .reauthPromptHost()
         .applyThemeController()
     }
 
@@ -607,32 +630,6 @@ struct SettingsComingSoonView: View {
         .background(AppTheme.background)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-enum AvatarInitials {
-    /// Two letters for a two-character name or first + last; otherwise the first letter.
-    static func from(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "A" }
-
-        let source = trimmed.contains("@")
-            ? String(trimmed.split(separator: "@").first ?? Substring(trimmed))
-            : trimmed
-        let parts = source
-            .split { $0.isWhitespace || $0 == "." || $0 == "_" }
-            .map(String.init)
-            .filter { !$0.isEmpty }
-
-        if parts.count >= 2 {
-            return String(parts[0].prefix(1) + parts[parts.count - 1].prefix(1)).uppercased()
-        }
-
-        let word = parts.first ?? source
-        if word.count <= 2 {
-            return word.uppercased()
-        }
-        return String(word.prefix(1)).uppercased()
     }
 }
 

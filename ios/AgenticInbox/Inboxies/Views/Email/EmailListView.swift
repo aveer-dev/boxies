@@ -99,9 +99,12 @@ struct EmailListView: View {
                         Text("No emails match your active filters.")
                     } actions: {
                         if let onClearFilters {
-                            Button("Clear Filters", action: onClearFilters)
-                                .buttonStyle(.borderedProminent)
-                                .tint(AppTheme.ink)
+                            Button(action: onClearFilters) {
+                                Text("Clear Filters")
+                                    .foregroundStyle(AppTheme.background)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(AppTheme.ink)
                         }
                     }
                     .padding(.top, 32)

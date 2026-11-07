@@ -87,6 +87,11 @@ export function buildFcmMessage(token: string, payload: APNsPayload) {
 			mailboxId: payload.mailboxId,
 			emailId: payload.emailId,
 			folderId: payload.folderId ?? "inbox",
+			// AVE-140: thread for notification actions / per-thread tags, and
+			// the category the app adds its mail actions for. FCM data values
+			// must be strings, so unset fields are left out.
+			...(payload.threadId ? { threadId: payload.threadId } : {}),
+			...(payload.category ? { category: payload.category } : {}),
 		},
 		android: {
 			priority: "high",

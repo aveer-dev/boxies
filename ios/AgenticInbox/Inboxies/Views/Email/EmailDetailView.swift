@@ -49,6 +49,12 @@ struct EmailDetailView: View {
         return EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
+    /// The newest message's code or invite; none while the thread is still loading.
+    private var mailCard: MailCards.Card? {
+        if app.isEmailDetailLoading && app.threadEmails.isEmpty { return nil }
+        return MailCards.card(for: app.threadEmails)
+    }
+
     private var subjectText: String {
         let subject = email?.subject ?? ""
         return subject.isEmpty ? "(no subject)" : subject
@@ -105,6 +111,14 @@ struct EmailDetailView: View {
                     }
                 }
             }
+            // Code / Invite card in thumb reach, above the bottom bar (AVE-176).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let card = mailCard {
+                    MailCardView(card: card)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mailCard)
             .overlay {
                 let stickies = noteGroups.sticky
                 if !stickies.isEmpty {
@@ -283,6 +297,10 @@ struct EmailDetailView: View {
                 }
             }
         }
+        // The compact reader is a sheet, outside HomeShellView's `.tint(AppTheme.ink)`.
+        // Without this, pre-iOS 26 toolbars fall back to system blue (the iPad
+        // reading pane already inherits ink from HomeSplitLayout).
+        .tint(AppTheme.ink)
     }
 
     private var tagsRow: some View {
@@ -745,6 +763,12 @@ private struct MessagePeopleHeader: View {
     var onShowActions: () -> Void
     var onSearch: (String) -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// At accessibility text sizes the date + options + chevron cluster fills the whole row and
+    /// squeezes the sender to nothing (AVE-162), so the sender stacks above it instead.
+    private var stacksSenderAboveDate: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
         VStack(alignment: .leading, spacing: isRecipientsExpanded ? 8 : 2) {
             if isRecipientsExpanded {
@@ -759,25 +783,37 @@ private struct MessagePeopleHeader: View {
         }
     }
 
+    @ViewBuilder
     private var collapsedTopRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Button(action: senderOrToAction) {
-                HStack(spacing: 6) {
-                    Text(message.fromAddress.label(selfAddress: selfAddress))
-                        .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
-                        .foregroundStyle(AppTheme.ink)
-                        .lineLimit(1)
-                    if let label = message.deliveryStatusLabel {
-                        deliveryStatusChip(label)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+        if stacksSenderAboveDate {
+            VStack(alignment: .leading, spacing: 2) {
+                senderButton
+                dateAndToggle
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isBodyExpanded ? "Show recipient details" : "Show message")
-            dateAndToggle
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                senderButton
+                dateAndToggle
+            }
         }
+    }
+
+    private var senderButton: some View {
+        Button(action: senderOrToAction) {
+            HStack(spacing: 6) {
+                Text(message.fromAddress.label(selfAddress: selfAddress))
+                    .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(stacksSenderAboveDate ? 2 : 1)
+                if let label = message.deliveryStatusLabel {
+                    deliveryStatusChip(label)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isBodyExpanded ? "Show recipient details" : "Show message")
     }
 
     private var recipientSummary: String {
@@ -810,7 +846,24 @@ private struct MessagePeopleHeader: View {
         }
     }
 
+    @ViewBuilder
     private var expandedFromRow: some View {
+        if stacksSenderAboveDate {
+            VStack(alignment: .leading, spacing: 4) {
+                expandedFromLabelAndSender
+                dateAndToggle
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                expandedFromLabelAndSender
+                Spacer(minLength: 8)
+                dateAndToggle
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedFromLabelAndSender: some View {
         HStack(alignment: .center, spacing: 8) {
             Text("From")
                 .font(.inter(size: AppTheme.FontSize.recipient, weight: .medium))
@@ -824,8 +877,6 @@ private struct MessagePeopleHeader: View {
             if let label = message.deliveryStatusLabel {
                 deliveryStatusChip(label)
             }
-            Spacer(minLength: 8)
-            dateAndToggle
         }
     }
 
@@ -855,7 +906,7 @@ private struct MessagePeopleHeader: View {
                     Text(formattedDate)
                         .font(.inter(size: AppTheme.FontSize.meta))
                         .foregroundStyle(AppTheme.muted)
-                        .lineLimit(1)
+                        .lineLimit(stacksSenderAboveDate ? 2 : 1)
                     Image(systemName: isRecipientsExpanded ? "chevron.up" : "chevron.down")
                         .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)

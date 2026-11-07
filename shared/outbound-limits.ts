@@ -53,3 +53,37 @@ export function estimateOutboundMessageBytes(input: OutboundSizeInput): number {
 export function remainingOutboundBudget(input: OutboundSizeInput): number {
 	return Math.max(0, MAX_OUTBOUND_MESSAGE_BYTES - estimateOutboundMessageBytes(input));
 }
+
+/**
+ * Most recipients one message may address, To + Cc + Bcc combined (AVE-125).
+ * Matches Cloudflare Email Service's own per-email cap ("Recipients per email
+ * (to, cc, bcc combined): 50", developers.cloudflare.com/email-service/platform/limits/).
+ */
+export const MAX_RECIPIENTS_PER_MESSAGE = 50;
+
+export const TOO_MANY_RECIPIENTS_ERROR = `Too many recipients (max ${MAX_RECIPIENTS_PER_MESSAGE})`;
+
+/** A To / Cc / Bcc value: one address, a list, or a comma-separated string. */
+export type RecipientField = string | readonly string[] | null | undefined;
+
+/**
+ * Addresses across To / Cc / Bcc. Every entry counts (a duplicate is still a
+ * recipient Cloudflare is asked to deliver to); a comma-separated string counts
+ * each non-empty part.
+ */
+export function countRecipients(...fields: RecipientField[]): number {
+	let total = 0;
+	for (const field of fields) {
+		if (!field) continue;
+		const entries = typeof field === "string" ? field.split(",") : field;
+		for (const entry of entries) {
+			if (typeof entry === "string" && entry.trim()) total++;
+		}
+	}
+	return total;
+}
+
+/** {@link TOO_MANY_RECIPIENTS_ERROR} when the message addresses more than 50 people. */
+export function recipientCapError(...fields: RecipientField[]): string | null {
+	return countRecipients(...fields) > MAX_RECIPIENTS_PER_MESSAGE ? TOO_MANY_RECIPIENTS_ERROR : null;
+}

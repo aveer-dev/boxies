@@ -26,6 +26,8 @@ import co.inboxies.app.ui.RootView
 import co.inboxies.app.ui.preview.PreviewHarness
 import co.inboxies.app.ui.preview.PreviewMode
 import co.inboxies.app.ui.preview.PreviewRoot
+import co.inboxies.app.widget.InboxWidgetLink
+import co.inboxies.app.widget.InboxWidgetPublisher
 
 val LocalAuthStore = staticCompositionLocalOf<AuthStore> { error("AuthStore missing") }
 val LocalAppModel = staticCompositionLocalOf<AppModel> { error("AppModel missing") }
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
         val model = appModel
         val previewMode = PreviewMode.fromIntent(intent)
         val isRecreation = savedInstanceState != null
+        if (BuildConfig.DEBUG && !isRecreation) handleWidgetPreviewData(intent)
         if (previewMode != null) {
             // Re-seed only on a cold start (or after process death); a config change
             // keeps the already-seeded app-scoped model.
@@ -68,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             handlePushIntent(intent)
+            handleWidgetIntent(intent)
             handleInviteIntent(intent)
             handleOnboardingIntent(intent)
             handleBillingIntent(intent)
@@ -122,8 +126,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (BuildConfig.DEBUG) handleWidgetPreviewData(intent)
         if (PreviewMode.fromIntent(intent) != null) return
         handlePushIntent(intent)
+        handleWidgetIntent(intent)
         handleInviteIntent(intent)
         handleOnboardingIntent(intent)
         handleBillingIntent(intent)
@@ -148,30 +154,31 @@ class MainActivity : ComponentActivity() {
     private fun handleOnboardingIntent(intent: Intent?) {
         if (intent == null) return
         val data = intent.data ?: return
-        val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
-            || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
-        if (isOnboarding) {
-            val domain = data.getQueryParameter("domain")
-            // Only trust a token returned for the checkout this app started.
-            val token = data.getQueryParameter("token")?.takeIf {
-                co.inboxies.app.config.AppConfig.consumePendingCheckout(data.getQueryParameter("session_id"))
-            }
-            if (!token.isNullOrBlank()) {
-                val auth = (application as InboxiesApplication).authStore
-                val email = if (!domain.isNullOrBlank()) "admin@$domain" else null
-                auth.applySession(token, email)
-                if (::appModel.isInitialized) {
-                    lifecycleScope.launch {
-                        appModel.bootstrap(token)
+        val link = co.inboxies.app.services.CheckoutReturnLink.parse(data.toString()) ?: return
+        intent.data = null
+        val auth = (application as InboxiesApplication).authStore
+        // Only a checkout this app started can be redeemed; the session id never rides in the link.
+        val checkoutSessionId = co.inboxies.app.config.AppConfig.pendingCheckout()
+        val code = link.code
+        if (code != null && checkoutSessionId != null) {
+            val domain = link.domain?.trim()?.lowercase()
+            val fallbackEmail = if (!domain.isNullOrBlank()) "admin@$domain" else null
+            lifecycleScope.launch {
+                val signedIn = auth.signInWithCheckoutCode(code, checkoutSessionId, fallbackEmail)
+                if (signedIn) {
+                    co.inboxies.app.config.AppConfig.consumePendingCheckout(checkoutSessionId)
+                    if (::appModel.isInitialized) {
+                        auth.currentToken()?.let { appModel.bootstrap(it) }
                         appModel.refreshMailboxes(showLoading = true)
                     }
-                }
-            } else if (::appModel.isInitialized) {
-                lifecycleScope.launch {
+                } else if (::appModel.isInitialized && auth.isAuthenticated) {
                     appModel.refreshMailboxes(showLoading = true)
                 }
             }
-            intent.data = null
+        } else if (::appModel.isInitialized) {
+            lifecycleScope.launch {
+                appModel.refreshMailboxes(showLoading = true)
+            }
         }
     }
 
@@ -189,6 +196,41 @@ class MainActivity : ComponentActivity() {
             appModel.setPendingInviteToken(token)
         }
         intent.data = null
+    }
+
+    /**
+     * "Today's inbox" widget taps (AVE-150) take the notification-tap path: a card opens
+     * its thread, anywhere else opens that mailbox's Inbox.
+     */
+    private fun handleWidgetIntent(intent: Intent?) {
+        val link = InboxWidgetLink.parse(intent?.data?.toString()) ?: return
+        when (link) {
+            is InboxWidgetLink.Thread ->
+                PushNotificationManager.shared.setPendingDeepLink(link.mailboxId, link.threadId, "inbox")
+            is InboxWidgetLink.Inbox ->
+                PushNotificationManager.shared.setPendingInboxLink(link.mailboxId)
+        }
+        intent?.data = null
+    }
+
+    /**
+     * DEBUG `--es previewWidgetData mail|zero`: sample data for the real home-screen
+     * widget, no sign-in needed (iOS `-previewWidgetData`). See run-debug-preview.sh.
+     */
+    private fun handleWidgetPreviewData(intent: Intent?) {
+        val value = intent?.getStringExtra("previewWidgetData") ?: return
+        InboxWidgetPublisher.publishPreviewData(inboxZero = value.equals("zero", ignoreCase = true))
+        // `--ez previewWidgetPin true`: ask the launcher to add the widget (one "Add" tap).
+        if (intent.getBooleanExtra("previewWidgetPin", false)) {
+            val manager = getSystemService(android.appwidget.AppWidgetManager::class.java)
+            if (manager?.isRequestPinAppWidgetSupported == true) {
+                manager.requestPinAppWidget(
+                    android.content.ComponentName(this, co.inboxies.app.widget.TodayInboxWidgetReceiver::class.java),
+                    null,
+                    null,
+                )
+            }
+        }
     }
 
     private fun handlePushIntent(intent: Intent?) {

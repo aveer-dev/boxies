@@ -27,9 +27,13 @@ import { isHostedEmailDomain } from "../auth/hooks";
 import { deleteLegacyIdentityForUser } from "../auth/migrate";
 import { appBaseUrl, codeEmail, sendSystemEmail } from "../auth/mail";
 import { deleteMailboxRows, pruneDeviceTokensToMembership } from "../auth/mailboxes";
+import { consumeCheckoutExchangeCode } from "../auth/checkout-exchange";
 import { consumeLinkToken, consumeOtp, issueLinkToken, issueOtp, revokeLinkTokens } from "../auth/otp";
 import { userKey, type RequestPrincipal } from "../auth/principal";
-import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
+import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
+import { isReauthFresh, reauthGate, recordReauth } from "../auth/reauth";
+import { securityNoticeRecipients, sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
+import { listSecurityActivity, requestDevice } from "../auth/security-activity";
 import * as schema from "../auth/schema";
 import {
 	clearSessionCookieHeader,
@@ -44,6 +48,7 @@ import {
 	verifiedRecoveryEmail,
 	type MintedSession,
 } from "../auth/users";
+import { loadBillingSession } from "../lib/billing-fulfillment";
 import { isDevRuntime } from "../lib/dev-runtime";
 import { purgeEmailAgents } from "../lib/email-agent";
 import { getMailboxStub } from "../lib/email-helpers";
@@ -66,6 +71,36 @@ const GENERIC_FORGOT_REPLY = {
 
 export function requirePrincipal(c: C): RequestPrincipal | null {
 	return c.get("principal") ?? null;
+}
+
+/**
+ * Sensitive changes need a session that signed in or re-authenticated in the
+ * last 5 minutes (AVE-113, `auth/reauth.ts`). Returns the 403 to send, or
+ * null to go ahead.
+ */
+async function requireFreshSession(c: C, principal: RequestPrincipal): Promise<Response | null> {
+	const body = await reauthGate(c.env, principal);
+	return body ? c.json(body, 403) : null;
+}
+
+/** Mail the "was this you?" notice after the response (`auth/security-notice.ts`). */
+function notifySecurityChange(
+	c: C,
+	userId: string,
+	change: SecurityChange,
+	opts: { extra?: (string | null | undefined)[]; recipients?: string[]; login?: string } = {},
+): void {
+	c.executionCtx.waitUntil(
+		sendSecurityNotice(c.env, {
+			userId,
+			requestUrl: c.req.url,
+			change,
+			device: requestDevice(c.req.raw),
+			...opts,
+		}).catch((e) =>
+			console.error("[Auth] Security notice failed:", (e as Error).message || e),
+		),
+	);
 }
 
 /**
@@ -319,6 +354,10 @@ const TwoFactorVerifyBody = z.object({
 	code: z.string().trim().min(1).max(64),
 	method: z.enum(["totp", "backup_code"]).default("totp"),
 });
+const ExchangeBody = z.object({
+	code: z.string().trim().min(1).max(128),
+	sessionId: z.string().trim().min(1).max(256),
+});
 const ForgotBody = z.object({ email: z.string().email() });
 const ResetBody = z.object({
 	token: z.string().optional(),
@@ -404,8 +443,10 @@ export function registerAccountRoutes(app: App) {
 		const parsed = PasswordLoginBody.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) return c.json({ error: "Email and password are required" }, 400);
 		if (await isRateLimited(c.env, "sign-in", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+		const email = loginEmail(parsed.data.email);
+		if (await isAccountLocked(c.env, email)) return c.json(TOO_MANY, 429);
 		try {
-			const result = await passwordSignIn(c.env, c.req.raw.headers, loginEmail(parsed.data.email), parsed.data.password);
+			const result = await passwordSignIn(c.env, c.req.raw.headers, email, parsed.data.password);
 			if (!result) return c.json({ error: "Invalid email or password" }, 401);
 			forwardSetCookies(c, result.headers);
 			if (result.kind === "two-factor") {
@@ -420,8 +461,38 @@ export function registerAccountRoutes(app: App) {
 		} catch (e) {
 			const status = apiErrorStatus(e);
 			if (status >= 500) console.error("[Auth] Password sign-in failed:", apiErrorMessage(e));
+			if (apiErrorCode(e) === "INVALID_EMAIL_OR_PASSWORD") await recordPasswordFailure(c.env, email);
 			return c.json({ error: "Invalid email or password" }, 401);
 		}
+	});
+
+	/**
+	 * Mobile Stripe checkout return (AVE-118): trade the one-time `code` from the
+	 * `inboxies://onboarding/domain-ready` link, plus the checkout session id the
+	 * app started, for the owner's session. A code redeems once, within 60s, and
+	 * only with its own checkout. Answers like `/api/v1/auth/password`, plus
+	 * `mailboxId`. Wrong, used or expired → 400 `EXCHANGE_INVALID` (the app falls
+	 * back to sign-in).
+	 */
+	app.post("/api/v1/auth/exchange", async (c) => {
+		if (await isRateLimited(c.env, "sign-in", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+		const parsed = ExchangeBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success) return c.json({ error: "code and sessionId are required" }, 400);
+		const invalid = () =>
+			c.json({ error: "This sign-in link has expired. Sign in with your email and password.", code: "EXCHANGE_INVALID" }, 400);
+		const db = authDb(c.env.AUTH_DB);
+		const { sessionId, code } = parsed.data;
+		const redeemed = await consumeCheckoutExchangeCode(db, sessionId, code);
+		if (!redeemed) return invalid();
+		// The checkout must still name this owner, and have handed out its one code.
+		const record = await loadBillingSession(c.env.BUCKET, sessionId);
+		if (!record?.tokenIssuedAt || record.ownerUserId !== redeemed.userId || record.mailboxId !== redeemed.mailboxId) {
+			return invalid();
+		}
+		const owner = await findUserById(db, redeemed.userId);
+		if (!owner || owner.email !== redeemed.mailboxId) return invalid();
+		const session = await createSessionForUser(c.env, owner.id, { headers: c.req.raw.headers });
+		return c.json({ ...(await sessionResponseFields(c.env, session, owner)), mailboxId: redeemed.mailboxId });
 	});
 
 	/**
@@ -540,6 +611,8 @@ export function registerAccountRoutes(app: App) {
 		await setUserPassword(db, user.id, newPassword);
 		await revokeLinkTokens(db, "password-reset", user.id);
 		await revokeUserSessions(c.env, user.id);
+		// The sign-in below is then recorded without a second (new-device) mail.
+		notifySecurityChange(c, user.id, { kind: "password_reset" });
 		if (user.twoFactorEnabled) {
 			// A reset proves the recovery email, not the second factor: sign in
 			// with the new password so the user still gets the 2FA challenge.
@@ -590,7 +663,13 @@ export function registerAccountRoutes(app: App) {
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 		const body = (await c.req.json().catch(() => ({}))) as { confirm?: string };
 		if (body.confirm !== "DELETE") return c.json({ error: 'Confirm with { "confirm": "DELETE" }' }, 400);
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
+		// Addresses first: the user row and their sole-owned mailboxes go away.
+		const user = await findUserById(authDb(c.env.AUTH_DB), principal.userId);
+		const recipients = user ? await securityNoticeRecipients(c.env, user, { skipHostedLogin: true }) : [];
 		const result = await deleteUserAccount(c.env, principal.userId);
+		if (user) notifySecurityChange(c, user.id, { kind: "account_deleted" }, { recipients, login: user.email });
 		c.header("Set-Cookie", await clearSessionCookieHeader(c.env));
 		return c.json({ ok: true, ...result });
 	});
@@ -622,6 +701,17 @@ export function registerAccountRoutes(app: App) {
 					current: s.id === principal.sessionId,
 				})),
 		);
+	});
+
+	/**
+	 * "Recent security activity" (AVE-151): the caller's sign-ins and account
+	 * changes of the last 30 days, newest first, read-only. Shape:
+	 * `{ since, events: SecurityActivityItem[] }` (`auth/security-activity.ts`).
+	 */
+	app.get("/api/v1/me/security-activity", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		return c.json(await listSecurityActivity(authDb(c.env.AUTH_DB), principal.userId));
 	});
 
 	app.delete("/api/v1/me/sessions/:sessionId", async (c) => {
@@ -710,6 +800,8 @@ export function registerAccountRoutes(app: App) {
 		if (await isHostedEmailDomain(c.env, email)) {
 			return c.json({ error: "Use an address outside Inboxies for account recovery" }, 400);
 		}
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 		if (
 			(await isRateLimited(c.env, "otp-send", principal.userId)) ||
 			(await isRateLimited(c.env, "otp-send", email))
@@ -717,6 +809,11 @@ export function registerAccountRoutes(app: App) {
 			return c.json(TOO_MANY, 429);
 		}
 		const db = authDb(c.env.AUTH_DB);
+		const previous = await db
+			.select()
+			.from(schema.recoveryEmail)
+			.where(eq(schema.recoveryEmail.userId, principal.userId))
+			.get();
 		await db
 			.insert(schema.recoveryEmail)
 			.values({ userId: principal.userId, email, verifiedAt: null })
@@ -728,6 +825,14 @@ export function registerAccountRoutes(app: App) {
 		if (!otp.ok) return c.json({ error: "A code was just sent. Wait a minute before asking again." }, 429);
 		const mail = codeEmail({ purposeLine: "Confirm this address as your Inboxies recovery email.", code: otp.code });
 		await sendSystemEmail(c.env, { to: email, subject: "Your Inboxies verification code", ...mail });
+		// A resend to the same unconfirmed address changes nothing worth telling.
+		if (!previous || previous.email !== email || previous.verifiedAt) {
+			// The replaced address hears about it too, even though it no longer
+			// gets reset codes.
+			notifySecurityChange(c, principal.userId, { kind: "recovery_email_set", email }, {
+				extra: [previous?.verifiedAt ? previous.email : null],
+			});
+		}
 		return c.json({ ok: true, email, verified: false, ...(isDevRuntime() ? { devCode: otp.code } : {}) });
 	});
 
@@ -769,7 +874,18 @@ export function registerAccountRoutes(app: App) {
 				400,
 			);
 		}
-		await authDb(c.env.AUTH_DB).delete(schema.recoveryEmail).where(eq(schema.recoveryEmail.userId, principal.userId));
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
+		const removed = await authDb(c.env.AUTH_DB)
+			.delete(schema.recoveryEmail)
+			.where(eq(schema.recoveryEmail.userId, principal.userId))
+			.returning({ email: schema.recoveryEmail.email, verifiedAt: schema.recoveryEmail.verifiedAt });
+		const was = removed[0];
+		if (was) {
+			notifySecurityChange(c, principal.userId, { kind: "recovery_email_removed" }, {
+				extra: [was.verifiedAt ? was.email : null],
+			});
+		}
 		return c.json({ ok: true });
 	});
 
@@ -808,13 +924,18 @@ export function registerAccountRoutes(app: App) {
 		const db = authDb(c.env.AUTH_DB);
 		const user = await findUserById(db, principal.userId);
 		if (!user) return c.json({ error: "Unauthorized" }, 401);
+		if (body.provider !== "password" && body.provider !== "apple" && body.provider !== "google") {
+			return c.json({ error: "provider must be apple, google or password" }, 400);
+		}
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 
 		if (body.provider === "password") {
 			if (await hasPassword(db, user.id)) return c.json({ error: "This account already has a password" }, 409);
 			const strength = validatePasswordStrength(body.password ?? "");
 			if (strength) return c.json({ error: strength }, 400);
 			await setUserPassword(db, user.id, body.password!);
-		} else if (body.provider === "apple" || body.provider === "google") {
+		} else {
 			const token = body.provider === "apple" ? body.identityToken ?? body.idToken : body.idToken ?? body.identityToken;
 			if (!token) return c.json({ error: "An identity token is required" }, 400);
 			try {
@@ -841,9 +962,12 @@ export function registerAccountRoutes(app: App) {
 					}),
 				);
 			}
-		} else {
-			return c.json({ error: "provider must be apple, google or password" }, 400);
 		}
+		notifySecurityChange(
+			c,
+			user.id,
+			body.provider === "password" ? { kind: "password_added" } : { kind: "sign_in_method_added", provider: body.provider },
+		);
 		return c.json({
 			ok: true,
 			isAdmin: await isAdminUser(db, user.id),
@@ -860,7 +984,15 @@ export function registerAccountRoutes(app: App) {
 			.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) return c.json({ error: "currentPassword and newPassword are required" }, 400);
 		if (await isRateLimited(c.env, "sign-in", principal.userId)) return c.json(TOO_MANY, 429);
+		if (await isAccountLocked(c.env, principal.email)) return c.json(TOO_MANY, 429);
 		const db = authDb(c.env.AUTH_DB);
+		// The current password is the re-auth proof on its own, unless 2FA is
+		// on: then the session must be fresh (password + code at /me/reauth).
+		const fresh = await isReauthFresh(db, principal);
+		if (!fresh && (await findUserById(db, principal.userId))?.twoFactorEnabled) {
+			const stale = await requireFreshSession(c, principal);
+			if (stale) return stale;
+		}
 		const credential = await db
 			.select({ password: schema.account.password })
 			.from(schema.account)
@@ -868,12 +1000,15 @@ export function registerAccountRoutes(app: App) {
 			.get();
 		if (!credential?.password) return c.json({ error: "This account has no password yet" }, 400);
 		if (!(await verifyPassword(parsed.data.currentPassword, credential.password))) {
+			await recordPasswordFailure(c.env, principal.email);
 			return c.json({ error: "Current password is incorrect" }, 403);
 		}
+		if (!fresh) await recordReauth(db, principal);
 		const strength = validatePasswordStrength(parsed.data.newPassword);
 		if (strength) return c.json({ error: strength }, 400);
 		await setUserPassword(db, principal.userId, parsed.data.newPassword);
 		await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
+		notifySecurityChange(c, principal.userId, { kind: "password_changed" });
 		const user = await findUserById(db, principal.userId);
 		return c.json({ ok: true, identities: user ? await listIdentities(db, user.id, user) : [] });
 	});
@@ -882,6 +1017,8 @@ export function registerAccountRoutes(app: App) {
 	app.delete("/api/v1/me/identities/:type", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 		const type = c.req.param("type");
 		const providerId = type === "password" ? "credential" : type;
 		const db = authDb(c.env.AUTH_DB);
@@ -900,6 +1037,7 @@ export function registerAccountRoutes(app: App) {
 			await deleteAppleTokens(db, principal.userId);
 		}
 		for (const a of target) await db.delete(schema.account).where(eq(schema.account.id, a.id));
+		notifySecurityChange(c, principal.userId, { kind: "sign_in_method_removed", provider: type });
 		return c.json({ ok: true });
 	});
 

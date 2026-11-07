@@ -15,8 +15,11 @@
  */
 
 import { passkeyClient } from "@better-auth/passkey/client";
+import { startAuthentication, WebAuthnError } from "@simplewebauthn/browser";
 import { twoFactorClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/client";
+import api from "~/services/api";
+import { reauthChallenge, requestReauth } from "./reauth";
 import { describeUserAgent } from "./session-label";
 
 function makeClient() {
@@ -57,6 +60,18 @@ function fail(error: BetterAuthError, fallback: string): never {
 	throw new Error(friendly ?? (error?.message || fallback));
 }
 
+/**
+ * Run a Better Auth call; when it answers 403 `reauth_required` (adding or
+ * removing a passkey needs a fresh session, AVE-113), ask the user to confirm
+ * it's them and run it once more.
+ */
+async function withReauth<R extends { error?: unknown }>(call: () => Promise<R>): Promise<R> {
+	const first = await call();
+	const challenge = first.error ? reauthChallenge(first.error) : null;
+	if (!challenge || !(await requestReauth(challenge))) return first;
+	return call();
+}
+
 /** True when this browser can do WebAuthn at all. */
 export function passkeysSupported(): boolean {
 	return typeof window !== "undefined" && typeof window.PublicKeyCredential === "function";
@@ -94,7 +109,7 @@ export interface PasskeyRow {
 export async function addPasskey(name?: string): Promise<void> {
 	const label =
 		name?.trim() || describeUserAgent(typeof navigator === "undefined" ? null : navigator.userAgent) || "Passkey";
-	const { error } = await authClient().passkey.addPasskey({ name: label });
+	const { error } = await withReauth(() => authClient().passkey.addPasskey({ name: label }));
 	if (error) fail(error, "Couldn't add the passkey");
 }
 
@@ -121,11 +136,37 @@ export async function renamePasskey(id: string, name: string): Promise<void> {
 }
 
 export async function deletePasskey(id: string): Promise<void> {
-	const { error } = await authClient().$fetch("/passkey/delete-passkey", {
-		method: "POST",
-		body: { id },
-	});
+	const { error } = await withReauth(() =>
+		authClient().$fetch("/passkey/delete-passkey", {
+			method: "POST",
+			body: { id },
+		}),
+	);
 	if (error) fail(error, "Couldn't remove the passkey");
+}
+
+/**
+ * Confirm it's you with one of this account's passkeys, without signing in
+ * again: the Worker checks the assertion and marks this session fresh.
+ */
+export async function reauthWithPasskey(): Promise<void> {
+	const { data: options, error } = await authClient().$fetch<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(
+		"/passkey/generate-authenticate-options",
+		{ method: "GET" },
+	);
+	if (error || !options) fail(error, "Couldn't start the passkey check");
+	let response: Awaited<ReturnType<typeof startAuthentication>>;
+	try {
+		response = await startAuthentication({ optionsJSON: options });
+	} catch (err) {
+		// Dismissed sheet, no passkey here, timeout: all read as cancelled.
+		if (err instanceof WebAuthnError || (err instanceof Error && err.name === "NotAllowedError")) {
+			throw new Error(FRIENDLY.ERROR_CEREMONY_ABORTED);
+		}
+		throw err;
+	}
+	const { clientExtensionResults: _ignored, ...body } = response;
+	await api.reauth({ method: "passkey", response: body });
 }
 
 // ── Two-factor (TOTP + backup codes) ─────────────────────────────

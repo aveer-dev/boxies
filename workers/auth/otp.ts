@@ -11,6 +11,10 @@
  * - `recovery-email`: the address the signed-in user wants as recovery email.
  * - `invite`: the invitee address on the invite.
  * - `password-reset`: the user's verified recovery email, never a mailbox.
+ * - `reauth`: step-up re-auth for an account without a password; the
+ *   verified recovery email, else a login address outside Inboxies
+ *   (`reauthEmailTarget`). Its subject is `<userId>:<sessionId>`, so a code
+ *   only re-authenticates the session that asked for it.
  *
  * (Better Auth's emailOTP plugin is not used: its generic sign-in and reset
  * routes mail codes to `user.email`, which can be a shared mailbox.)
@@ -20,7 +24,7 @@ import { and, eq, like, lt } from "drizzle-orm";
 import type { AuthDb } from "./authz";
 import * as schema from "./schema";
 
-export type OtpPurpose = "recovery-email" | "invite" | "password-reset";
+export type OtpPurpose = "recovery-email" | "invite" | "password-reset" | "reauth";
 
 const OTP_TTL_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;

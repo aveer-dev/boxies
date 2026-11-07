@@ -5,7 +5,8 @@
 import { Loader } from "@cloudflare/kumo";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { displaySenderName } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
@@ -41,7 +42,7 @@ function highlightTerms(text: string, query: string): React.ReactNode {
 
 /** Column 3 for `/search?q=` (+ the reader for `:emailId`). */
 export default function SearchResultsRoute() {
-	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const [searchParams] = useSearchParams();
 	const { emailId, openEmail, closeEmail, closeSearch } = useMailNavigation();
 	const updateEmail = useUpdateEmail();
@@ -78,13 +79,13 @@ export default function SearchResultsRoute() {
 		}, []),
 	);
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(results, actions);
 
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
 	const handleOpen = (email: Email) => {
 		openEmail(email.id);
 		if (isUnread(email)) updateEmail.mutate({ mailboxId, id: email.id, data: { read: true } });
 	};
+	useListShortcuts(results, actions, { selectedId: emailId, open: handleOpen });
 	// Results carry folder_id plus folder_name (a display name). System folders
 	// show their name; custom folders show as #tags.
 	const folderLabel = (email: Email) => {

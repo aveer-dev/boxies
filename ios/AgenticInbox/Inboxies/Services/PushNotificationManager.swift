@@ -9,6 +9,13 @@ struct PushDeepLink: Equatable {
     let folderId: String
 }
 
+/// A widget tap outside the cards (AVE-149): open this mailbox's Inbox. `id` makes a
+/// second tap on the same mailbox a new request.
+struct PendingInboxLink: Equatable {
+    let id = UUID()
+    let mailboxId: String?
+}
+
 /// Coordinates Apple Push Notification registration, device token persistence,
 /// and synchronization with the Cloudflare backend.
 ///
@@ -30,6 +37,8 @@ final class PushNotificationManager {
     private var registeredMailboxIds: Set<String> = []
     /// Set when the user taps a push; consumed by RootView once the app is ready.
     var pendingDeepLink: PushDeepLink?
+    /// Set by a "Today's inbox" widget tap outside the cards; consumed like `pendingDeepLink`.
+    var pendingInboxLink: PendingInboxLink?
 
     init() {
         self.deviceToken = UserDefaults.standard.string(forKey: tokenStorageKey)

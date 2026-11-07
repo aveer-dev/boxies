@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Group
@@ -72,9 +73,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.services.CustomFolders
+import androidx.compose.material.icons.outlined.Tag
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.SignatureSettings
+import co.inboxies.app.services.BounceSuppression
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.AvatarInitials
@@ -97,7 +101,9 @@ private sealed class SettingsPage {
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
+    data object Tags : SettingsPage()
     data object Senders : SettingsPage()
+    data object Suppressions : SettingsPage()
     data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
@@ -174,6 +180,10 @@ fun SettingsSheetView(
 
     TransparentSystemBars()
 
+    // Sign-in & recovery, passkeys and Delete account answer `reauth_required` until the
+    // user confirms it's them (AVE-171).
+    ReauthPromptHost()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -233,7 +243,9 @@ fun SettingsSheetView(
                     onOpenForwarding = { page = SettingsPage.Forwarding },
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
+                    onOpenTags = { page = SettingsPage.Tags },
                     onOpenSenders = { page = SettingsPage.Senders },
+                    onOpenSuppressions = { page = SettingsPage.Suppressions },
                     onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
@@ -269,7 +281,13 @@ fun SettingsSheetView(
                 SettingsPage.Filters -> FiltersSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Tags -> TagsSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.Senders -> SendersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Suppressions -> SuppressionsSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Aliases -> AliasesSettingsView(
@@ -312,7 +330,9 @@ private fun SettingsRootPage(
     onOpenForwarding: () -> Unit,
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
+    onOpenTags: () -> Unit,
     onOpenSenders: () -> Unit,
+    onOpenSuppressions: () -> Unit,
     onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
@@ -471,6 +491,12 @@ private fun SettingsRootPage(
                     icon = Icons.Outlined.FilterList,
                     onClick = onOpenFilters,
                 )
+                // Custom folders, shown as tags like web (AVE-158).
+                SettingsNavRow(
+                    title = CustomFolders.PAGE_TITLE,
+                    icon = Icons.Outlined.Tag,
+                    onClick = onOpenTags,
+                )
                 SettingsNavRow(
                     title = "Senders",
                     icon = Icons.Outlined.Person,
@@ -607,6 +633,14 @@ private fun SettingsRootPage(
                     },
                 )
             }
+
+            // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+            SettingsSectionHeader("Outgoing mail")
+            SettingsNavRow(
+                title = BounceSuppression.PAGE_TITLE,
+                icon = Icons.Outlined.Block,
+                onClick = onOpenSuppressions,
+            )
 
             AiUsageSettingsSection(mailboxId = mailbox?.id)
 

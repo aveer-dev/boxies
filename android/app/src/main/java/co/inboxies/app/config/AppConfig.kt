@@ -8,7 +8,8 @@ import java.net.URI
 
 /**
  * Runtime configuration. Mirrors iOS `AppConfig`.
- * Default: https://inboxies.email. Editable on the sign-in screen.
+ * Default: https://inboxies.email. Editable on the sign-in screen in DEBUG builds only;
+ * release builds ignore any stored override and always use [BuildConfig.DEFAULT_API_BASE].
  */
 object AppConfig {
     const val PREFS_NAME = "inboxies_config"
@@ -21,6 +22,13 @@ object AppConfig {
     /** Legal pages live on the marketing site (`site/src/pages/legal.astro`); these redirect to its anchors. */
     const val TERMS_URL = "https://inboxies.co/terms"
     const val PRIVACY_URL = "https://inboxies.co/privacy"
+
+    /**
+     * Whether the sign-in screen opens with the API base editor showing. The launcher
+     * activity is exported, so the `showApiBase` extra is honored only in DEBUG builds.
+     */
+    fun shouldShowDevConfig(isDebug: Boolean, showApiBaseExtra: Boolean): Boolean =
+        isDebug && showApiBaseExtra
 
     fun wsBaseURL(context: Context? = null): String {
         if (context != null) init(context)
@@ -35,6 +43,18 @@ object AppConfig {
     @Volatile
     private var prefs: SharedPreferences? = null
 
+    /** DEBUG-only local Worker base for this process; see [isLocalWorkerBase]. */
+    @Volatile
+    private var localWorkerBase: String? = null
+
+    /**
+     * A `pnpm dev` Worker on the host. DEBUG builds keep it in memory for this process
+     * only: stored, it outlived the dev server and stranded every later launch on a dead
+     * host, so a stored one is dropped instead.
+     */
+    fun isLocalWorkerBase(value: String): Boolean =
+        value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -44,7 +64,14 @@ object AppConfig {
     var apiBaseURL: String
         get() {
             val override = prefs?.getString(KEY_API_BASE, null)
-            if (override != null && (override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2"))) {
+            if (!BuildConfig.DEBUG) {
+                // Release always talks to production. A stored override can only have come
+                // from a dev-only path, so drop it rather than send credentials elsewhere.
+                if (override != null) prefs?.edit { remove(KEY_API_BASE) }
+                return BuildConfig.DEFAULT_API_BASE
+            }
+            localWorkerBase?.let { return it }
+            if (override != null && isLocalWorkerBase(override)) {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
             }
@@ -52,21 +79,31 @@ object AppConfig {
             return parsed ?: BuildConfig.DEFAULT_API_BASE
         }
         set(value) {
-            if (value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")) {
+            if (!BuildConfig.DEBUG) {
+                prefs?.edit { remove(KEY_API_BASE) }
+                return
+            }
+            if (isLocalWorkerBase(value)) {
+                localWorkerBase = value
                 prefs?.edit { remove(KEY_API_BASE) }
             } else {
+                localWorkerBase = null
                 prefs?.edit { putString(KEY_API_BASE, value) }
             }
         }
 
     /**
-     * Stripe checkout session this app started. The `inboxies://onboarding` deep link
-     * only applies its session token when it returns this id, so a crafted link
-     * can't sign the user into someone else's account.
+     * Stripe checkout session this app started. The `inboxies://onboarding` return link
+     * carries only a one-time code, which the Worker redeems together with this id
+     * (never in the link), so neither an intercepted nor a crafted link can sign anyone in.
      */
     fun rememberPendingCheckout(sessionId: String) {
         prefs?.edit { putString(KEY_PENDING_CHECKOUT_SESSION, sessionId) }
     }
+
+    /** The checkout this app started, if any; [consumePendingCheckout] forgets it. */
+    fun pendingCheckout(): String? =
+        prefs?.getString(KEY_PENDING_CHECKOUT_SESSION, null)?.takeIf { it.isNotBlank() }
 
     /** True (and forgets it) when [sessionId] is the checkout this app started. */
     fun consumePendingCheckout(sessionId: String?): Boolean {

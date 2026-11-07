@@ -16,7 +16,53 @@ export interface APNsPayload {
 	mailboxId: string;
 	emailId: string;
 	folderId?: string;
+	/**
+	 * Conversation (`emails.thread_id`) the mail belongs to. APNs `thread-id`
+	 * (iOS groups notifications by it) and `threadId` in both custom payloads,
+	 * so notification actions can call the thread routes (AVE-140).
+	 */
+	threadId?: string;
+	/**
+	 * Notification category: set to `MAIL_NOTIFICATION_CATEGORY` for pushes
+	 * about a real message, so iOS shows the mail actions (Archive, Mark read,
+	 * Reply Later, Reply, Spam). Omitted for pushes with no message behind
+	 * them (test-push).
+	 */
+	category?: typeof MAIL_NOTIFICATION_CATEGORY;
 	badge?: number;
+}
+
+/** `UNNotificationCategory` identifier the iOS app registers its mail actions under. */
+export const MAIL_NOTIFICATION_CATEGORY = "INBOXIES_MAIL";
+
+/**
+ * APNs request body. Fields existing clients read (`aps.alert`, `mailboxId`,
+ * `emailId`, `folderId`) keep their shape; `category`, `thread-id` and
+ * `threadId` are only added when set.
+ */
+export function buildAPNsBody(payload: APNsPayload): Record<string, unknown> {
+	const alert: { title: string; subtitle?: string; body: string } = {
+		title: payload.title,
+		body: payload.body,
+	};
+	if (payload.subtitle) {
+		alert.subtitle = payload.subtitle;
+	}
+	const aps: Record<string, unknown> = {
+		alert,
+		sound: "default",
+		badge: payload.badge,
+		"content-available": 1, // Wakes up app in background to pre-sync local SQLite
+	};
+	if (payload.category) aps.category = payload.category;
+	if (payload.threadId) aps["thread-id"] = payload.threadId;
+	return {
+		aps,
+		mailboxId: payload.mailboxId,
+		emailId: payload.emailId,
+		folderId: payload.folderId ?? "inbox",
+		...(payload.threadId ? { threadId: payload.threadId } : {}),
+	};
 }
 
 /**
@@ -120,25 +166,7 @@ export async function sendAPNsPush(
 
 	console.log(`[APNs] Dispatching push for mailbox "${payload.mailboxId}" to ${deviceTokens.length} device(s). Target: ${primaryHost}, topic: ${topic}`);
 
-	const alert: { title: string; subtitle?: string; body: string } = {
-		title: payload.title,
-		body: payload.body,
-	};
-	if (payload.subtitle) {
-		alert.subtitle = payload.subtitle;
-	}
-
-	const requestBody = JSON.stringify({
-		aps: {
-			alert,
-			sound: "default",
-			badge: payload.badge,
-			"content-available": 1, // Wakes up app in background to pre-sync local SQLite
-		},
-		mailboxId: payload.mailboxId,
-		emailId: payload.emailId,
-		folderId: payload.folderId ?? "inbox",
-	});
+	const requestBody = JSON.stringify(buildAPNsBody(payload));
 
 	let successCount = 0;
 	let failureCount = 0;

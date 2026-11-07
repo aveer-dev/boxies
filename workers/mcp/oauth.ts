@@ -475,6 +475,11 @@ async function showConsent(
 	// The library's headers: the binding cookie, no-store and anti-framing.
 	for (const [name, value] of consent.headers) {
 		if (name.toLowerCase() === "set-cookie") continue;
+		// Its `frame-ancestors 'none'` joins the app's own CSP rather than replacing it.
+		if (name.toLowerCase() === "content-security-policy") {
+			res.headers.append(name, value);
+			continue;
+		}
 		res.headers.set(name, value);
 	}
 	for (const cookie of consent.headers.getSetCookie()) res.headers.append("Set-Cookie", cookie);
@@ -539,7 +544,11 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 	const { redirectTo } = await oauth.completeAuthorization({
 		request: approved.request,
 		userId: principal.userId,
-		metadata: {},
+		// Plain-text copy of the mailbox limit so Settings → Sessions can show
+		// it (workers/mcp/grants.ts); props are encrypted with the token and
+		// can't be read there. Display only: access is still enforced from
+		// props. The code and refresh exchanges keep the grant's metadata.
+		metadata: { mailboxIds: [...selection.mailboxIds] },
 		scope: approved.request.scope,
 		props,
 	});

@@ -7,9 +7,12 @@
 //   (assets.run_worker_first), and the file is cut to the range asked for.
 //   A route under src/pages can't do this: the adapter serves any path that
 //   matches a built file before it looks at routes.
+// - The fallback redirect to https://inboxies.co (HTTP and www; AVE-166), for the
+//   requests that reach the Worker. See src/lib/canonical-redirect.ts.
 // - The security headers. public/_headers only applies to responses the asset
 //   server sends itself, so the 404 page, /api/contact and /media get them here.
 import { handle } from "@astrojs/cloudflare/handler";
+import { canonicalRedirect } from "./lib/canonical-redirect";
 
 // Keep in step with the /* and /media/* blocks in public/_headers.
 const SECURITY: Record<string, string> = {
@@ -28,6 +31,8 @@ const MEDIA_FILE = /^\/media\/[a-z0-9]+(?:-[a-z0-9]+)*\.(?:mp4|webm|jpg|jpeg|png
 
 export default {
 	async fetch(request, env, ctx) {
+		const moved = canonicalRedirect(request);
+		if (moved) return moved;
 		const { pathname } = new URL(request.url);
 		const isMedia = MEDIA_FILE.test(pathname);
 		if (isMedia && request.method !== "GET" && request.method !== "HEAD") {

@@ -894,25 +894,114 @@ async function runTests() {
 	// ---------------------------------------------------------
 	console.log("\n7. Testing checkout-return token gating & webhook hardening...");
 
-	const tokenFrom = (res) => new URL(res.headers.get("Location").replace("inboxies://", "https://x/")).searchParams.get("token");
+	const linkParams = (res) => new URL(res.headers.get("Location").replace("inboxies://", "https://x/")).searchParams;
+	const codeFrom = (res) => linkParams(res).get("code");
 	const mobileReturn = (query) =>
 		apiApp.request(`/api/v1/billing/checkout-return?${query}&client=ios`, {}, env);
+	const exchange = (body) =>
+		apiApp.request(
+			"/api/v1/auth/exchange",
+			{ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+			env,
+		);
+	const completedKey = billingSessionKey("cs_test_completed_123");
+	const patchCompleted = async (patch) => {
+		const rec = await (await bucket.get(completedKey)).json();
+		await bucket.put(completedKey, { ...rec, ...patch });
+	};
 
-	// A bare domain (the old takeover) never yields a session.
-	assert.equal(tokenFrom(await mobileReturn("domain=my-novel-company.com")), null);
-	// Session id for a different domain: no token.
-	assert.equal(
-		tokenFrom(await mobileReturn("domain=other-domain.com&session_id=cs_test_completed_123")),
-		null,
-	);
-	// The paid session for this domain: exactly one token.
+	// A bare domain (the old takeover) never yields a code.
+	assert.equal(codeFrom(await mobileReturn("domain=my-novel-company.com")), null);
+	// Session id for a different domain: no code.
+	assert.equal(codeFrom(await mobileReturn("domain=other-domain.com&session_id=cs_test_completed_123")), null);
+	// A checkout that isn't ready yet: no code, and it can still get one later.
+	await patchCompleted({ status: "provisioning" });
+	assert.equal(codeFrom(await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123")), null);
+	await patchCompleted({ status: "ready" });
+	// The paid session for this domain: exactly one code, and never a session token.
 	const firstReturn = await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123");
-	assert.ok(tokenFrom(firstReturn), "paid session should hand out the owner session once");
+	const firstLocation = firstReturn.headers.get("Location");
+	const exchangeCode = codeFrom(firstReturn);
+	assert.match(exchangeCode ?? "", /^[0-9a-f]{64}$/, "paid session should hand out a one-time code once");
+	assert.ok(!/[?&]token=/.test(firstLocation), "deep link must not carry a session token");
+	assert.ok(!/[?&]session_id=/.test(firstLocation), "deep link must not carry the checkout session id");
+	assert.ok(!(await firstReturn.text()).includes("token="), "bridge page must not carry a session token");
+	assert.ok((await (await bucket.get(completedKey)).json()).tokenIssuedAt, "issuing the code uses up the checkout's one sign-in");
 	assert.equal(
-		tokenFrom(await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123")),
+		codeFrom(await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123")),
 		null,
-		"token must not be minted twice",
+		"code must not be minted twice",
 	);
+	{
+		// Only hashes are stored.
+		const rows = await authDbFor(bucket)
+			.prepare("select identifier, value from verification where identifier like 'checkout-exchange:%'")
+			.all();
+		assert.equal(rows.results.length, 1);
+		assert.ok(!rows.results[0].identifier.includes(exchangeCode));
+		assert.ok(!rows.results[0].value.includes(exchangeCode));
+	}
+
+	// Exchange: malformed, wrong checkout and wrong code are refused without burning the code.
+	assert.equal((await exchange({ code: exchangeCode })).status, 400);
+	const wrongCheckout = await exchange({ code: exchangeCode, sessionId: "cs_someone_else" });
+	assert.equal(wrongCheckout.status, 400);
+	assert.equal((await wrongCheckout.json()).code, "EXCHANGE_INVALID");
+	const wrongCode = await exchange({ code: "0".repeat(64), sessionId: "cs_test_completed_123" });
+	assert.equal(wrongCode.status, 400);
+	assert.equal((await wrongCode.json()).code, "EXCHANGE_INVALID");
+	// The right pair: the owner's session, once.
+	const exchanged = await exchange({ code: exchangeCode, sessionId: "cs_test_completed_123" });
+	assert.equal(exchanged.status, 200);
+	const exchangedBody = await exchanged.json();
+	assert.ok(exchangedBody.token, "exchange returns a session token");
+	assert.equal(exchangedBody.email, "founder@my-novel-company.com");
+	assert.equal(exchangedBody.mailboxId, "founder@my-novel-company.com");
+	{
+		const row = await authDbFor(bucket)
+			.prepare("select s.user_id, u.email from session s join user u on u.id = s.user_id where s.token = ?")
+			.bind(exchangedBody.token)
+			.first();
+		assert.equal(row?.email, "founder@my-novel-company.com", "the session belongs to the checkout's owner");
+	}
+	const reused = await exchange({ code: exchangeCode, sessionId: "cs_test_completed_123" });
+	assert.equal(reused.status, 400, "a code redeems once");
+	assert.equal((await reused.json()).code, "EXCHANGE_INVALID");
+	// Expired codes are refused.
+	{
+		const { authDb } = await import("../auth/authz.ts");
+		const { issueCheckoutExchangeCode, CHECKOUT_EXCHANGE_TTL_MS } = await import("../auth/checkout-exchange.ts");
+		assert.equal(CHECKOUT_EXCHANGE_TTL_MS, 60_000);
+		const db = authDb(authDbFor(bucket));
+		const owner = await authDbFor(bucket)
+			.prepare("select id from user where email = ?")
+			.bind("founder@my-novel-company.com")
+			.first();
+		const stale = await issueCheckoutExchangeCode(
+			db,
+			"cs_test_completed_123",
+			{ userId: owner.id, mailboxId: "founder@my-novel-company.com" },
+			Date.now() - CHECKOUT_EXCHANGE_TTL_MS - 1000,
+		);
+		const expired = await exchange({ code: stale, sessionId: "cs_test_completed_123" });
+		assert.equal(expired.status, 400, "an expired code is refused");
+		// A code for a user the checkout doesn't name is refused too.
+		const foreign = await issueCheckoutExchangeCode(db, "cs_test_completed_123", {
+			userId: "not-the-owner",
+			mailboxId: "founder@my-novel-company.com",
+		});
+		assert.equal((await exchange({ code: foreign, sessionId: "cs_test_completed_123" })).status, 400);
+	}
+	// Web return for a fresh ready checkout still signs in with a cookie and no code.
+	await patchCompleted({ tokenIssuedAt: undefined });
+	const webReady = await apiApp.request(
+		"/api/v1/billing/checkout-return?domain=my-novel-company.com&session_id=cs_test_completed_123",
+		{ headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" } },
+		env,
+	);
+	assert.equal(webReady.status, 302);
+	assert.ok(webReady.headers.get("Location").startsWith("/checkout/success"));
+	assert.match(webReady.headers.get("Set-Cookie") ?? "", /session_token=/);
 	// Web: no cookie without a matching ready session.
 	const webBare = await apiApp.request("/api/v1/billing/checkout-return?domain=my-novel-company.com", {}, env);
 	assert.equal(webBare.headers.get("Set-Cookie"), null);

@@ -11,9 +11,8 @@ import { SummaryIcon } from '~/components/icons/SummaryIcon';
 import { useEmailQuickSummary, useRegenerateEmailSummary } from '~/queries/summaries';
 import EmailAttachmentList from '~/components/EmailAttachmentList';
 import { IconButton } from '~/components/IconButton';
-import EmailIframe from '~/components/EmailIframe';
-import { formatDetailDate, formatShortDate, hasFileAttachment, rewriteInlineImages, stripHtml } from '~/lib/utils';
-import { blocksRemoteImages } from 'shared/remote-images';
+import MessageBody from '~/components/email-panel/MessageBody';
+import { formatDetailDate, formatShortDate, hasFileAttachment, stripHtml } from '~/lib/utils';
 import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
 import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
@@ -221,10 +220,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                 )}
 
                 <div className="md:ml-10.5">
-                    <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)}
-                        autoSize
-                        blockRemoteImages={blocksRemoteImages(email.folder_id)}
-                    />
+                    <MessageBody email={email} mailboxId={mailboxId} autoSize />
                 </div>
 
                 {isDraft && (onSendDraft || onEditDraft || onDeleteDraft) && (

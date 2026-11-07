@@ -1,6 +1,7 @@
 package co.inboxies.app.services
 
 import android.util.Log
+import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
@@ -8,6 +9,7 @@ import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.util.ComposeHtml
 import co.inboxies.app.util.ComposePendingAttachment
+import co.inboxies.app.util.ForwardAttachments
 import co.inboxies.app.util.QuotedOriginal
 import co.inboxies.app.util.OutboundLimits
 import kotlinx.serialization.json.JsonArray
@@ -91,6 +93,30 @@ class ComposeFormModel(
         mailbox.settings?.fromName ?: mailbox.name.takeIf { it != mailbox.email }
     }
     val original: Email? = original
+
+    /**
+     * Forward only: the original's real attachments (inline `cid:` images left out, AVE-181).
+     * Downloaded and attached on send while [includeForwardedAttachments] is on.
+     */
+    val forwardedAttachments: List<Attachment> = if (mode == ComposeMode.Forward) {
+        ForwardAttachments.forwardable(original?.attachments, original?.body)
+    } else {
+        emptyList()
+    }
+
+    /** "Include N attachments" in the forward composer; on by default. */
+    var includeForwardedAttachments: Boolean = true
+
+    /** The mailbox the forwarded original lives in (From can change later). */
+    private val forwardSourceMailboxId: String = mailbox.id
+
+    /** The forwarded original's files this send carries: none while the switch is off. */
+    val sentForwardedAttachments: List<Attachment>
+        get() = if (includeForwardedAttachments) forwardedAttachments else emptyList()
+
+    /** Added files plus the forwarded ones (by their stored size) for the 5 MiB estimate. */
+    fun allAttachmentBytes(): List<Int> =
+        attachments.map { it.size } + sentForwardedAttachments.map { it.size }
 
     var toTokens: List<MailAddress> = initialTo
     var ccTokens: List<MailAddress> = emptyList()
@@ -299,15 +325,45 @@ class ComposeFormModel(
         OutboundLimits.remainingBudget(
             html = sizedHtml(),
             text = outgoingPlainText(),
-            attachmentBytes = attachments.map { it.size },
+            attachmentBytes = allAttachmentBytes(),
         )
 
     fun exceedsOutboundLimit(): Boolean =
         OutboundLimits.estimateMessageBytes(
             html = sizedHtml(),
             text = outgoingPlainText(),
-            attachmentBytes = attachments.map { it.size },
+            attachmentBytes = allAttachmentBytes(),
         ) > OutboundLimits.MAX_MESSAGE_BYTES
+
+    /**
+     * Fetches each forwarded file ([fetch] = mailbox id, email id, attachment id → bytes).
+     * One that fails stops the send: the reader asked for the files, so the forward never
+     * goes out quietly without them. Also re-checks the limit on the real bytes.
+     */
+    suspend fun loadForwardedAttachments(
+        fetch: suspend (mailboxId: String, emailId: String, attachmentId: String) -> ByteArray,
+    ): List<ComposePendingAttachment> {
+        val files = sentForwardedAttachments
+        val sourceId = original?.id ?: originalEmailId
+        if (files.isEmpty() || sourceId.isNullOrBlank()) return emptyList()
+        val loaded = files.map { file ->
+            val bytes = try {
+                fetch(forwardSourceMailboxId, sourceId, file.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw IllegalStateException(ForwardAttachments.downloadError(file.filename), e)
+            }
+            ForwardAttachments.pending(file, bytes)
+        }
+        val estimated = OutboundLimits.estimateMessageBytes(
+            html = sizedHtml(),
+            text = outgoingPlainText(),
+            attachmentBytes = attachments.map { it.size } + loaded.map { it.size },
+        )
+        if (estimated > OutboundLimits.MAX_MESSAGE_BYTES) error(OutboundLimits.SIZE_ERROR)
+        return loaded
+    }
 
     fun addAttachment(attachment: ComposePendingAttachment) {
         attachments = attachments + attachment
@@ -317,7 +373,8 @@ class ComposeFormModel(
         attachments = attachments.filterNot { it.id == id }
     }
 
-    fun toSendPayload(): JsonObject {
+    /** [forwarded]: the original's files from [loadForwardedAttachments], sent first. */
+    fun toSendPayload(forwarded: List<ComposePendingAttachment> = emptyList()): JsonObject {
         fun emails(tokens: List<MailAddress>): kotlinx.serialization.json.JsonElement {
             val list = tokens.map { it.email }
             return if (list.size == 1) JsonPrimitive(list[0]) else JsonArray(list.map { JsonPrimitive(it) })
@@ -346,11 +403,12 @@ class ComposeFormModel(
             } else {
                 put("from", fromEmail)
             }
-            if (attachments.isNotEmpty()) {
+            val outgoing = forwarded + attachments
+            if (outgoing.isNotEmpty()) {
                 put(
                     "attachments",
                     buildJsonArray {
-                        attachments.forEach { att ->
+                        outgoing.forEach { att ->
                             add(
                                 buildJsonObject {
                                     put("content", att.base64)

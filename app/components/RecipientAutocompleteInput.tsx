@@ -12,17 +12,11 @@ import {
 } from "react";
 import { useRecentRecipients } from "~/queries/recipients";
 import type { RecentRecipient } from "~/types";
-
-function currentToken(value: string): { prefix: string; token: string } {
-	const lastComma = value.lastIndexOf(",");
-	if (lastComma === -1) {
-		return { prefix: "", token: value };
-	}
-	return {
-		prefix: value.slice(0, lastComma + 1),
-		token: value.slice(lastComma + 1).replace(/^\s+/, ""),
-	};
-}
+import {
+	commitRecipientToken,
+	currentToken,
+	recipientKeyAction,
+} from "~/lib/recipient-input";
 
 function formatSuggestion(r: RecentRecipient): string {
 	const name = (r.name || "").trim();
@@ -113,21 +107,45 @@ export default function RecipientAutocompleteInput({
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-		if (!showList) return;
-		if (e.key === "ArrowDown") {
-			e.preventDefault();
-			setHighlight((h) => (h + 1) % suggestions.length);
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			setHighlight((h) => (h - 1 + suggestions.length) % suggestions.length);
-		} else if (e.key === "Enter" || e.key === "Tab") {
-			if (suggestions[highlight]) {
+		const action = recipientKeyAction({
+			key: e.key,
+			metaKey: e.metaKey,
+			ctrlKey: e.ctrlKey,
+			shiftKey: e.shiftKey,
+			altKey: e.altKey,
+			isComposing: e.nativeEvent.isComposing,
+			listOpen: showList,
+			hasHighlight: showList && !!suggestions[highlight],
+		});
+		switch (action) {
+			case "next":
+				e.preventDefault();
+				setHighlight((h) => (h + 1) % suggestions.length);
+				break;
+			case "prev":
+				e.preventDefault();
+				setHighlight((h) => (h - 1 + suggestions.length) % suggestions.length);
+				break;
+			case "select":
 				e.preventDefault();
 				selectAt(highlight);
+				break;
+			case "commit": {
+				// Plain Enter confirms the typed address; it must never submit the
+				// surrounding compose form (AVE-122).
+				e.preventDefault();
+				const next = commitRecipientToken(value);
+				if (next !== value) onChange(next);
+				break;
 			}
-		} else if (e.key === "Escape") {
-			e.preventDefault();
-			inputRef.current?.blur();
+			case "send":
+				e.preventDefault();
+				e.currentTarget.form?.requestSubmit();
+				break;
+			case "close":
+				e.preventDefault();
+				inputRef.current?.blur();
+				break;
 		}
 	};
 

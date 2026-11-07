@@ -102,4 +102,77 @@ class BounceSuppressionTest {
         assertTrue(DeliveryStatus.isFailure("complained"))
         assertFalse(DeliveryStatus.isFailure("accepted"))
     }
+
+    // Settings → Bounced addresses (AVE-157)
+
+    private val listBody = """
+        {"domain":"acme.com","scope":"domain","suppressions":[
+           {"address":"Bob@Example.com","domain":"acme.com","reason":"hard_bounce","source":"dsn","detail":"550 5.1.1 user unknown","suppressedAt":"2026-10-01T12:00:00.000Z","canUnsuppress":true},
+           {"address":"carol@example.com","domain":"acme.com","reason":"complaint","source":"event","detail":"","suppressedAt":"2026-10-02T09:30:00Z","canUnsuppress":false},
+           {"domain":"acme.com"},
+           "junk"
+        ]}
+    """.trimIndent()
+
+    @Test
+    fun parsesSuppressionList() {
+        val list = BounceSuppression.list(listBody)
+        assertNotNull(list)
+        assertEquals("acme.com", list!!.domain)
+        assertEquals(SuppressionList.Scope.Domain, list.scope)
+        assertEquals(listOf("bob@example.com", "carol@example.com"), list.suppressions.map { it.address })
+        assertEquals(SuppressedRecipient.Reason.HardBounce, list.suppressions[0].reason)
+        assertTrue(list.suppressions[0].canUnsuppress)
+        assertEquals(SuppressedRecipient.Reason.Complaint, list.suppressions[1].reason)
+        assertNull("an empty detail is dropped", list.suppressions[1].detail)
+        assertFalse(list.suppressions[1].canUnsuppress)
+    }
+
+    @Test
+    fun suppressionListDefaultsAndRejects() {
+        val empty = BounceSuppression.list("""{"domain":"acme.com","scope":"mailbox","suppressions":[]}""")
+        assertEquals(SuppressionList.Scope.Mailbox, empty!!.scope)
+        assertTrue(empty.suppressions.isEmpty())
+        val unknownScope = BounceSuppression.list("""{"suppressions":[]}""")
+        assertEquals(SuppressionList.Scope.Mailbox, unknownScope!!.scope)
+        assertEquals("", unknownScope.domain)
+        assertNull(BounceSuppression.list("""{"error":"Invalid mailbox email address"}"""))
+        assertNull(BounceSuppression.list("<html>"))
+    }
+
+    @Test
+    fun listRowCopy() {
+        val rows = BounceSuppression.list(listBody)!!.suppressions
+        assertEquals("Bounced · Oct 1, 2026", BounceSuppression.metaLine(rows[0], Locale.US, utc))
+        assertEquals("Marked as spam · Oct 2, 2026", BounceSuppression.metaLine(rows[1], Locale.US, utc))
+        assertEquals(
+            "Mail will go to bob@example.com again. If it bounces again, it's suppressed again.",
+            BounceSuppression.confirmMessage(rows[0]),
+        )
+        assertEquals(
+            "Mail will go to carol@example.com again. If it reports spam again, it's suppressed again.",
+            BounceSuppression.confirmMessage(rows[1]),
+        )
+        assertEquals("bob@example.com un-suppressed", BounceSuppression.unsuppressedToast("bob@example.com"))
+    }
+
+    @Test
+    fun introTextFollowsScope() {
+        val admin = BounceSuppression.list(listBody)
+        assertEquals(
+            "After a hard bounce or a spam report, mail from acme.com stops going to that address, " +
+                "which protects your sending reputation. As a domain admin you see every mailbox's.",
+            BounceSuppression.introText(admin),
+        )
+        val member = SuppressionList("acme.com", SuppressionList.Scope.Mailbox, emptyList())
+        assertTrue(BounceSuppression.introText(member).endsWith("You see the ones this mailbox's sends caused."))
+        assertTrue(BounceSuppression.introText(null).contains("mail from this domain stops"))
+    }
+
+    @Test
+    fun alreadyLiftedIsA404() {
+        assertTrue(BounceSuppression.isAlreadyLifted(ApiException.Http(404, "Not suppressed")))
+        assertFalse(BounceSuppression.isAlreadyLifted(ApiException.Http(403, "Ask a domain admin")))
+        assertFalse(BounceSuppression.isAlreadyLifted(IllegalStateException("boom")))
+    }
 }

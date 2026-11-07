@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import type { EmailInvite, EmailOtp } from "shared/mail-cards";
+
 export interface SignatureSettings {
 	enabled: boolean;
 	text: string;
@@ -113,6 +115,31 @@ export interface McpGrant {
 	mailboxIds: string[] | null;
 	createdAt: string;
 	expiresAt: string | null;
+}
+
+/**
+ * One entry of Settings → Devices → "Recent security activity" (AVE-151).
+ * Mirrors the Worker's `SecurityActivityItem` (`workers/auth/security-activity.ts`).
+ * `kind` stays a string so a kind newer than this client still renders.
+ */
+export interface SecurityActivityItem {
+	id: string;
+	kind: string;
+	createdAt: string;
+	/** "Chrome on macOS"; null when unknown. */
+	device: string | null;
+	/** "Lagos, Nigeria" (approximate); null when unknown. */
+	location: string | null;
+	country: string | null;
+	/** Sign-ins only: from a device not seen in the last 90 days. */
+	newDevice: boolean;
+	/** Sign-in method events: "google", "apple", "password". */
+	provider: string | null;
+}
+
+export interface SecurityActivityResponse {
+	since: string;
+	events: SecurityActivityItem[];
 }
 
 export interface RecoveryEmailStatus {
@@ -446,6 +473,16 @@ export interface Email {
 	/** Alias still active and unexpired; false means replies are refused. */
 	alias_active?: boolean | null;
 	attachments?: Attachment[];
+	/**
+	 * One-time code to offer for copy (AVE-175). Detail/thread payloads only;
+	 * null in Spam, for senders that failed auth, and on mail without one.
+	 */
+	otp?: EmailOtp | null;
+	/**
+	 * Calendar invite from a text/calendar part or .ics attachment (AVE-175).
+	 * Detail/thread payloads only; same gating as `otp`.
+	 */
+	invite?: EmailInvite | null;
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)
 	thread_count?: number;
@@ -470,6 +507,8 @@ export interface Attachment {
 	size: number;
 	content_id?: string;
 	disposition?: string;
+	/** Program, script, disk image or macro document (AVE-114): warn before download. */
+	dangerous?: boolean;
 }
 
 export interface Folder {
@@ -492,6 +531,8 @@ export interface AgentConversation {
 	updatedAt: string;
 	lastMessagePreview?: string | null;
 }
+
+export type { EmailInvite, EmailInviteOrganizer, EmailOtp } from "shared/mail-cards";
 
 export type {
 	InboxDigest,

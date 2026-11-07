@@ -27,12 +27,34 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteAccept("inviteAccept", "previewInviteAccept"),
     InviteAcceptSignedIn("inviteAcceptSignedIn", "previewInviteAcceptSignedIn"),
     SignInMethods("signInMethods", "previewSignInMethods"),
+    /** "Confirm it's you" over Sign-in & recovery, password (iOS `-previewSignInMethods -previewReauth password`, AVE-171). */
+    Reauth("reauth", "previewReauth"),
+    /** "Confirm it's you", password + authenticator code (iOS `-previewReauth twoFactor`). */
+    ReauthTwoFactor("reauthTwoFactor", "previewReauthTwoFactor"),
+    /** "Confirm it's you", passkey only (iOS `-previewReauth passkey`). */
+    ReauthPasskey("reauthPasskey", "previewReauthPasskey"),
+    /** "Confirm it's you", emailed code (iOS `-previewReauth emailCode`). */
+    ReauthEmailCode("reauthEmailCode", "previewReauthEmailCode"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
+    /** Devices & sessions scrolled to Recent security activity with fixture events (iOS `-previewSessions -previewSecurityActivity`, AVE-151). */
+    SecurityActivity("securityActivity", "previewSecurityActivity"),
+    /** Recent security activity, nothing in the last 30 days (iOS `-previewSecurityActivity empty`). */
+    SecurityActivityEmpty("securityActivityEmpty", "previewSecurityActivityEmpty"),
+    /** Recent security activity failed to load: calm note (iOS `-previewSecurityActivity error`). */
+    SecurityActivityError("securityActivityError", "previewSecurityActivityError"),
     /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
+    /** Settings → Outgoing mail → Bounced addresses with fixture rows (iOS `-previewSuppressions`, AVE-157). */
+    Suppressions("suppressions", "previewSuppressions"),
+    /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
+    Tags("tags", "previewTags"),
+    /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
+    TagsRename("tagsRename", "previewTagsRename"),
+    /** Settings → Tags with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
+    TagsDelete("tagsDelete", "previewTagsDelete"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
@@ -56,12 +78,40 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ListError("listError", "previewListError"),
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
+    /** Screening room right after Decline: row gone, "Declined · Undo" toast pinned (iOS `-previewScreenerList -previewScreenerUndo`, AVE-159). */
+    ScreenerUndo("screenerUndo", "previewScreenerUndo"),
+    /** Same after Accept → Promotions (iOS `… -previewScreenerUndo -previewScreenerAccept`). */
+    ScreenerUndoAccept("screenerUndoAccept", "previewScreenerUndoAccept"),
+    /** Reader left open after Accept → Promotions: Screener bar gone, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`, AVE-182). */
+    ScreenerReaderAccept("screenerReaderAccept", "previewScreenerReaderAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),
+    /** Sign-in mail open in the reader with the Code card pinned above the bottom bar (iOS `-previewDetail -previewCode`, AVE-177). */
+    Code("code", "previewCode"),
+    /** Invite with a Meet link: collapsed Invite card, Join + Add to calendar (iOS `-previewDetail -previewInvite`). */
+    InviteCard("inviteCard", "previewInvite"),
+    /** Same invite with the details open (iOS `… -previewInvite -previewInviteExpanded`). */
+    InviteCardExpanded("inviteCardExpanded", "previewInviteExpanded"),
+    /** In-person invite (address only): Directions + Add to calendar (iOS `… -previewInvite -previewInviteAddress`). */
+    InviteCardAddress("inviteCardAddress", "previewInviteAddress"),
+    /** In-person invite with the details open; the address is tappable (iOS `… -previewInviteAddress -previewInviteExpanded`). */
+    InviteCardAddressExpanded("inviteCardAddressExpanded", "previewInviteAddressExpanded"),
+    /** Cancelled invite: struck-through title, "Cancelled", no actions (iOS `… -previewInvite -previewInviteCancelled`). */
+    InviteCardCancelled("inviteCardCancelled", "previewInviteCancelled"),
+    /** Invite card with fixture calendars: "You're free" + the calendar picker (iOS `… -previewInvite -previewInviteFreeBusy free`, AVE-206). */
+    InviteCardFree("inviteCardFree", "previewInviteFree"),
+    /** Fixture calendars: "Conflicts with Team sync +1 more" (iOS `… -previewInviteFreeBusy conflict`). */
+    InviteCardConflict("inviteCardConflict", "previewInviteConflict"),
+    /** Added in one tap: "Added" button + pinned "Added to Work · Undo" toast (iOS `… -previewInviteFreeBusy added`). */
+    InviteCardAdded("inviteCardAdded", "previewInviteAdded"),
+    /** Before access: the "Check availability" link; tapping it grants without the system dialog (iOS `… -previewInviteFreeBusy ask`). */
+    InviteCardAsk("inviteCardAsk", "previewInviteAsk"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
+    /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */
+    ForwardAttachments("forwardAttachments", "previewForwardAttachments"),
     /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
     Notes("notes", "previewNotes"),
     /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */
@@ -72,6 +122,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     AiUsageLimit("aiUsageLimit", "previewAiUsageLimit"),
     /** Settings sheet with the AI usage section filled (42 / 50 chats, 37 / 200 checks). */
     AiUsageSettings("aiUsageSettings", "previewAiUsageSettings"),
+    /** "Today's inbox" widget design mocks at real size, light/dark toggle (iOS `-previewWidgets`, AVE-138). */
+    Widgets("widgets", "previewWidgets"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

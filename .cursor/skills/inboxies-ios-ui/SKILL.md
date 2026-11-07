@@ -200,15 +200,23 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
 | `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
 | `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |
+| `-previewSignInMethods -previewReauth [password\|twoFactor\|passkey\|emailCode]` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API (AVE-170) |
 | `-previewMembers` | Mailbox members + pending invites |
 | `-previewSessions` | Devices & sessions |
+| `-previewSessions -previewSecurityActivity [empty\|error]` | Devices & sessions scrolled to Recent security activity: fixture events, or the empty / couldn't-load state, no API (AVE-151) |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
+| `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
+| `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
 | `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |
 | `-previewScreener` | Screening room + detail (`-previewScreenerList` for the room alone). The Screener folder is a subpage pushed from the Inbox row, not a folder tab or menu item (AVE-136) |
+| `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
+| `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
+| `-previewDetail -previewCode` / `-previewDetail -previewInvite` | Reader with the Code card / Invite card pinned above the bottom bar (add `-previewInviteCancelled` for the cancelled invite, `-previewInviteAddress` for an in-person invite with Directions, `-previewInviteExpanded` to open the details) (AVE-176) |
+| `-previewDetail -previewInvite -previewInviteFreeBusy free\|conflict\|added\|ask` | Invite card on fixture calendars (`PreviewInviteCalendar`, no EventKit): "You're free" + calendar picker · "Conflicts with Team sync +1 more" · added in one tap with a pinned "Added to Work · Undo" toast · "Check availability" before access (AVE-206) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
@@ -217,6 +225,8 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox -previewManyNew` | Inbox with a dozen New: New capped at 5 + "Show N more new" (pushes the All new screen) above Seen |
 | `-previewMailbox -previewNotes` | Inbox rows with the notes-to-self strip and "N private notes" chip |
 | `-previewDetail -previewNotes` | Q3 thread with a sticky note + inline notes (add `-previewNotesMoved` for a dragged sticky, `-previewNotesThrow` for a scripted drag/throw/spring loop to screen-record) |
+| `-previewWidgets` | "Today's inbox" widget design mocks at real size (small/medium × new mail/inbox zero; grey-scale palette only, ink bloom, no `accent`); add `-app_theme Dark` to force dark (AVE-138, `Views/WidgetDesign/`) |
+| `-previewWidgetData` (add `zero` for inbox zero) | Writes the sample snapshot to the App Group so the real "Today's inbox" WidgetKit widget (`InboxiesWidget` extension) shows data without signing in; add the widget from the home screen's edit mode (AVE-149) |
 | `-htmlHardenFixture` | Sanitizer / link-policy fixture + quoted-replies sheet |
 | `-previewAutofill` | AutoFill extension lists fixture private emails (no sign-in or API). Enable the provider with `xcrun simctl spawn <udid> pluginkit -e use -i co.inboxies.app.credential-provider`, then in Safari tap an email field → QuickType **Passwords** → Inboxies. iOS always shows credential-provider UI as a full-height sheet. |
 

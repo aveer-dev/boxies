@@ -10,7 +10,7 @@ import {
 	SignOutIcon,
 } from "@phosphor-icons/react";
 import { Suspense, useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useQueryClient } from "@tanstack/react-query";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -39,7 +39,7 @@ const PRIVACY_URL = "https://inboxies.co/privacy";
 const PROMPT_PLACEHOLDER = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.\n\nWrite like a real person. Short, direct, flowing prose. Plain text only.\n\n(Leave empty to use the full built-in default prompt)`;
 
 function SettingsContent() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const { settingsPage, openSettings } = useUIStore();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -228,7 +228,7 @@ function SettingsContent() {
  * mail waiting in Screener to Inbox (server side); back on screens new mail only.
  */
 function ScreenerToggle() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
 	const { data: mailbox } = useMailbox(mailboxId);

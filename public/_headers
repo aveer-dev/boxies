@@ -9,3 +9,11 @@
 # Say it's JSON explicitly.
 /.well-known/assetlinks.json
   Content-Type: application/json
+
+# Static assets (JS, CSS, images) are served before the Worker runs, so they
+# don't get workers/lib/security-headers.ts. The baseline that applies to them
+# (AVE-115); the Worker adds the rest to its own responses.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

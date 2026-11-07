@@ -20,6 +20,19 @@ struct SuppressedRecipient: Equatable, Identifiable {
     var id: String { address }
 }
 
+/// The suppression list a mailbox can see (AVE-157): its own sends' suppressions, or
+/// every mailbox's on the domain for a domain admin (`scope == .domain`).
+struct SuppressionList: Equatable {
+    enum Scope: String, Equatable {
+        case domain
+        case mailbox
+    }
+
+    let domain: String
+    let scope: Scope
+    var suppressions: [SuppressedRecipient]
+}
+
 /// Bounce / complaint suppressions on iOS (AVE-84). Mirrors `app/lib/suppression.ts`.
 ///
 /// A send, reply or forward to a suppressed recipient comes back as
@@ -37,20 +50,82 @@ enum BounceSuppression {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               (obj["code"] as? String) == recipientSuppressedCode,
               let rows = obj["suppressed"] as? [[String: Any]] else { return nil }
-        let list = rows.compactMap { row -> SuppressedRecipient? in
-            guard let address = row["address"] as? String, !address.isEmpty else { return nil }
-            let detail = (row["detail"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            return SuppressedRecipient(
-                address: address.lowercased(),
-                domain: row["domain"] as? String ?? "",
-                reason: (row["reason"] as? String) == "complaint" ? .complaint : .hardBounce,
-                source: row["source"] as? String ?? "",
-                detail: detail,
-                suppressedAt: row["suppressedAt"] as? String ?? "",
-                canUnsuppress: (row["canUnsuppress"] as? Bool) == true
-            )
-        }
+        let list = rows.compactMap(recipient(from:))
         return list.isEmpty ? nil : list
+    }
+
+    /// One `SuppressionView` row; nil without an address.
+    static func recipient(from row: [String: Any]) -> SuppressedRecipient? {
+        guard let address = row["address"] as? String, !address.isEmpty else { return nil }
+        let detail = (row["detail"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return SuppressedRecipient(
+            address: address.lowercased(),
+            domain: row["domain"] as? String ?? "",
+            reason: (row["reason"] as? String) == "complaint" ? .complaint : .hardBounce,
+            source: row["source"] as? String ?? "",
+            detail: detail,
+            suppressedAt: row["suppressedAt"] as? String ?? "",
+            canUnsuppress: (row["canUnsuppress"] as? Bool) == true
+        )
+    }
+
+    /// `GET /api/v1/mailboxes/:id/suppressions` (AVE-157); nil when the body isn't that shape.
+    static func list(data: Data) -> SuppressionList? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = obj["suppressions"] as? [Any] else { return nil }
+        let domain = (obj["domain"] as? String) ?? ""
+        return SuppressionList(
+            domain: domain,
+            scope: (obj["scope"] as? String) == "domain" ? .domain : .mailbox,
+            suppressions: rows.compactMap { ($0 as? [String: Any]).flatMap(recipient(from:)) }
+        )
+    }
+
+    // MARK: Settings → Bounced addresses (web `SuppressionsSettings.tsx`)
+
+    static let pageTitle = "Bounced addresses"
+
+    /// Short label for a reason, for lists: "Bounced" / "Marked as spam".
+    static func reasonLabel(_ reason: SuppressedRecipient.Reason) -> String {
+        reason == .complaint ? "Marked as spam" : "Bounced"
+    }
+
+    /// "Bounced · Oct 1, 2026".
+    static func metaLine(
+        _ recipient: SuppressedRecipient,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let when = formatDate(recipient.suppressedAt, locale: locale, timeZone: timeZone)
+        return when.isEmpty ? reasonLabel(recipient.reason) : "\(reasonLabel(recipient.reason)) · \(when)"
+    }
+
+    /// The page's intro. Before the list loads (`list == nil`) it reads like a member's.
+    static func introText(_ list: SuppressionList?) -> String {
+        let domain = list.map(\.domain).flatMap { $0.isEmpty ? nil : $0 } ?? "this domain"
+        let scope = list?.scope == .domain
+            ? "As a domain admin you see every mailbox's."
+            : "You see the ones this mailbox's sends caused."
+        return "After a hard bounce or a spam report, mail from \(domain) stops going to that address, which protects your sending reputation. \(scope)"
+    }
+
+    static let emptyTitle = "No bounced addresses"
+    static let emptyMessage = "Addresses that hard-bounce or report your mail as spam show up here."
+    static let loadFailedTitle = "Couldn’t load bounced addresses"
+    static let adminOnlyText = "Domain admin only"
+    static let confirmTitle = "Un-suppress this address?"
+
+    static func confirmMessage(_ recipient: SuppressedRecipient) -> String {
+        let again = recipient.reason == .complaint ? "reports spam" : "bounces"
+        return "Mail will go to \(recipient.address) again. If it \(again) again, it's suppressed again."
+    }
+
+    static func unsuppressedToast(_ address: String) -> String { "\(address) un-suppressed" }
+
+    /// A 404 on un-suppress: the suppression is already gone, so the row just goes away.
+    static func isAlreadyLifted(_ error: Error) -> Bool {
+        if case APIError.http(404, _) = error { return true }
+        return false
     }
 
     /// The 409 as an `APIError`, or nil when the response isn't a suppression block.

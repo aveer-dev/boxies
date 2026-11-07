@@ -15,23 +15,48 @@
 #   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
 #   ./scripts/run-debug-preview.sh screenerList
+#   ./scripts/run-debug-preview.sh screenerUndo        # Screening room after Decline + Undo toast (AVE-159)
+#   ./scripts/run-debug-preview.sh screenerUndoAccept  # … after Accept → Promotions
+#   ./scripts/run-debug-preview.sh screenerReaderAccept # Reader kept open after Accept (AVE-182)
 #   ./scripts/run-debug-preview.sh domainDns
 #   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
+#   ./scripts/run-debug-preview.sh code                # reader with the Code card (AVE-177)
+#   ./scripts/run-debug-preview.sh inviteCard          # reader with the Invite card: Meet link, Join
+#   ./scripts/run-debug-preview.sh inviteCardExpanded  # … details open
+#   ./scripts/run-debug-preview.sh inviteCardAddress   # in-person invite: Directions
+#   ./scripts/run-debug-preview.sh inviteCardAddressExpanded  # … details open, address tappable
+#   ./scripts/run-debug-preview.sh inviteCardCancelled # cancelled invite, no actions
+#   ./scripts/run-debug-preview.sh inviteCardFree      # fixture calendars: "You're free" + calendar picker (AVE-206)
+#   ./scripts/run-debug-preview.sh inviteCardConflict  # … "Conflicts with Team sync +1 more"
+#   ./scripts/run-debug-preview.sh inviteCardAdded     # … added in one tap, "Added to Work · Undo" toast
+#   ./scripts/run-debug-preview.sh inviteCardAsk       # … before access: "Check availability"
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
+#   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
 #   ./scripts/run-debug-preview.sh notesDetail  # thread with a draggable sticky + inline notes
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
+#   ./scripts/run-debug-preview.sh reauth             # "Confirm it's you" over Sign-in & recovery (password, AVE-171)
+#   ./scripts/run-debug-preview.sh reauthTwoFactor    # … password + authenticator code
+#   ./scripts/run-debug-preview.sh reauthPasskey      # … passkey only
+#   ./scripts/run-debug-preview.sh reauthEmailCode    # … emailed code
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh securityActivity      # Devices & sessions → Recent security activity (AVE-151)
+#   ./scripts/run-debug-preview.sh securityActivityEmpty # … nothing in the last 30 days
+#   ./scripts/run-debug-preview.sh securityActivityError # … couldn't load
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
+#   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
+#   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
+#   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
 #   ./scripts/run-debug-preview.sh aiUsage             # agent chat, usage meter at 42 / 50 (warning)
@@ -41,6 +66,10 @@
 #   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
 #   ./scripts/run-debug-preview.sh domainDnsEnded      # DNS console, Subscription card
+#   ./scripts/run-debug-preview.sh widgets             # "Today's inbox" widget mocks (AVE-138)
+#   ./scripts/run-debug-preview.sh widgetData          # sample data for the real home-screen widget (AVE-150)
+#   ./scripts/run-debug-preview.sh widgetZero          # same, inbox zero
+#   PIN=1 ./scripts/run-debug-preview.sh widgetData    # also ask the launcher to add the widget
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -61,11 +90,22 @@ case "$mode" in
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
+  reauth|Reauth|reauthPassword|previewReauth) extra=previewReauth; label=reauth ;;
+  reauthTwoFactor|ReauthTwoFactor|previewReauthTwoFactor) extra=previewReauthTwoFactor; label=reauthTwoFactor ;;
+  reauthPasskey|ReauthPasskey|previewReauthPasskey) extra=previewReauthPasskey; label=reauthPasskey ;;
+  reauthEmailCode|ReauthEmailCode|previewReauthEmailCode) extra=previewReauthEmailCode; label=reauthEmailCode ;;
   inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
   members|Members|previewMembers) extra=previewMembers; label=members ;;
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
+  securityActivity|SecurityActivity|previewSecurityActivity) extra=previewSecurityActivity; label=securityActivity ;;
+  securityActivityEmpty|SecurityActivityEmpty|previewSecurityActivityEmpty) extra=previewSecurityActivityEmpty; label=securityActivityEmpty ;;
+  securityActivityError|SecurityActivityError|previewSecurityActivityError) extra=previewSecurityActivityError; label=securityActivityError ;;
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
+  suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  tags|Tags|previewTags) extra=previewTags; label=tags ;;
+  tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
+  tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
   settings|Settings|previewSettings) extra=previewSettings; label=settings ;;
   settingsScreenerOff|SettingsScreenerOff|previewSettingsScreenerOff) extra=previewSettingsScreenerOff; label=settingsScreenerOff ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
@@ -79,18 +119,35 @@ case "$mode" in
   listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
+  screenerUndo|ScreenerUndo|previewScreenerUndo) extra=previewScreenerUndo; label=screenerUndo ;;
+  screenerUndoAccept|ScreenerUndoAccept|previewScreenerUndoAccept) extra=previewScreenerUndoAccept; label=screenerUndoAccept ;;
+  screenerReaderAccept|ScreenerReaderAccept|previewScreenerReaderAccept) extra=previewScreenerReaderAccept; label=screenerReaderAccept ;;
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
+  code|Code|previewCode) extra=previewCode; label=code ;;
+  inviteCard|InviteCard|previewInvite) extra=previewInvite; label=inviteCard ;;
+  inviteCardExpanded|InviteCardExpanded|previewInviteExpanded) extra=previewInviteExpanded; label=inviteCardExpanded ;;
+  inviteCardAddress|InviteCardAddress|previewInviteAddress) extra=previewInviteAddress; label=inviteCardAddress ;;
+  inviteCardAddressExpanded|InviteCardAddressExpanded|previewInviteAddressExpanded) extra=previewInviteAddressExpanded; label=inviteCardAddressExpanded ;;
+  inviteCardCancelled|InviteCardCancelled|previewInviteCancelled) extra=previewInviteCancelled; label=inviteCardCancelled ;;
+  inviteCardFree|InviteCardFree|previewInviteFree) extra=previewInviteFree; label=inviteCardFree ;;
+  inviteCardConflict|InviteCardConflict|previewInviteConflict) extra=previewInviteConflict; label=inviteCardConflict ;;
+  inviteCardAdded|InviteCardAdded|previewInviteAdded) extra=previewInviteAdded; label=inviteCardAdded ;;
+  inviteCardAsk|InviteCardAsk|previewInviteAsk) extra=previewInviteAsk; label=inviteCardAsk ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
+  forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
   notesDetail|NotesDetail|previewNotesDetail) extra=previewNotesDetail; label=notesDetail ;;
   aiUsage|AiUsage|ai-usage|previewAiUsage) extra=previewAiUsage; label=aiUsage ;;
   aiUsageLimit|AiUsageLimit|ai-usage-limit|previewAiUsageLimit) extra=previewAiUsageLimit; label=aiUsageLimit ;;
   aiUsageSettings|AiUsageSettings|ai-usage-settings|previewAiUsageSettings) extra=previewAiUsageSettings; label=aiUsageSettings ;;
+  widgets|Widgets|widget|previewWidgets) extra=previewWidgets; label=widgets ;;
+  widgetData|WidgetData|previewWidgetData) extra=previewWidgetData; label=widgetData; widget_data=mail ;;
+  widgetZero|WidgetZero) extra=previewWidgetData; label=widgetZero; widget_data=zero ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
@@ -99,12 +156,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,40p' "$0"
+    sed -n '2,72p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac
@@ -119,7 +176,13 @@ fi
 echo "→ force-stop $PKG"
 "$ADB" shell am force-stop "$PKG" || true
 
-echo "→ start $ACTIVITY ($label / --ez $extra true)"
-"$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true
+if [[ -n "${widget_data:-}" ]]; then
+  # The real widget reads this data; add it from the launcher (or PIN=1) to see it.
+  echo "→ start $ACTIVITY ($label / --es $extra $widget_data)"
+  "$ADB" shell am start -n "$ACTIVITY" --es "$extra" "$widget_data" --ez previewWidgetPin "$([[ "${PIN:-0}" == "1" ]] && echo true || echo false)"
+else
+  echo "→ start $ACTIVITY ($label / --ez $extra true)"
+  "$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true
+fi
 
 echo "Done. Screencap: adb exec-out screencap -p > /tmp/inboxies-$label.png"

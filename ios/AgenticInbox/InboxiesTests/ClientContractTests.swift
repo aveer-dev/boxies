@@ -181,11 +181,27 @@ final class ClientContractTests: XCTestCase {
     // MARK: - Payment return deep links
 
     func testPaymentCallbackDomainReady() {
+        let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com&code=abc123")!
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: "abc123"))
+    }
+
+    func testPaymentCallbackDomainReadyWithoutCode() {
+        let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com")!
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: nil))
+    }
+
+    /// AVE-118: links from older Workers carried the session token; the app no longer reads it.
+    func testPaymentCallbackIgnoresLegacySessionToken() {
         let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com&session_id=cs_1&token=tok&mailbox_id=me%40acme.com")!
-        XCTAssertEqual(
-            PaymentCallback.parse(url),
-            .domainReady(domain: "acme.com", sessionId: "cs_1", token: "tok", mailboxId: "me@acme.com")
-        )
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: nil))
+    }
+
+    func testCheckoutExchangeResponseDecodes() throws {
+        let res = try decode(CheckoutExchangeResponse.self, """
+        {"token":"s1","expiresAt":"2026-11-01T00:00:00.000Z","email":"me@acme.com","sub":"u","keys":[],"mailboxId":"me@acme.com"}
+        """)
+        XCTAssertEqual(res.token, "s1")
+        XCTAssertEqual(res.mailboxId, "me@acme.com")
     }
 
     func testPaymentCallbackCancelledIsNotSuccess() {
@@ -420,5 +436,163 @@ final class ClientContractTests: XCTestCase {
             SpamVerdictToast.title(for: MoveEmailResponse(senderStatus: "allowed"), folderId: "custom", sender: nil),
             "Moved out of Spam"
         )
+    }
+
+    // MARK: - Screener Undo (AVE-159)
+
+    func testSenderTriageDecisionDecodesMovedIds() throws {
+        let response = try decode(SenderTriageDecisionResponse.self, """
+        {"triage":{"sender":"a@x.com","status":"rejected"},"moved":{"moved":2,"ids":["e1","e2"]}}
+        """)
+        XCTAssertEqual(response.moved?.ids, ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e2"), ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e3"), ["e1", "e2", "e3"])
+        let bare = try decode(SenderTriageDecisionResponse.self, #"{"triage":null}"#)
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: bare, emailId: "e9"), ["e9"])
+    }
+
+    func testScreenerDecisionToastCopy() {
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: nil), "Declined")
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: "inbox"), "Accepted")
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "promotions"),
+            "Accepted · future mail goes to Promotions"
+        )
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "updates"),
+            "Accepted · future mail goes to Updates"
+        )
+    }
+
+    func testSenderTriagePathEncodesTheAddress() {
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "ada+news@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/ada+news@x.example"
+        )
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "a/b?c@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/a%2Fb%3Fc@x.example"
+        )
+    }
+
+    // MARK: - Custom folders / tags (AVE-158)
+
+    func testFolderCreateResponseDecodes() throws {
+        // POST /folders: `{ ...row, unreadCount: 0 }` (Durable Object createFolder).
+        let folder = try decode(Folder.self, #"{"id":"engineering-prs","name":"Engineering-PRs","unreadCount":0}"#)
+        XCTAssertEqual(folder.id, "engineering-prs")
+        XCTAssertEqual(folder.unreadCount, 0)
+    }
+
+    func testFolderRenameResponseDecodesWithoutUnreadCount() throws {
+        // PUT /folders/:id answers `{ id, name }` only.
+        let renamed = try decode(RenamedFolder.self, #"{"id":"receipts","name":"Bills"}"#)
+        XCTAssertEqual(renamed.id, "receipts")
+        XCTAssertEqual(renamed.name, "Bills")
+    }
+
+    func testCustomFolderSlugMatchesWorker() {
+        XCTAssertEqual(CustomFolders.slug("Engineering PRs"), "engineering-prs")
+        XCTAssertEqual(CustomFolders.slug("  Q3 -- Plans!  "), "q3-plans")
+        XCTAssertEqual(CustomFolders.slug("snake_case"), "snake_case")
+        // JS `\w` is ASCII: accented letters drop out, like the Worker.
+        XCTAssertEqual(CustomFolders.slug("Café"), "caf")
+        XCTAssertEqual(CustomFolders.slug("🎉🎉"), "")
+    }
+
+    func testCustomFoldersExcludeSystemFolders() {
+        let folders = [
+            Folder(id: "inbox", name: "Inbox", unreadCount: 1),
+            Folder(id: "travel", name: "Travel", unreadCount: 0),
+            Folder(id: "screened_out", name: "Screened out", unreadCount: 0),
+            Folder(id: "receipts", name: "Receipts", unreadCount: 2),
+        ]
+        XCTAssertEqual(CustomFolders.custom(in: folders).map(\.id), ["receipts", "travel"])
+    }
+
+    func testCreateValidationUsesWorkerCopy() {
+        let existing = [
+            Folder(id: "inbox", name: "Inbox", unreadCount: 0),
+            Folder(id: "receipts", name: "Receipts", unreadCount: 0),
+        ]
+        XCTAssertEqual(CustomFolders.validateCreate("   ", existing: existing), CustomFolders.nameRequired)
+        XCTAssertEqual(CustomFolders.validateCreate("#", existing: existing), CustomFolders.nameRequired)
+        XCTAssertEqual(CustomFolders.validateCreate("!!!", existing: existing), "Folder name must contain alphanumeric characters")
+        XCTAssertEqual(CustomFolders.validateCreate("receipts", existing: existing), "Folder with this name already exists")
+        XCTAssertEqual(CustomFolders.validateCreate("#Receipts", existing: existing), CustomFolders.duplicateName)
+        // System ids are reserved even when the list doesn't carry them.
+        XCTAssertEqual(CustomFolders.validateCreate("Trash", existing: existing), CustomFolders.duplicateName)
+        XCTAssertNil(CustomFolders.validateCreate("Travel", existing: existing))
+    }
+
+    func testRenameValidationIgnoresTheFolderItself() {
+        let receipts = Folder(id: "receipts", name: "Receipts", unreadCount: 0)
+        let existing = [Folder(id: "inbox", name: "Inbox", unreadCount: 0), receipts,
+                        Folder(id: "travel", name: "Trips", unreadCount: 0)]
+        XCTAssertNil(CustomFolders.validateRename("RECEIPTS", folder: receipts, existing: existing))
+        XCTAssertEqual(CustomFolders.validateRename("", folder: receipts, existing: existing), "Folder name is required")
+        XCTAssertEqual(CustomFolders.validateRename("trips", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        // Lookups resolve by id too, so another folder's id is taken.
+        XCTAssertEqual(CustomFolders.validateRename("Travel", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        XCTAssertEqual(CustomFolders.validateRename("inbox", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        XCTAssertNil(CustomFolders.validateRename("Bills", folder: receipts, existing: existing))
+    }
+
+    func testTagCopy() {
+        let tag = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
+        XCTAssertEqual(CustomFolders.displayName(tag), "#Receipts")
+        XCTAssertEqual(CustomFolders.normalizedName("  #Receipts "), "Receipts")
+        XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
+    }
+
+    // MARK: - Recent security activity (AVE-151)
+
+    func testSecurityActivityDecodesWorkerShape() throws {
+        let response = try decode(SecurityActivityResponse.self, """
+        {"since":"2026-10-03T12:00:00.000Z","events":[
+          {"id":"e1","kind":"sign_in","createdAt":"2026-11-01T09:00:00.000Z","device":"Chrome on macOS",
+           "location":"Lagos, Nigeria","country":"NG","newDevice":true,"provider":null},
+          {"id":"e2","kind":"sign_in_method_added","createdAt":"2026-10-30T09:00:00.000Z","device":null,
+           "location":null,"country":null,"newDevice":false,"provider":"google"},
+          {"id":"e3","kind":"some_future_kind","createdAt":"2026-10-29T09:00:00.000Z"}
+        ]}
+        """)
+        XCTAssertEqual(response.events.count, 3)
+        XCTAssertTrue(response.events[0].newDevice)
+        XCTAssertEqual(response.events[0].location, "Lagos, Nigeria")
+        XCTAssertEqual(response.events[1].provider, "google")
+        XCTAssertFalse(response.events[2].newDevice, "missing fields default instead of failing the list")
+        XCTAssertEqual(SecurityActivity.title(response.events[2]), SecurityActivity.fallbackTitle)
+    }
+
+    func testSecurityActivityTitlesCoverEveryWorkerKind() {
+        // Keep in sync with SECURITY_EVENT_KINDS in workers/auth/security-activity.ts.
+        let kinds = [
+            "sign_in", "password_changed", "password_added", "password_reset",
+            "two_factor_enabled", "two_factor_disabled", "passkey_added", "passkey_removed",
+            "sign_in_method_added", "sign_in_method_removed", "recovery_email_set", "recovery_email_removed",
+        ]
+        for kind in kinds {
+            let title = SecurityActivity.title(SecurityActivityItem(id: kind, kind: kind, createdAt: ""))
+            XCTAssertNotEqual(title, SecurityActivity.fallbackTitle, kind)
+            XCTAssertFalse(title.contains("_"), kind)
+        }
+    }
+
+    func testSecurityActivityTitlesAndDetail() {
+        func item(_ kind: String, newDevice: Bool = false, provider: String? = nil, device: String? = nil, location: String? = nil) -> SecurityActivityItem {
+            SecurityActivityItem(id: "x", kind: kind, createdAt: "", device: device, location: location, newDevice: newDevice, provider: provider)
+        }
+        XCTAssertEqual(SecurityActivity.title(item("sign_in")), "Signed in")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in", newDevice: true)), "Signed in from a new device")
+        XCTAssertEqual(SecurityActivity.title(item("two_factor_disabled")), "Two-factor authentication turned off")
+        XCTAssertEqual(SecurityActivity.title(item("recovery_email_set")), "Recovery email changed")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_added", provider: "google")), "Google sign-in connected")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_removed", provider: "apple")), "Apple sign-in removed")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_added", provider: "credential")), "Password sign-in connected")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_removed")), "Sign-in method removed")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: "Chrome on macOS", location: "Lagos, Nigeria")), "Chrome on macOS · Lagos, Nigeria")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", location: "Nigeria")), "Nigeria")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: " ")), "")
     }
 }

@@ -13,16 +13,21 @@ import org.jsoup.safety.Safelist
  * HTML profile, forbid `<style>` tags, keep `target` on links.
  */
 object EmailHtmlSanitizer {
-    /** Default policy: remote https images load (same image policy as web EmailIframe and iOS). */
+    /**
+     * Default policy: remote https images load (same image policy as web EmailIframe and iOS).
+     * `script-src 'none'` (AVE-120, same as iOS): no script in the mail ever runs, even if the
+     * sanitizer misses one. The reader's fit / height script is injected by the app with
+     * `evaluateJavascript`, which page CSP does not govern.
+     */
     const val CONTENT_SECURITY_POLICY =
-        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'"
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'"
 
     /**
      * Spam only (Gmail parity): remote images (tracking pixels) stay blocked until the
      * reader taps "Load images". Inline `cid:` parts are already rewritten to `data:`.
      */
     const val BLOCKED_REMOTE_IMAGES_POLICY =
-        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'unsafe-inline'"
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'none'"
 
     private val remoteImageRegex = Regex(
         """(?:\bsrc|\bbackground)\s*=\s*["']?\s*https?:|url\(\s*(?:["']|&quot;)?\s*https?:""",

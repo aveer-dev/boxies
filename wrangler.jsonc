@@ -77,11 +77,7 @@
 		},
 	],
 	// MCP OAuth 2.1 (AVE-67, workers/mcp/oauth.ts) stores clients, grants, codes
-	// and tokens in a KV namespace bound as OAUTH_KV. Without the binding, OAuth is
-	// off and /mcp accepts only the existing bearer tokens. To turn it on:
-	//   1. `wrangler kv namespace create OAUTH_KV`
-	//   2. add here: "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<id it prints>" }],
-	// A placeholder id cannot be committed: every deploy fails with KV error 10041.
+	// and tokens in the OAUTH_KV namespace (see "kv_namespaces" at the bottom).
 	// Per-IP throttle on 6-digit password reset code guesses.
 	// namespace_id must be unique among rate limiters in the Cloudflare account.
 	"ratelimits": [
@@ -232,11 +228,18 @@
 			],
 		},
 	],
+	// MCP OAuth 2.1 clients, grants, codes and tokens (workers/mcp/oauth.ts).
+	// `id` is the production namespace that `wrangler deploy` binds; keep it.
+	// No "remote": true on purpose (AVE-127): `pnpm dev` uses a local simulated
+	// namespace in .wrangler/state that starts empty, so local runs and probes
+	// never write to production OAuth storage. To read production entries, use
+	// `pnpm wrangler kv key list --binding OAUTH_KV --remote` (read-only). Only add
+	// "remote": true here locally, uncommitted, if you really must run against it.
+	// Without this binding OAuth is off and /mcp accepts only bearer session tokens.
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_KV",
 			"id": "ed76e680d73b4ff99939fee428514072",
-			"remote": true
-		}
+		},
 	],
 }
