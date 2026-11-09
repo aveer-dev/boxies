@@ -9,6 +9,7 @@ import {
 	FunnelSimpleIcon,
 	KeyIcon,
 	PaperPlaneTiltIcon,
+	PenNibIcon,
 	ProhibitIcon,
 	UserMinusIcon,
 	UsersThreeIcon,
@@ -22,6 +23,7 @@ export const SETTINGS_PAGE_IDS = [
 	"auto-reply",
 	"filters",
 	"senders",
+	"signature",
 	"suppressions",
 	"sharing",
 	"sign-in",
@@ -80,6 +82,13 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 		icon: <AddressBookIcon size={18} />,
 		Component: lazy(() => import("./SendersSettings")),
 	},
+	signature: {
+		id: "signature",
+		label: "Signature",
+		description: "Added under new mail, replies and forwards",
+		icon: <PenNibIcon size={18} />,
+		Component: lazy(() => import("./SignatureSettings")),
+	},
 	suppressions: {
 		id: "suppressions",
 		label: "Bounced addresses",
@@ -131,4 +140,4 @@ export const INCOMING_MAIL_PAGES: SettingsPageId[] = [
 ];
 
 /** Listed under "Outgoing mail" in the Settings column. */
-export const OUTGOING_MAIL_PAGES: SettingsPageId[] = ["suppressions"];
+export const OUTGOING_MAIL_PAGES: SettingsPageId[] = ["signature", "suppressions"];

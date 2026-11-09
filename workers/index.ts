@@ -46,6 +46,7 @@ import { SendEmailRequestSchema } from "./lib/schemas";
 import { countRecipients } from "./lib/send-quota";
 import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
+import { normalizeSignatureSetting, withStoredSignature } from "../shared/signature";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
 import { attachmentResponseHeaders } from "../shared/attachment-risk";
 import {
@@ -382,7 +383,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 			mailboxId: check.mailboxId,
 			ownerUserId: principal.userId,
 			name,
-			settings: settings ? stripAclFromSettings(settings) : undefined,
+			settings: settings ? withStoredSignature(stripAclFromSettings(settings)) : undefined,
 		});
 		return c.json({ ...(await mailboxResponse(c.env, db, check.mailboxId, "owner", stored)), name }, 201);
 	} catch (e) {
@@ -426,6 +427,17 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 		);
 		if (changed.length > 0) {
 			return c.json({ error: `Only mailbox owners can change ${changed.join(", ")}` }, 403);
+		}
+	}
+	// The signature goes out in mail (AVE-204): store it allowlist-sanitised. A
+	// stored one that no longer passes doesn't block saving other settings.
+	if ("signature" in next) {
+		const signature = normalizeSignatureSetting(next.signature);
+		if (signature.ok) {
+			if (signature.signature) next.signature = signature.signature;
+			else delete next.signature;
+		} else if (JSON.stringify(existing.signature ?? null) !== JSON.stringify(next.signature ?? null)) {
+			return c.json({ error: signature.error }, 400);
 		}
 	}
 	const automationError = automationSettingsError(parseAutomationSettings(next), mailboxId);

@@ -9,6 +9,7 @@
  * Re-export for backwards compatibility with existing imports.
  */
 import DOMPurify from "dompurify";
+import { signatureContentHtml } from "shared/signature";
 import { formatQuotedDate } from "shared/dates";
 import { decodeEntities } from "shared/quoted-text";
 import type { Attachment } from "~/types";
@@ -152,24 +153,15 @@ const COMPOSE_SIGNATURE_SPACER = "<p><br></p><p><br></p>";
 /**
  * Generate the HTML signature block for compose forms.
  * Includes two empty paragraphs above the signature so the user has room to type.
+ * The signature is allowlist-sanitised here as well as when it is saved
+ * (`shared/signature.ts`, AVE-204), so it renders the same with or without a DOM.
  */
 export function getSignatureBlock(settings?: {
 	signature?: { enabled: boolean; text?: string; html?: string };
 }): string {
-	const sig = settings?.signature;
-	if (sig?.enabled && (sig?.html || sig?.text)) {
-		// Sanitize HTML signatures with DOMPurify to allow safe formatting
-		// (bold, italic, links, etc.) while stripping scripts and event handlers.
-		// Text signatures are HTML-escaped since they have no formatting.
-		// Without DOMPurify (SSR) an HTML signature degrades to escaped text.
-		const content = sig.html
-			? canSanitizeHtml()
-				? DOMPurify.sanitize(sig.html)
-				: escapeHtml(htmlToPlainText(sig.html)).replace(/\n/g, "<br>")
-			: escapeHtml(sig.text || "");
-		return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
-	}
-	return "";
+	const content = signatureContentHtml(settings?.signature);
+	if (!content) return "";
+	return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
 }
 
 export function getNonInlineAttachments(attachments?: Attachment[]): Attachment[] {

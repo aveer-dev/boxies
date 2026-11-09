@@ -70,7 +70,9 @@ export default function QuickReplyBar({
 		setIsSending(true);
 		try {
 			// The Worker appends the original as a formatted quote (AVE-133).
-			const html = `${plainTextToHtml(text)}${getSignatureBlock(mailbox.settings)}`;
+			// Like the composer: a reply from a private email goes without the signature.
+			const signature = replyTarget.alias_email || replyTarget.alias_id ? "" : getSignatureBlock(mailbox.settings);
+			const html = `${plainTextToHtml(text)}${signature}`;
 			// One key per quick reply: kept across failed attempts, new after success.
 			const idempotencyKey = (sendKeyRef.current ??= newIdempotencyKey());
 			await replyMut.mutateAsync({

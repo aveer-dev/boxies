@@ -120,7 +120,16 @@ object PreviewSupport {
             name = "Alex Rivera",
             settings = MailboxSettings(
                 fromName = "Alex Rivera",
-                signature = SignatureSettings(enabled = true, text = "Alex"),
+                signature = if (mode == PreviewMode.Signature) {
+                    // Formatted on the web: bold name and a link (AVE-204).
+                    SignatureSettings(
+                        enabled = true,
+                        text = "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                        html = "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>",
+                    )
+                } else {
+                    SignatureSettings(enabled = true, text = "Alex")
+                },
                 screener = if (mode == PreviewMode.SettingsScreenerOff) ScreenerSettings(enabled = false) else null,
             ),
             readOnly = service?.isEnded,

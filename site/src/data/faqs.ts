@@ -159,8 +159,8 @@ const gettingStarted: Faq[] = [
 		group: "getting-started",
 		q: "Why are there three emails in my new mailbox?",
 		claim: "roadmap",
-		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. Some of what they describe isn’t there yet: j, k and / among the web keyboard shortcuts they list (the rest work), a signature editor in web Settings, and an export button in Settings. All three are on the [roadmap](/roadmap)."],
-		src: "PS#5 (other support facts); RM#5 (welcome-email overclaims); dev welcome-emails.ts (shortcut table and ? overlay, Settings → Email Signature, Settings → Export Mailbox; its /mcp section is true since MCP OAuth shipped, #152); FloatingDock.tsx (C, ⌘K); onboarding.ts (those usernames aren't reserved)",
+		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. Some of what they describe isn’t there yet: j, k and / among the web keyboard shortcuts they list (the rest work), and an export button in Settings. Both are on the [roadmap](/roadmap)."],
+		src: "PS#5 (other support facts); RM#5 (welcome-email overclaims); dev welcome-emails.ts (shortcut table and ? overlay, Settings → Email Signature (true since AVE-204), Settings → Export Mailbox; its /mcp section is true since MCP OAuth shipped, #152); FloatingDock.tsx (C, ⌘K); onboarding.ts (those usernames aren't reserved)",
 	},
 	{
 		id: "not-imap",

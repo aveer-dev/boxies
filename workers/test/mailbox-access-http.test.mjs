@@ -96,6 +96,37 @@ assert.equal((await request(env, { path: "/api/v1/mailboxes/secret+x@inboxies.em
 	});
 	assert.equal(memberSignature.status, 200, "members may change their non-sensitive settings");
 
+	// Signature HTML goes out in mail, so it is stored allowlist-sanitised (AVE-204).
+	const htmlSignature = await request(env, {
+		method: "PUT",
+		path: "/api/v1/mailboxes/shared@inboxies.email",
+		principal: asBob,
+		body: {
+			settings: {
+				signature: {
+					enabled: true,
+					text: "ignored",
+					html: '<p><b onclick="x()">Bob</b><script>alert(1)</script><img src="https://t.example/p.gif"></p><p><a href="javascript:alert(1)">bad</a> <a href="https://bob.example">Site</a></p>',
+				},
+			},
+		},
+	});
+	assert.equal(htmlSignature.status, 200);
+	assert.deepEqual(htmlSignature.payload.settings.signature, {
+		enabled: true,
+		text: "Bob\nbad Site (https://bob.example)",
+		html: '<p><b>Bob</b></p><p>bad <a href="https://bob.example" target="_blank" rel="noopener noreferrer">Site</a></p>',
+	});
+
+	const longSignature = await request(env, {
+		method: "PUT",
+		path: "/api/v1/mailboxes/shared@inboxies.email",
+		principal: asBob,
+		body: { settings: { signature: { enabled: true, text: "x".repeat(3000) } } },
+	});
+	assert.equal(longSignature.status, 400);
+	assert.match(longSignature.payload.error, /too long/);
+
 	// Clients send their cached acl back on every save: it neither grants nor removes.
 	const smuggle = await request(env, {
 		method: "PUT",
