@@ -620,6 +620,23 @@ export function countThreadedByScan(sql: Sql, folder: string): number {
 	return Number(row?.total ?? 0);
 }
 
+/**
+ * Unread conversations per folder from the index (AVE-228): a folder's
+ * conversations that still hold unread non-draft mail, i.e. the bold rows of
+ * its threaded list. For the Inbox this is exactly the New section total
+ * (`countConversationsFromIndex(...).newCount`). Folders with none are absent.
+ */
+export function countUnreadConversationsByFolder(sql: Sql): Map<string, number> {
+	const out = new Map<string, number>();
+	for (const row of rows(
+		sql,
+		`SELECT folder_id, COUNT(*) AS unread FROM conversations WHERE is_new = 1 GROUP BY folder_id`,
+	)) {
+		out.set(String(row.folder_id), Number(row.unread ?? 0));
+	}
+	return out;
+}
+
 /** The original Inbox New / Seen counts (scan). */
 export function countThreadedSectionsByScan(
 	sql: Sql,

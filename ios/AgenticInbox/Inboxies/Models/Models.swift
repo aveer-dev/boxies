@@ -501,7 +501,36 @@ struct AutoReplySettings: Codable, Hashable {
 struct Folder: Identifiable, Codable, Hashable {
     let id: String
     let name: String
+    /// Unread conversations, the unit every threaded list shows (AVE-228). The Worker's
+    /// `unreadThreadCount` when sent (for the Inbox it is the New total); older Workers only
+    /// send `unreadCount`, which counts messages.
     let unreadCount: Int
+
+    init(id: String, name: String, unreadCount: Int) {
+        self.id = id
+        self.name = name
+        self.unreadCount = unreadCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, unreadCount, unreadThreadCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        let threads = try c.decodeIfPresent(Int.self, forKey: .unreadThreadCount)
+        let messages = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
+        unreadCount = threads ?? messages ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(unreadCount, forKey: .unreadCount)
+    }
 }
 
 struct Attachment: Identifiable, Codable, Hashable {

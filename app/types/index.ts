@@ -514,7 +514,19 @@ export interface Attachment {
 export interface Folder {
 	id: string;
 	name: string;
+	/** Unread messages. Older Workers send only this. */
 	unreadCount: number;
+	/**
+	 * Unread conversations, the unit the threaded lists show (AVE-228). For the
+	 * Inbox it equals the New section total. Read through `folderUnread`.
+	 */
+	unreadThreadCount?: number;
+}
+
+/** A folder's unread badge: conversations when the Worker sends them (AVE-228). */
+export function folderUnread(folder: Pick<Folder, "unreadCount" | "unreadThreadCount"> | undefined): number {
+	if (!folder) return 0;
+	return folder.unreadThreadCount ?? folder.unreadCount;
 }
 
 /** People I've emailed — compose autocomplete suggestion. */

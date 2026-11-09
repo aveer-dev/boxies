@@ -35,6 +35,7 @@ import { orderTagIds } from "shared/tag-url";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { IconButton } from "~/components/IconButton";
+import { folderUnread } from "~/types";
 import ColumnPane from "./ColumnPane";
 
 const FOLDER_ICONS: Record<string, ReactNode> = {
@@ -138,7 +139,7 @@ export default function FoldersColumn() {
 	const { railRef, markRef } = useSlidingHighlight<HTMLDivElement>(pathname);
 
 	const unreadById = useMemo(
-		() => Object.fromEntries(folders.map((f) => [f.id, f.unreadCount])),
+		() => Object.fromEntries(folders.map((f) => [f.id, folderUnread(f)])),
 		[folders],
 	);
 	// Custom folders render as tags (a message carries one: the folder it's in).
@@ -239,8 +240,8 @@ export default function FoldersColumn() {
 								to={tagPath(mailboxRef, tag.ref)}
 								icon={<span className="text-xs">#</span>}
 								label={tag.name.replace(/^#/, "")}
-								count={tag.unreadCount}
-								muted={!tag.unreadCount}
+								count={folderUnread(tag)}
+								muted={!folderUnread(tag)}
 							/>
 						))
 					)}

@@ -21,7 +21,15 @@ final class AppModel {
             }
         }
     }
-    var folders: [Folder] = []
+    /// Unread counts are conversations (AVE-228); the Inbox's is the New section total.
+    var folders: [Folder] = [] {
+        didSet {
+            if folders != oldValue { scheduleInboxWidgetSnapshot() }
+        }
+    }
+    /// Mailbox whose `folders` came from the server this session (not just the SQLite cache,
+    /// which may still hold message counts from an older build). The widget only trusts those.
+    private var foldersSyncedMailboxId: String?
     var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = [] {
         didSet { scheduleInboxWidgetSnapshot() }
@@ -191,18 +199,61 @@ final class AppModel {
         return EmailListPaging.inboxOrder(rows, sectionFloor: nil)
     }
 
-    /// Optimistic read/unread on the inbox keeps the "Show all N new" count honest until the
-    /// next page-1 sync replaces it.
-    private func adjustInboxNewCount(wasUnread: Bool, isUnread: Bool) {
-        guard wasUnread != isUnread, selectedTab.syncFolderId == "inbox",
-              let count = inboxNewWindow?.count else { return }
-        inboxNewWindow?.count = max(0, count + (isUnread ? 1 : -1))
-    }
-
-    /// Server New total for the inbox on screen; nil before page 1 lands.
+    /// Server New total for the inbox on screen; nil before page 1 lands. It is the Inbox
+    /// folder's unread count (AVE-228), so the header, the New section, "All new" and the
+    /// widget read one number, and archive / delete / read adjust it in one place.
     var inboxNewCount: Int? {
         guard let inboxNewWindow, inboxNewWindow.key == currentListKey else { return nil }
-        return inboxNewWindow.count
+        return folders.first(where: { $0.id == "inbox" })?.unreadCount ?? inboxNewWindow.count
+    }
+
+    /// Inbox page 1 landed: its `newCount` is the Inbox unread total too (same Worker count).
+    private func applyInboxPage(_ page: MailboxSyncService.FolderPage, key: String) {
+        inboxNewWindow = InboxNewWindow(
+            key: key,
+            count: page.newCount,
+            ids: page.emails.filter(\.isUnread).map(\.id)
+        )
+        if let count = page.newCount {
+            setFolderUnread(folderId: "inbox", count: count)
+        }
+    }
+
+    /// Server folder list for `mailboxId` (counts are authoritative from here on).
+    func applyServerFolders(_ fresh: [Folder], mailboxId: String) {
+        guard selectedMailboxId == mailboxId else { return }
+        folders = fresh
+        foldersSyncedMailboxId = mailboxId
+    }
+
+    @ObservationIgnored private var folderCountsTask: Task<Void, Never>?
+
+    /// Live mail / a sync nudge: re-read folder counts shortly. A new message in an unread
+    /// conversation doesn't add an unread conversation, so counting locally would drift.
+    func scheduleFolderCountsRefresh() {
+        guard !isDebugPreview, let mailboxId = selectedMailboxId else { return }
+        folderCountsTask?.cancel()
+        folderCountsTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refreshFolderCounts(mailboxId: mailboxId)
+        }
+    }
+
+    private func refreshFolderCounts(mailboxId: String) async {
+        // Read / move mutations still in the outbox: the server hasn't seen them, so its
+        // counts would undo the optimistic ones. The next refresh settles.
+        guard !db.getPendingMutations().contains(where: { $0.mailboxId == mailboxId }) else { return }
+        guard let fresh = try? await APIClient.shared.listFolders(mailboxId: mailboxId) else { return }
+        db.upsertFolders(mailboxId: mailboxId, folders: fresh)
+        applyServerFolders(fresh, mailboxId: mailboxId)
+    }
+
+    private func setFolderUnread(folderId: String, count: Int) {
+        guard let index = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        let current = folders[index]
+        guard current.unreadCount != count else { return }
+        adjustFolderUnread(folderId: folderId, delta: count - current.unreadCount)
     }
 
     /// The active mailbox's domain service ended: read, flag and export only.
@@ -247,11 +298,22 @@ final class AppModel {
         inboxWidgetTask = nil
         guard publishesInboxWidget, APIClient.shared.authToken != nil, let mailbox = selectedMailbox else { return }
         let inboxKey = EmailListPaging.key(mailboxId: mailbox.id, listId: "inbox")
-        let serverNewCount = inboxNewWindow?.key == inboxKey ? inboxNewWindow?.count : nil
+        // The count is the server's New total (AVE-228), never the cached rows: the cache
+        // holds a capped page plus whatever older pages left behind, so counting it gave
+        // 8 one moment and 4 the next. With no server number yet, keep the last snapshot.
+        let serverNewCount: Int?
+        if foldersSyncedMailboxId == mailbox.id, let inbox = folders.first(where: { $0.id == "inbox" }) {
+            serverNewCount = inbox.unreadCount
+        } else if inboxNewWindow?.key == inboxKey {
+            serverNewCount = inboxNewWindow?.count
+        } else {
+            serverNewCount = nil
+        }
+        guard let serverNewCount else { return }
         InboxWidgetPublisher.publish(.make(
             mailbox: mailbox,
             inboxRows: cachedFolderEmails(mailboxId: mailbox.id, folderId: "inbox"),
-            serverNewCount: serverNewCount,
+            newCount: serverNewCount,
             replyLaterCount: replyLaterCount
         ))
     }
@@ -410,7 +472,7 @@ final class AppModel {
             // Settle counts with the server (the moved mail lands in Inbox).
             if let fresh = try? await syncService.syncMailbox(mailboxId: mailboxId),
                selectedMailboxId == mailboxId {
-                folders = fresh
+                applyServerFolders(fresh, mailboxId: mailboxId)
             }
         }
     }
@@ -529,9 +591,18 @@ final class AppModel {
                 Task { await loadInboxDigest(showLoading: false) }
             }
         }
+        // A new unread conversation counts at once; mail joining one that's already unread
+        // doesn't. The server settles it either way (counts are conversations, AVE-228).
         if email.isUnread {
-            adjustFolderUnread(folderId: email.folderId ?? "inbox", delta: 1)
+            let folderId = email.folderId ?? "inbox"
+            let joinsUnread = email.threadId.map { threadId in
+                emails.contains { $0.id != email.id && $0.threadId == threadId && $0.isUnread }
+            } ?? false
+            if !joinsUnread {
+                adjustFolderUnread(folderId: folderId, delta: 1)
+            }
         }
+        scheduleFolderCountsRefresh()
     }
 
     func refreshMailboxes(showLoading: Bool = true) async {
@@ -700,7 +771,9 @@ final class AppModel {
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
             async let replyLaterTask: Void = refreshReplyLaterCount()
-            folders = try await foldersTask
+            let syncedFolders = try await foldersTask
+            folders = syncedFolders
+            if await syncService.isOnline { foldersSyncedMailboxId = id }
             if let server = try? await conversationsTask {
                 conversations = Self.visibleConversations(server)
                 dropStaleActiveConversation()
@@ -907,11 +980,7 @@ final class AppModel {
             if let page {
                 applyFirstPage(page, resetPaging: resetPaging)
                 if folderId == "inbox" {
-                    inboxNewWindow = InboxNewWindow(
-                        key: key,
-                        count: page.newCount,
-                        ids: page.emails.filter(\.isUnread).map(\.id)
-                    )
+                    applyInboxPage(page, key: key)
                 }
                 emailListError = nil
                 lastSyncedAt = Date()
@@ -1087,6 +1156,9 @@ final class AppModel {
                currentListKey == key {
                 if listPaging?.key != key { listPaging = EmailListPaging(key: key) }
                 applyFirstPage(page, resetPaging: false)
+                if folderId == "inbox" {
+                    applyInboxPage(page, key: key)
+                }
                 emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
                 lastSyncedAt = Date()
             }
@@ -1098,6 +1170,7 @@ final class AppModel {
             }
         }
         await refreshOpenEmailDetailSilently()
+        scheduleFolderCountsRefresh()
     }
 
     /// Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh.
@@ -1231,7 +1304,6 @@ final class AppModel {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
             }
-            adjustInboxNewCount(wasUnread: true, isUnread: false)
             // Keep inbox New→Seen order after optimistic read
             if selectedTab.syncFolderId == "inbox" {
                 emails = Self.orderNewThenSeen(emails)
@@ -2191,9 +2263,6 @@ final class AppModel {
             } else {
                 emails[idx].listSection = "new"
             }
-            if let previous {
-                adjustInboxNewCount(wasUnread: previous.isUnread, isUnread: emails[idx].isUnread)
-            }
         }
         if selectedTab == .replyLater && !updated.replyLater {
             emails.removeAll(where: { $0.id == updated.id })
@@ -2201,8 +2270,9 @@ final class AppModel {
         if selectedTab.syncFolderId == "inbox" {
             emails = Self.orderNewThenSeen(emails)
         }
-        if let previous {
-            adjustFolderUnread(for: previous, wasUnread: !previous.read, isUnread: !updated.read)
+        // Conversations, like the counts (AVE-228): the row's unread state, not one message's.
+        if let previous, let row = emails.first(where: { $0.id == updated.id }) {
+            adjustFolderUnread(for: previous, wasUnread: previous.isUnread, isUnread: row.isUnread)
         }
         // Reading, removing or re-arming a due mail settles it (AVE-86).
         let wasDue = previousAnywhere?.isReplyLaterDue ?? false

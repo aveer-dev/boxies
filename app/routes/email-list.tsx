@@ -55,7 +55,7 @@ import { useEmails } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import type { Email } from "~/types";
+import { type Email, folderUnread } from "~/types";
 
 const PAGE_SIZE = 25;
 
@@ -208,7 +208,7 @@ function FolderList({ folder }: { folder: string }) {
 		if (found) return isTag ? `#${found.name.replace(/^#/, "")}` : found.name;
 		return getFolderDisplayName(folder);
 	}, [folders, folder, isTag]);
-	const unreadCount = folders.find((f) => f.id === folder)?.unreadCount;
+	const unreadCount = folderUnread(folders.find((f) => f.id === folder));
 
 	// New folder (or mailbox) → back to page 1.
 	const prevFolderRef = useRef<string | undefined>(undefined);

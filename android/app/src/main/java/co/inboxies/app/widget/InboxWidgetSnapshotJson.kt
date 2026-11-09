@@ -1,6 +1,7 @@
 package co.inboxies.app.widget
 
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.EmailListResponse
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.services.EmailPaging
 import co.inboxies.app.ui.widget.InboxWidgetSnapshot
@@ -115,33 +116,58 @@ val InboxWidgetSnapshot.contentKey: String
     }
 
 /**
- * The widget's view of an Inbox: the same New rows and New total the Inbox's New section
- * shows ([EmailPaging.inboxNewPreview]), newest first, up to five. iOS twin:
- * `InboxWidgetSnapshot.make(mailbox:inboxRows:serverNewCount:replyLaterCount:)`.
+ * The widget's view of an Inbox: the Inbox's New total and its newest New rows, newest first,
+ * up to five. [newCount] is the server's New total (the Inbox unread count, AVE-228) so the
+ * widget, the New section and "All new" agree; cached rows only fill the deck. iOS twin:
+ * `InboxWidgetSnapshot.make(mailbox:inboxRows:newCount:replyLaterCount:)`.
  */
 fun InboxWidgetSnapshot.Companion.make(
     mailbox: Mailbox,
     inboxRows: List<Email>,
-    serverNewCount: Int?,
+    newCount: Int,
     replyLaterCount: Int,
     now: ZonedDateTime = ZonedDateTime.now(),
 ): InboxWidgetSnapshot {
     val newRows = inboxRows.filter { it.resolvedListSection == "new" }
-    val preview = EmailPaging.inboxNewPreview(newRows, serverNewCount, limit = InboxWidgetSnapshot.MAX_THREADS)
-    val threads = preview.shown.map { email ->
-        InboxWidgetSnapshot.Thread(
-            id = email.id,
-            senderName = email.displaySender,
-            subject = email.subject.ifBlank { "(no subject)" },
-            receivedAt = email.parsedDate?.toInstant()?.atZone(now.zone) ?: now,
-        )
-    }
+    val preview = EmailPaging.inboxNewPreview(newRows, newCount, limit = InboxWidgetSnapshot.MAX_THREADS)
     return InboxWidgetSnapshot(
         mailboxId = mailbox.id,
         mailboxAddress = mailbox.email,
         newCount = preview.shown.size + preview.hiddenCount,
         replyLaterCount = maxOf(0, replyLaterCount),
-        threads = threads,
+        threads = preview.shown.map { widgetThread(it, now) },
         updatedAt = now,
     )
 }
+
+/**
+ * From the server's own New page (`section=new`): used on a push while the app isn't open,
+ * where there is no in-memory Inbox to build from. iOS twin: `make(mailboxId:…newPage:…)`.
+ */
+fun InboxWidgetSnapshot.Companion.make(
+    mailboxId: String,
+    mailboxAddress: String,
+    newPage: EmailListResponse,
+    replyLaterCount: Int,
+    now: ZonedDateTime = ZonedDateTime.now(),
+): InboxWidgetSnapshot {
+    val total = maxOf(0, newPage.newCount ?: newPage.totalCount)
+    val rows = newPage.emails.filter { it.isUnread }
+        .sortedByDescending { it.inboxSortDate }
+        .take(minOf(InboxWidgetSnapshot.MAX_THREADS, total))
+    return InboxWidgetSnapshot(
+        mailboxId = mailboxId,
+        mailboxAddress = mailboxAddress,
+        newCount = total,
+        replyLaterCount = maxOf(0, replyLaterCount),
+        threads = rows.map { widgetThread(it, now) },
+        updatedAt = now,
+    )
+}
+
+private fun widgetThread(email: Email, now: ZonedDateTime) = InboxWidgetSnapshot.Thread(
+    id = email.id,
+    senderName = email.displaySender,
+    subject = email.subject.ifBlank { "(no subject)" },
+    receivedAt = email.parsedDate?.toInstant()?.atZone(now.zone) ?: now,
+)

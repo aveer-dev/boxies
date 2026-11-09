@@ -48,6 +48,13 @@ class PagingReconcileTest {
         assertEquals(4, local.hiddenCount)
         // At or under the cap: nothing hidden.
         assertEquals(0, EmailPaging.inboxNewPreview(newRows.take(2), serverNewCount = 2).hiddenCount)
+        // AVE-228: stale cached New rows never push the total past the server's.
+        val stale = EmailPaging.inboxNewPreview(newRows, serverNewCount = 5)
+        assertEquals(5, stale.shown.size + stale.hiddenCount)
+        assertEquals(EmailPaging.INBOX_NEW_PREVIEW_LIMIT, stale.shown.size)
+        val fewer = EmailPaging.inboxNewPreview(newRows, serverNewCount = 2)
+        assertEquals(2, fewer.shown.size)
+        assertEquals(0, fewer.hiddenCount)
     }
 
     // ── Generation ────────────────────────────────────────────────────

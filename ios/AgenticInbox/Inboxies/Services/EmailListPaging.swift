@@ -111,15 +111,17 @@ struct EmailListPaging: Equatable {
     }
 
     /// Inbox New preview: the newest `limit` New rows, plus how many New conversations sit
-    /// behind "Show all" (`serverNewCount` when known — the page only holds a few).
+    /// behind "Show all". When the server total is known it is the whole story (AVE-228):
+    /// shown + hidden always equals it, even when the cache still holds New rows that were
+    /// read, moved or deleted elsewhere (counting those made the section and widget drift).
     static func inboxNewPreview(
         _ newRows: [Email],
         serverNewCount: Int?,
         limit: Int = inboxNewPreviewLimit
     ) -> (shown: [Email], hiddenCount: Int) {
         let sorted = newRows.sorted { $0.inboxSortKey > $1.inboxSortKey }
-        let shown = Array(sorted.prefix(limit))
-        let total = max(serverNewCount ?? 0, sorted.count)
+        let total = max(0, serverNewCount ?? sorted.count)
+        let shown = Array(sorted.prefix(min(limit, total)))
         return (shown, max(0, total - shown.count))
     }
 

@@ -337,7 +337,7 @@ extension AppModel {
             )
             await loadEmailsForCurrentTab(showLoading: false)
             if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
-                folders = synced
+                applyServerFolders(synced, mailboxId: mailboxId)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -405,7 +405,7 @@ extension AppModel {
         await refreshScreenerQueue()
         await loadEmailsForCurrentTab(showLoading: false)
         if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
-            folders = synced
+            applyServerFolders(synced, mailboxId: mailboxId)
         }
         showToast("Undone")
     }
@@ -484,7 +484,7 @@ extension AppModel {
             selectedTab = .folder("inbox")
         }
         if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
-            folders = synced
+            applyServerFolders(synced, mailboxId: mailboxId)
         }
         await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
         return ok
