@@ -469,7 +469,14 @@ data class AutoReplySettings(
 data class Folder(
     val id: String,
     val name: String,
+    /**
+     * Unread conversations, the unit every threaded list shows (AVE-228). [ApiClient.listFolders]
+     * fills it from the Worker's `unreadThreadCount` (for the Inbox, the New total); older
+     * Workers only send this field, which then counts messages.
+     */
     val unreadCount: Int = 0,
+    /** Wire-only: read through [unreadCount]. */
+    val unreadThreadCount: Int? = null,
 )
 
 @Serializable

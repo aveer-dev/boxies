@@ -32,6 +32,7 @@ import {
 	SENT_FOLDER_ID_SQL,
 	conversationIndexIsClean,
 	countConversationsFromIndex,
+	countUnreadConversationsByFolder,
 	countThreadedByScan,
 	countThreadedSectionsByScan,
 	flushConversationIndex,
@@ -2407,7 +2408,15 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Folders (Drizzle) ──────────────────────────────────────────
 
-	async getFolders() {
+	/**
+	 * Folders with two unread counts (AVE-228):
+	 * - `unreadCount`: unread messages in the folder (kept for older clients).
+	 * - `unreadThreadCount`: unread conversations, in the unit and with the
+	 *   grouping of the threaded list. For the Inbox it equals the New section
+	 *   total (`newCount` on the threaded Inbox list). Absent for a folder only
+	 *   while the conversation index is catching up (the Inbox is then scanned).
+	 */
+	async getFolders(): Promise<Array<{ id: string; name: string; unreadCount: number; unreadThreadCount?: number }>> {
 		const result = this.db
 			.select({
 				id: schema.folders.id,
@@ -2418,7 +2427,14 @@ export class MailboxDO extends DurableObject<Env> {
 			.leftJoin(schema.emails, eq(schema.emails.folder_id, schema.folders.id))
 			.groupBy(schema.folders.id, schema.folders.name)
 			.all();
-		return result;
+		if (this.#conversationIndexReady()) {
+			const unreadThreads = countUnreadConversationsByFolder(this.ctx.storage.sql);
+			return result.map((folder) => ({ ...folder, unreadThreadCount: unreadThreads.get(folder.id) ?? 0 }));
+		}
+		const inbox = countThreadedSectionsByScan(this.ctx.storage.sql, Folders.INBOX).newCount;
+		return result.map((folder) =>
+			folder.id === Folders.INBOX ? { ...folder, unreadThreadCount: inbox } : folder,
+		);
 	}
 
 	async createFolder(id: string, name: string, is_deletable: number = 1) {
@@ -3742,7 +3758,8 @@ export class MailboxDO extends DurableObject<Env> {
 		const inbox = folders.find(
 			(folder) => folder.id === Folders.INBOX || folder.name.toLowerCase() === "inbox",
 		);
-		const unreadCount = inbox?.unreadCount ?? 0;
+		// Unread conversations, like the threaded Inbox it summarises (AVE-228).
+		const unreadCount = inbox?.unreadThreadCount ?? inbox?.unreadCount ?? 0;
 
 		const dismissedRows = [
 			...this.ctx.storage.sql.exec(`SELECT email_id FROM dismissed_todos;`),

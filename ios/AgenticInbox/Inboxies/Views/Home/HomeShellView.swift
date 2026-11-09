@@ -184,6 +184,9 @@ struct HomeShellView: View {
                     app.commitPendingActionForBackground()
                     // Leave the "Today's inbox" widget current (AVE-149).
                     app.publishInboxWidgetNow()
+                } else if phase == .active {
+                    // Mail read or filed elsewhere while away: settle the counts (AVE-228).
+                    app.scheduleFolderCountsRefresh()
                 }
             }
             .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)

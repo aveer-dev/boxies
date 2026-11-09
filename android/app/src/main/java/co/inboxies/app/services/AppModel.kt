@@ -101,17 +101,60 @@ class AppModel {
     fun inboxNewCountFor(total: InboxNewTotal?): Int? =
         total?.takeIf { it.scope == currentListScope && it.scope.folderId == FolderIds.INBOX }?.count
 
+    /**
+     * Inbox page 1 landed. Its `newCount` is also the Inbox's unread count (the same Worker
+     * count, AVE-228), so the header and the folder list move with it.
+     */
     private fun rememberInboxNewCount(scope: EmailListScope, count: Int?) {
         if (scope.folderId != FolderIds.INBOX) return
         _inboxNewTotal.value = count?.let { InboxNewTotal(scope, it) }
+        if (count != null && scope.mailboxId == _selectedMailboxId.value) setInboxUnread(count)
     }
 
-    /** Optimistic read / unread on the inbox keeps "Show N more new" honest until the next sync. */
-    private fun adjustInboxNewCount(wasUnread: Boolean, isUnread: Boolean) {
-        if (wasUnread == isUnread) return
-        val current = _inboxNewTotal.value ?: return
-        if (current.scope != currentListScope) return
-        _inboxNewTotal.value = current.copy(count = maxOf(0, current.count + if (isUnread) 1 else -1))
+    /** Sets the Inbox folder's unread count without touching [_inboxNewTotal]. */
+    private fun setInboxUnread(count: Int) {
+        val current = _folders.value.firstOrNull { it.id == FolderIds.INBOX } ?: return
+        if (current.unreadCount == count) return
+        val delta = count - current.unreadCount
+        _folders.update { list -> list.map { if (it.id == FolderIds.INBOX) it.copy(unreadCount = count) else it } }
+        val mailboxId = _selectedMailboxId.value ?: return
+        scope.launch { db.updateFolderUnread(mailboxId, FolderIds.INBOX, delta) }
+    }
+
+    /** Mailbox whose [folders] came from the server this session; the widget trusts only those. */
+    @Volatile
+    private var foldersSyncedMailboxId: String? = null
+
+    /** Server folder list for [mailboxId]: counts are authoritative, the Inbox's is New. */
+    private fun applyServerFolders(mailboxId: String, fresh: List<Folder>) {
+        ifStillSelected(mailboxId) {
+            _folders.value = fresh
+            foldersSyncedMailboxId = mailboxId
+            val inbox = fresh.firstOrNull { it.id == FolderIds.INBOX }
+            val total = _inboxNewTotal.value
+            if (inbox != null && total != null && total.scope.mailboxId == mailboxId) {
+                _inboxNewTotal.value = total.copy(count = inbox.unreadCount)
+            }
+        }
+    }
+
+    private var folderCountsJob: Job? = null
+
+    /**
+     * Live mail / a sync nudge / back to the foreground: re-read folder counts shortly. A new
+     * message in an unread conversation doesn't add an unread conversation, so counting
+     * locally would drift (AVE-228).
+     */
+    fun scheduleFolderCountsRefresh() {
+        if (isDebugPreview || bootstrappedToken == null) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        folderCountsJob?.cancel()
+        folderCountsJob = scope.launch {
+            delay(FOLDER_COUNTS_DEBOUNCE_MS)
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
+                applyServerFolders(mailboxId, fresh)
+            }
+        }
     }
 
     private val _replyLaterCount = MutableStateFlow(0)
@@ -413,17 +456,26 @@ class AppModel {
         if (!isDebugPreview && mailboxId != null) {
             // Settle counts with the server (the moved mail lands in Inbox).
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
-                ifStillSelected(mailboxId) { _folders.value = fresh }
+                applyServerFolders(mailboxId, fresh)
             }
         }
     }
 
+    /**
+     * Optimistic unread change, in conversations (AVE-228). The Inbox's count is also the New
+     * total, so "Show N more new" and the widget move with it (read, archive, delete, move).
+     */
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
         _folders.update { list ->
             list.map {
                 if (it.id != folderId) it
                 else it.copy(unreadCount = maxOf(0, it.unreadCount + delta))
+            }
+        }
+        if (folderId == FolderIds.INBOX) {
+            _inboxNewTotal.value?.takeIf { it.scope.mailboxId == _selectedMailboxId.value }?.let { total ->
+                _inboxNewTotal.value = total.copy(count = maxOf(0, total.count + delta))
             }
         }
         val mailboxId = _selectedMailboxId.value ?: return
@@ -434,7 +486,6 @@ class AppModel {
         if (wasUnread == isUnread) return
         val folderId = email.folderId ?: _selectedTab.value.syncFolderId ?: return
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
-        if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
 
     /**
@@ -529,6 +580,8 @@ class AppModel {
         scope.launch {
             if (isSelected(mailboxId)) refreshCurrentTabSilently()
         }
+        // Mail read or filed elsewhere while away: settle the counts (AVE-228).
+        scheduleFolderCountsRefresh()
     }
 
     /** ProcessLifecycleOwner ON_STOP: no SSE socket or 20 s poll while nothing is visible. */
@@ -555,9 +608,15 @@ class AppModel {
                 scope.launch { loadInboxDigest(showLoading = false) }
             }
         }
+        // A new unread conversation counts at once; mail joining one that's already unread
+        // doesn't (counts are conversations, AVE-228). The server settles it either way.
         if (email.isUnread) {
-            adjustFolderUnread(email.folderId ?: "inbox", 1)
+            val joinsUnread = email.threadId?.let { threadId ->
+                _emails.value.any { it.id != email.id && it.threadId == threadId && it.isUnread }
+            } ?: false
+            if (!joinsUnread) adjustFolderUnread(email.folderId ?: "inbox", 1)
         }
+        scheduleFolderCountsRefresh()
     }
 
     suspend fun refreshMailboxes(showLoading: Boolean = true) {
@@ -760,7 +819,7 @@ class AppModel {
                 val conversationsDeferred = async { runCatching { ApiClient.shared.listConversations(id) }.getOrNull() }
                 val replyLaterDeferred = async { refreshReplyLaterCount() }
                 val folders = foldersDeferred.await()
-                ifStillSelected(id) { _folders.value = folders }
+                applyServerFolders(id, folders)
                 conversationsDeferred.await()?.let { server ->
                     ifStillSelected(id) {
                         _conversations.value = visibleConversations(server)
@@ -1306,6 +1365,7 @@ class AppModel {
             if (isSelected(mailboxId) && folderId == FolderIds.INBOX) refreshScreenerQueue()
         }
         if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
+        scheduleFolderCountsRefresh()
     }
 
     /** Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh. */
@@ -2067,7 +2127,12 @@ class AppModel {
         _domainServices.value = domainServices
         _mailboxes.value = mailboxes
         _selectedMailboxId.value = selectedMailboxId
-        _folders.value = folders
+        // The Inbox's unread count is its New conversations (AVE-228): one number in the
+        // fixture's header and New section.
+        val inboxRows = emails.filter { (it.folderId ?: FolderIds.INBOX) == FolderIds.INBOX }
+        _folders.value = if (inboxRows.isEmpty()) folders else folders.map { folder ->
+            if (folder.id == FolderIds.INBOX) folder.copy(unreadCount = inboxRows.count { it.isUnread }) else folder
+        }
         _emails.value = emails
         _selectedTab.value = selectedTab
         _selectedEmail.value = selectedEmail
@@ -2099,7 +2164,7 @@ class AppModel {
         // Debounced: list refreshes, SSE, reads and archives arrive in bursts. The
         // publisher also skips writes whose content didn't change.
         scope.launch {
-            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount) { _, _, _, _ -> Unit }
+            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount, _folders) { _, _, _, _, _ -> Unit }
                 .collectLatest {
                     delay(INBOX_WIDGET_DEBOUNCE_MS)
                     publishInboxWidgetNow()
@@ -2124,17 +2189,21 @@ class AppModel {
         if (!publishesInboxWidget) return
         val mailbox = selectedMailbox ?: return
         val inboxRows = db.getEmails(mailbox.id, FolderIds.INBOX)
-        val serverNewCount = _inboxNewTotal.value
-            ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
-            ?.count
-        // The Inbox hasn't loaded for this mailbox yet: keep the last snapshot rather
-        // than claim inbox zero.
-        if (inboxRows.isEmpty() && serverNewCount == null) return
+        // The count is the server's New total (AVE-228), never the cached rows: the cache
+        // holds a capped page plus whatever older pages left behind, so counting it drifted
+        // (8, then 4). With no server number for this mailbox yet, keep the last snapshot.
+        val serverNewCount = _folders.value.firstOrNull { it.id == FolderIds.INBOX }
+            ?.takeIf { foldersSyncedMailboxId == mailbox.id }
+            ?.unreadCount
+            ?: _inboxNewTotal.value
+                ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
+                ?.count
+            ?: return
         InboxWidgetPublisher.publish(
             InboxWidgetSnapshot.make(
                 mailbox = mailbox,
                 inboxRows = inboxRows,
-                serverNewCount = serverNewCount,
+                newCount = serverNewCount,
                 replyLaterCount = _replyLaterCount.value,
             ),
         )
@@ -2489,7 +2558,9 @@ class AppModel {
             }
         }
         if (previous != null) {
-            adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
+            // Conversations, like the counts (AVE-228): the row's unread state, not one message's.
+            val row = _emails.value.firstOrNull { it.id == updated.id }
+            adjustFolderUnread(previous, wasUnread = previous.isUnread, isUnread = row?.isUnread ?: !updated.read)
             // Reading (or un-queueing) a due mail clears the attention state right away.
             if (previous.isReplyLaterDue != updated.isReplyLaterDue) {
                 _replyLaterDueCount.update { (it + if (updated.isReplyLaterDue) 1 else -1).coerceAtLeast(0) }
@@ -2719,7 +2790,7 @@ class AppModel {
             )
             loadEmailsForCurrentTab(showLoading = false)
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-                ifStillSelected(mailboxId) { _folders.value = folders }
+                applyServerFolders(mailboxId, folders)
             }
         } catch (e: Exception) {
             _errorMessage.value = e.message
@@ -2784,7 +2855,7 @@ class AppModel {
         refreshScreenerQueue()
         loadEmailsForCurrentTab(showLoading = false)
         runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-            ifStillSelected(mailboxId) { _folders.value = folders }
+            applyServerFolders(mailboxId, folders)
         }
         showToast("Undone")
     }
@@ -2927,7 +2998,7 @@ class AppModel {
             _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
         }
         runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-            ifStillSelected(mailboxId) { _folders.value = folders }
+            applyServerFolders(mailboxId, folders)
         }
         loadEmailsForCurrentTab(showLoading = false)
         return ok
@@ -3204,6 +3275,7 @@ class AppModel {
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
         /** Quiet period before the widget snapshot is written (iOS uses 1 s too). */
         private const val INBOX_WIDGET_DEBOUNCE_MS = 1_000L
+        private const val FOLDER_COUNTS_DEBOUNCE_MS = 800L
 
         /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
         const val REMINDER_TOAST_DURATION_MS = 5_000L

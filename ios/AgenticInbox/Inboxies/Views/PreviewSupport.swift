@@ -591,7 +591,19 @@ enum PreviewSupport {
         if let service = previewDomainService(args: args) {
             applyPreviewService(service, to: app)
         }
+        matchInboxUnreadToNew(app)
         return app
+    }
+
+    /// The Inbox's unread count is its New conversations (AVE-228): keep the fixture's header
+    /// and New section on one number.
+    @MainActor
+    private static func matchInboxUnreadToNew(_ app: AppModel) {
+        let inboxRows = app.emails.filter { ($0.folderId ?? "inbox") == "inbox" }
+        guard !inboxRows.isEmpty,
+              let index = app.folders.firstIndex(where: { $0.id == "inbox" }) else { return }
+        let newCount = inboxRows.filter(\.isUnread).count
+        app.folders[index] = Folder(id: "inbox", name: app.folders[index].name, unreadCount: newCount)
     }
 
     @MainActor

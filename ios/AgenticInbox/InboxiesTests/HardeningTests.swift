@@ -238,6 +238,13 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(local.hiddenCount, 4)
         // At or under the cap: nothing hidden.
         XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(2)), serverNewCount: 2).hiddenCount, 0)
+        // AVE-228: stale cached New rows never push the total past the server's.
+        let stale = EmailListPaging.inboxNewPreview(newRows, serverNewCount: 5)
+        XCTAssertEqual(stale.shown.count + stale.hiddenCount, 5)
+        XCTAssertEqual(stale.shown.count, EmailListPaging.inboxNewPreviewLimit)
+        let fewer = EmailListPaging.inboxNewPreview(newRows, serverNewCount: 2)
+        XCTAssertEqual(fewer.shown.count, 2)
+        XCTAssertEqual(fewer.hiddenCount, 0)
     }
 
     // MARK: - Pruning later pages

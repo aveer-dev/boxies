@@ -987,8 +987,11 @@ class ApiClient private constructor() {
         )
     }
 
+    /** Folder unread counts are conversations when the Worker sends them (AVE-228). */
     suspend fun listFolders(mailboxId: String): List<Folder> =
-        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
+        request<List<Folder>>("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders").map { folder ->
+            folder.copy(unreadCount = folder.unreadThreadCount ?: folder.unreadCount, unreadThreadCount = null)
+        }
 
     /**
      * Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
