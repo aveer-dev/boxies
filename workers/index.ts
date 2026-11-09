@@ -1070,7 +1070,9 @@ app.get("/api/v1/mailboxes/:mailboxId/ai-usage", async (c: AppContext) => {
 // -- AI summaries (AVE-20) ------------------------------------------
 // Generated lazily on first open and stored in the mailbox DO. Gating
 // (folder, screened-out sender, length, multi-message for quick summaries)
-// lives in lib/ai-summary.ts; responses are AiSummaryResponse.
+// lives in lib/ai-summary.ts; responses are AiSummaryResponse. Each model
+// run counts against the mailbox's daily AI quota (AVE-215): over it, the
+// route answers 429 with the typed AiQuotaExceededError (plus `error`).
 
 const MAX_SUMMARY_ROUTE_ID = 512;
 
@@ -1087,6 +1089,9 @@ async function summaryResponse(
 		console.error("AI summary failed:", result.error);
 		return c.json({ error: "Couldn't generate a summary. Try again." }, 502);
 	}
+	if (result.status === "quota_exceeded") {
+		return c.json({ ...result.error, error: result.error.message }, 429);
+	}
 	return c.json(result satisfies AiSummaryResponse);
 }
 
@@ -1098,13 +1103,13 @@ function summaryRouteId(c: AppContext, name: string): string | null {
 app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary", async (c: AppContext) => {
 	const threadId = summaryRouteId(c, "threadId");
 	if (!threadId) return c.json({ error: "Thread not found" }, 404);
-	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "lazy"), "Thread not found");
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "lazy", getPlanTier(c.var.mailboxId)), "Thread not found");
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary/regenerate", async (c: AppContext) => {
 	const threadId = summaryRouteId(c, "threadId");
 	if (!threadId) return c.json({ error: "Thread not found" }, 404);
-	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "force"), "Thread not found");
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "force", getPlanTier(c.var.mailboxId)), "Thread not found");
 });
 
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id/summary", async (c: AppContext) => {
@@ -1120,7 +1125,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/summary/generate", async (c: A
 	const { regenerate } = GenerateEmailSummaryBody.parse(raw.trim() ? JSON.parse(raw) : {});
 	return summaryResponse(
 		c,
-		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy"),
+		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy", getPlanTier(c.var.mailboxId)),
 		"Email not found",
 	);
 });
