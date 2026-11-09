@@ -238,6 +238,56 @@ final class MailCardsTests: XCTestCase {
         XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", location: "javascript:alert(1)").venue, .address("javascript:alert(1)"))
     }
 
+    // MARK: - Known meeting links (AVE-216)
+
+    private struct MeetingLinkFixtures: Decodable {
+        struct Hosts: Decodable { let exact: [String]; let withSubdomains: [String] }
+        struct URLCase: Decodable { let url: String; let join: String?; let note: String? }
+        struct LocationCase: Decodable { let location: String; let join: String? }
+        let hosts: Hosts
+        let urls: [URLCase]
+        let locations: [LocationCase]
+    }
+
+    /// Same fixtures as web (`workers/test/meeting-links.test.mjs`) and Android.
+    func testJoinOnlyForKnownMeetingLinksMatchesSharedFixtures() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // InboxiesTests
+            .deletingLastPathComponent() // AgenticInbox
+            .deletingLastPathComponent() // ios
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("shared/meeting-links.fixtures.json")
+        let fixtures = try JSONDecoder().decode(MeetingLinkFixtures.self, from: Data(contentsOf: url))
+        XCTAssertEqual(MeetingLinks.exactHosts, fixtures.hosts.exact)
+        XCTAssertEqual(MeetingLinks.subdomainHosts, fixtures.hosts.withSubdomains)
+        XCTAssertGreaterThanOrEqual(fixtures.urls.count, 15)
+        for item in fixtures.urls {
+            let label = "\(item.url) \(item.note ?? "")"
+            XCTAssertEqual(MeetingLinks.knownURL(item.url)?.absoluteString, item.join, label)
+            // Even the Worker's meetingUrl is checked again.
+            let invite = EmailInvite(start: "2026-11-05T15:00:00Z", meetingUrl: item.url)
+            XCTAssertEqual(invite.joinLink?.absoluteString, item.join, "meetingUrl \(label)")
+        }
+        for item in fixtures.locations {
+            let invite = EmailInvite(start: "2026-11-05T15:00:00Z", location: item.location)
+            XCTAssertEqual(invite.joinLink?.absoluteString, item.join, item.location)
+            if let join = item.join {
+                XCTAssertEqual(invite.venue, .link(URL(string: join)!), item.location)
+            } else if case .link = invite.venue {
+                XCTFail("Join offered for \(item.location)")
+            }
+        }
+    }
+
+    func testUnknownLocationLinkIsNotTheCalendarEventURL() throws {
+        let evil = "https://zoom-us.evil.test/j/123?login=1"
+        let invite = EmailInvite(start: "2026-11-05T15:00:00Z", end: "2026-11-05T16:00:00Z", location: evil)
+        XCTAssertEqual(invite.venue, .none)
+        let event = try XCTUnwrap(invite.makeEvent(store: EKEventStore(), timeZone: newYork))
+        XCTAssertNil(event.url)
+        XCTAssertEqual(event.location, evil, "The location text itself is kept")
+    }
+
     func testDirectionsURLs() {
         let address = "Room 4B & Co, 200 Market St"
         XCTAssertEqual(

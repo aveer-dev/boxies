@@ -14,6 +14,7 @@
  */
 
 import type { EmailInvite, EmailInviteOrganizer } from "../../shared/mail-cards.ts";
+import { findMeetingUrl } from "../../shared/meeting-links.ts";
 
 /** Calendars larger than this are not parsed (real invites are a few KB). */
 const MAX_ICS_BYTES = 256 * 1024;
@@ -442,39 +443,8 @@ function organizerOf(component: IcsComponent): EmailInviteOrganizer | null {
 	return { email, name };
 }
 
-const MEETING_HOSTS = [
-	/^meet\.google\.com$/,
-	/(^|\.)zoom\.us$/,
-	/(^|\.)zoomgov\.com$/,
-	/^teams\.microsoft\.com$/,
-	/^teams\.live\.com$/,
-	/(^|\.)webex\.com$/,
-	/^meet\.jit\.si$/,
-	/^whereby\.com$/,
-	/^facetime\.apple\.com$/,
-	/^chime\.aws$/,
-	/(^|\.)gotomeeting\.com$/,
-	/^meet\.goto\.com$/,
-	/^app\.slack\.com$/,
-];
-
-const URL_PATTERN = /https:\/\/[^\s<>"'\\)\]]+/gi;
-
-/** First https link on a known video-meeting host in `text`. */
-export function findMeetingUrl(text: string | null | undefined): string | null {
-	if (!text) return null;
-	for (const match of text.matchAll(URL_PATTERN)) {
-		const candidate = match[0].replace(/[.,;:!?]+$/, "");
-		let host: string;
-		try {
-			host = new URL(candidate).hostname.toLowerCase();
-		} catch {
-			continue;
-		}
-		if (MEETING_HOSTS.some((re) => re.test(host))) return candidate;
-	}
-	return null;
-}
+/** Shared with the clients, which offer Join only for these hosts (AVE-216). */
+export { findMeetingUrl };
 
 function meetingUrlOf(event: IcsComponent): string | null {
 	const sources = [

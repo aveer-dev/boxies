@@ -10,11 +10,13 @@
  *
  * Invite data comes from the sender and is untrusted: links are only ever
  * http(s), text is never rendered as HTML, and everything put into a URL is
- * percent-encoded.
+ * percent-encoded. Join is only ever an https link on a known meeting host
+ * (AVE-216, `shared/meeting-links.ts`); any other location link stays text.
  */
 
 import { Folders } from "../../shared/folders";
 import { mailCardsAllowed, type EmailInvite } from "../../shared/mail-cards";
+import { findMeetingUrl, knownMeetingUrl } from "../../shared/meeting-links";
 import { emailAuthTier } from "./email-auth";
 import type { Email } from "~/types";
 
@@ -99,15 +101,19 @@ export function displayLocation(invite: EmailInvite): string | null {
 	return location;
 }
 
-/** The meeting link, else a link in the location. */
+/**
+ * The link to join: `meetingUrl`, else a link in the location, and only when it
+ * is https on a known meeting host (AVE-216). A stranger's LOCATION link to any
+ * other site is never a Join button, nor a link in the calendar entry.
+ */
 export function joinLink(invite: EmailInvite): string | null {
-	return safeHttpUrl(invite.meetingUrl) ?? firstHttpLink(invite.location);
+	return knownMeetingUrl(invite.meetingUrl) ?? knownMeetingUrl(findMeetingUrl(invite.location));
 }
 
 /**
- * Decides the primary action (AVE-176 review): Join for a meeting link,
- * Directions for a physical address, nothing for no location or only a
- * platform name like "Zoom". A link wins over an address.
+ * Decides the primary action (AVE-176 review): Join for a known meeting link,
+ * Directions for a physical address, nothing for no location, only a platform
+ * name like "Zoom", or a link to another site. A link wins over an address.
  */
 export function inviteVenue(invite: EmailInvite): InviteVenue {
 	const url = joinLink(invite);
