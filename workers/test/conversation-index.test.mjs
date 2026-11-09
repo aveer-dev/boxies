@@ -22,6 +22,7 @@ import {
 	readThreadedListFromIndex,
 } from "../lib/conversation-index.ts";
 import { inboxSectionFilterSql } from "../../shared/list-sections.ts";
+import { PARTICIPANT_SEPARATOR, formatParticipants } from "../../shared/sender.ts";
 
 /** `ctx.storage.sql` stand-in with a statement cache, like the DO runtime. */
 function sqlStorage(db) {
@@ -137,7 +138,7 @@ const SUBJECTS = [
 	"Lunch?", "Re: Lunch?", "RE: lunch?", "Fwd: Lunch?", "Quarterly report", "Re: Quarterly report",
 	"", "  ", null, "AW: Plan", "Plan", "SV: Plan", "Invoice", "Fw: Invoice", "Hello",
 ];
-const NAMES = ["Alice", "", "  ", null, "Bob", "Carol", "alice"];
+const NAMES = ["Alice", "", "  ", null, "Bob", "Carol", "alice", "Hale, Jordan"];
 // AVE-173 needs_reply: direct mail (1), not direct (0), not computed yet (NULL).
 const DIRECT_FLAGS = [1, 1, 0, null];
 const SENDERS = ["alice@example.com", "bob@example.com", "carol@example.com", "me@example.com"];
@@ -371,6 +372,47 @@ assert.deepEqual(snapshot(), incremental, "incremental index equals a rebuild");
 	// Both mailboxes hold the same mail now, so the indexes match too.
 	flushAll(sql, 500);
 	assert.deepEqual(built.conversations, db.prepare(`SELECT * FROM conversations ORDER BY folder_id, conversation_id`).all());
+}
+
+// ── AVE-224: participants joined with U+001F ──────────────────────
+
+{
+	// "Hale, Jordan" and Pat Doe in one thread are two people, in the index,
+	// the scan, and every client's split (shared/sender.ts mirrors iOS and
+	// Android).
+	const t = new DatabaseSync(":memory:");
+	const tsql = sqlStorage(t);
+	const migration47 = mailboxMigrations.findIndex((m) => m.name === "47_participants_unit_separator");
+	assert.ok(migration47 > 0, "47_participants_unit_separator exists");
+	applyMigrations(tsql, mailboxMigrations.slice(0, migration47));
+	const add = t.prepare(
+		`INSERT INTO emails (id, folder_id, subject, sender, sender_name, recipient, date, read, starred, thread_id, snippet)
+		 VALUES (?, 'inbox', 'Plans', ?, ?, 'me@example.com', ?, 1, 0, 't1', '')`,
+	);
+	add.run("p1", "j@example.com", "Hale, Jordan", "2026-01-01T00:00:00Z");
+	add.run("p2", "pat@example.com", "Pat Doe", "2026-01-02T00:00:00Z");
+	add.run("p3", "j@example.com", "Hale, Jordan", "2026-01-03T00:00:00Z");
+	flushAll(tsql, 50);
+	// A row stored before this fix: comma separated.
+	t.exec(`UPDATE conversations SET participants = 'Hale, Jordan,Pat Doe'`);
+	assert.equal(formatParticipants({ sender: "j@example.com", participants: "Hale, Jordan,Pat Doe" }), "Hale, Jordan, Pat Doe");
+
+	applyMigrations(tsql, mailboxMigrations);
+	assert.equal(conversationIndexIsClean(tsql), false, "47 re-marks threads with a comma in a sender name");
+	flushAll(tsql, 50);
+	const expected = `Hale, Jordan${PARTICIPANT_SEPARATOR}Pat Doe`;
+	const [indexed] = readThreadedListFromIndex(tsql, "inbox", { limit: 10, offset: 0, useNewSeen: false });
+	const [scanned] = readThreadedListByScan(tsql, "inbox", { limit: 10, offset: 0, useNewSeen: false, sectionFilter: "1 = 1" });
+	assert.equal(indexed.participants, expected, "index joins with U+001F");
+	assert.equal(scanned.participants, expected, "scan joins with U+001F");
+	const split = indexed.participants.split(PARTICIPANT_SEPARATOR);
+	assert.deepEqual(split, ["Hale, Jordan", "Pat Doe"], "two people, not three");
+	assert.equal(formatParticipants({ sender: "j@example.com", participants: indexed.participants }), "Hale, Jordan, Pat Doe");
+	// Four people: "+N" counts people, not comma pieces.
+	assert.equal(
+		formatParticipants({ sender: "a@x", participants: ["Hale, Jordan", "Pat Doe", "Lee, Sam", "Kim"].join(PARTICIPANT_SEPARATOR) }),
+		"Hale, Jordan, Pat Doe +2",
+	);
 }
 
 // ── Mailbox purge empties the index ───────────────────────────────

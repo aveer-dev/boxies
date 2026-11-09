@@ -28,6 +28,7 @@ import {
 	CONVERSATION_FLUSH_ALARM_BUDGET,
 	CONVERSATION_FLUSH_CONTINUE_DELAY_MS,
 	CONVERSATION_FLUSH_READ_BUDGET,
+	PARTICIPANT_LABEL_SQL,
 	SENT_FOLDER_ID_SQL,
 	conversationIndexIsClean,
 	countConversationsFromIndex,
@@ -1338,6 +1339,7 @@ export class MailboxDO extends DurableObject<Env> {
 				`WITH
 				folder_emails AS (
 					SELECT *,
+						rowid AS rid,
 						COALESCE(in_reply_to, id) as draft_group_key
 					FROM emails
 					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
@@ -1346,9 +1348,18 @@ export class MailboxDO extends DurableObject<Env> {
 					SELECT
 						draft_group_key,
 						COUNT(*) as thread_count,
-						0 as thread_unread_count,
-						GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants
+						0 as thread_unread_count
 					FROM folder_emails
+					GROUP BY draft_group_key
+				),
+				draft_participants AS (
+					SELECT draft_group_key, GROUP_CONCAT(p, char(31)) as participants
+					FROM (
+						SELECT draft_group_key, ${PARTICIPANT_LABEL_SQL} AS p
+						FROM folder_emails
+						GROUP BY draft_group_key, p
+						ORDER BY draft_group_key, MIN(rid)
+					)
 					GROUP BY draft_group_key
 				),
 				latest_per_group AS (
@@ -1367,9 +1378,10 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
 					lp.auth, lp.auth_tier, lp.classification_reason, lp.matched_rule_id,
-					ds.thread_count, ds.thread_unread_count, ds.participants
+					ds.thread_count, ds.thread_unread_count, dp.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
+				JOIN draft_participants dp ON dp.draft_group_key = ds.draft_group_key
 				WHERE lp.rn = 1
 				ORDER BY lp.date DESC
 				LIMIT ?2 OFFSET ?3`,
