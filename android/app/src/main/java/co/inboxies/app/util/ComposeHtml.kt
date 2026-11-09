@@ -26,36 +26,104 @@ object ComposeHtml {
         return if (subject.startsWith(expected)) subject else expected + subject
     }
 
-    fun signatureText(settings: MailboxSettings?, fromName: String?): String {
-        val signature = settings?.signature
-        val configured = !signature?.text.isNullOrBlank() || !signature?.html.isNullOrBlank()
-        val enabled = when {
-            signature == null -> true
-            // Backend seeds new mailboxes with enabled=false and empty text; treat that
-            // unconfigured state as on, matching iOS (`enabled ?? true`).
+    /** The fixed line the apps add when the signature is on but has no words. */
+    const val DEFAULT_SIGNATURE = "Sent with Inboxies Email"
+
+    /**
+     * Whether the mailbox signature is on. Never saved, or the backend's seeded
+     * `enabled = false` with no words, counts as on (with [DEFAULT_SIGNATURE]).
+     */
+    fun signatureEnabled(settings: MailboxSettings?): Boolean {
+        val signature = settings?.signature ?: return true
+        val configured = !signature.text.isNullOrBlank() || !signature.html.isNullOrBlank()
+        return when {
             signature.enabled == false && !configured -> true
             else -> signature.enabled != false
         }
-        if (!enabled) return ""
+    }
+
+    /**
+     * The signature's words, on or off: the web's formatted signature as text (links
+     * keep their address), else the saved text, else [DEFAULT_SIGNATURE]. A custom
+     * signature replaces the fixed line (AVE-204).
+     */
+    fun signatureWords(settings: MailboxSettings?): String {
+        val signature = settings?.signature
         val html = signature?.html?.trim().orEmpty()
         if (html.isNotEmpty()) {
-            val stripped = stripHtml(html)
-            if (stripped.isNotEmpty()) return stripped
+            val words = signatureHtmlToText(html)
+            if (words.isNotEmpty()) return words
         }
         val text = signature?.text?.trim().orEmpty()
         if (text.isNotEmpty()) return text
-        return "Sent with Inboxies Email"
+        return DEFAULT_SIGNATURE
     }
+
+    /** Signature inserted into new mail, replies and forwards when it is on. */
+    fun signatureText(settings: MailboxSettings?, fromName: String?): String =
+        if (signatureEnabled(settings)) signatureWords(settings) else ""
+
+    private val signatureLink = Regex(
+        "<a\\b[^>]*\\bhref=\"([^\"]*)\"[^>]*>(.*?)</a>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
+
+    /**
+     * Plain text for the web's signature HTML (port of `shared/signature.ts`
+     * `signatureHtmlToText`): a line per paragraph or break, bullets for list items,
+     * and "Label (https://…)" for a link unless the label is the address.
+     */
+    fun signatureHtmlToText(html: String): String {
+        val linked = signatureLink.replace(html) { match ->
+            val href = decodeSignatureEntities(match.groupValues[1])
+            val inner = match.groupValues[2]
+            val label = decodeSignatureEntities(inner.replace(Regex("<[^>]*>"), "")).trim()
+            val bare = href.replace(Regex("^mailto:", RegexOption.IGNORE_CASE), "")
+            if (label.isEmpty() || label == href || label == bare || "$label/" == href) {
+                escapeHtml(bare)
+            } else {
+                "$inner (${escapeHtml(bare)})"
+            }
+        }
+        val marked = linked
+            .replace(Regex("[ \\t\\r\\n\\u000C]+"), " ")
+            .replace(Regex("(?i)<br\\b[^>]*>"), "\n")
+            .replace(Regex("(?i)<li\\b[^>]*>"), "\u0001• ")
+            .replace(Regex("(?i)</(p|div|ul|ol|li)\\s*>"), "\u0001")
+            .replace(Regex("<[^>]*>"), "")
+            .replace(Regex("\u0001[\u0001 ]*"), "\n")
+        return decodeSignatureEntities(marked)
+            .split("\n")
+            .joinToString("\n") { it.replace(Regex("\\s+"), " ").trim() }
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    private fun decodeSignatureEntities(text: String): String =
+        text
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
 
     fun bodyWithSignature(signature: String): String =
         if (signature.isEmpty()) "" else "\n\n$signature"
 
+    /**
+     * True when compose text has user-authored content beyond the mailbox signature.
+     * Whitespace is collapsed on both sides: the editor turns the signature's line
+     * breaks into paragraphs, which mustn't read as new content.
+     */
     fun bodyHasUserContent(body: String, signature: String): Boolean {
-        var text = stripHtml(body)
-        if (signature.isNotEmpty()) {
-            val index = text.indexOf(signature)
+        val collapse = { value: String -> value.replace(Regex("\\s+"), " ").trim() }
+        var text = collapse(stripHtml(body))
+        val sig = collapse(signature)
+        if (sig.isNotEmpty()) {
+            val index = text.indexOf(sig)
             if (index >= 0) {
-                text = text.removeRange(index, index + signature.length)
+                text = text.removeRange(index, index + sig.length)
             }
         }
         return text.trim().isNotEmpty()

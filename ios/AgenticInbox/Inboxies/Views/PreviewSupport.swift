@@ -481,6 +481,24 @@ enum PreviewSupport {
         return app
     }
 
+    /// Settings → Signature (AVE-204) on a signature formatted on the web: bold
+    /// name and a link, shown here as words with the link's address.
+    @MainActor
+    static func signaturePreviewModel() -> AppModel {
+        let app = appModel()
+        if var mailbox = app.mailboxes.first {
+            var settings = mailbox.settings ?? MailboxSettings()
+            settings.signature = SignatureSettings(
+                enabled: true,
+                text: "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                html: "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>"
+            )
+            mailbox.settings = settings
+            app.mailboxes = [mailbox]
+        }
+        return app
+    }
+
     @MainActor
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
@@ -1105,6 +1123,13 @@ struct PreviewAdminAuthRoot: View {
                     SuppressionsSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSignature") {
+                // Settings → Outgoing mail → Signature on a web-formatted fixture, no API
+                // (AVE-204; Android: `signature`).
+                NavigationStack {
+                    SignatureSettingsView()
+                }
+                .environment(PreviewSupport.signaturePreviewModel())
             } else if args.contains("-previewTags") {
                 // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
                 // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.

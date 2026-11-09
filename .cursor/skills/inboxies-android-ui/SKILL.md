@@ -212,6 +212,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
+| Signature | `previewSignature` | `signature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API. Peer of iOS `-previewSignature` (AVE-204) |
 | Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |

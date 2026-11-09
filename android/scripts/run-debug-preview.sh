@@ -54,6 +54,7 @@
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh signature           # Settings → Outgoing mail → Signature (AVE-204)
 #   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
 #   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
 #   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
@@ -103,6 +104,7 @@ case "$mode" in
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  signature|Signature|previewSignature) extra=previewSignature; label=signature ;;
   tags|Tags|previewTags) extra=previewTags; label=tags ;;
   tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
   tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
