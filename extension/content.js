@@ -12,6 +12,41 @@
 	const PAIR = "inboxies:extension-pair";
 	const PAIRED = "inboxies:extension-paired";
 
+	// The pill lives inside the email field, flush with its inner right edge.
+	const PILL_HEIGHT = 24;
+	const PILL_MIN_HEIGHT = 18; // below this the field is too short to carry it
+	const PILL_MIN_INSET = 3; // gap to the field's border, in every state (a 2px focus ring fits)
+	const PILL_MAX_INSET = 8;
+	// The label only shows while the resting pill takes at most this share of the field, so there's room to type.
+	const PILL_MAX_SHARE = 0.6;
+
+	/**
+	 * Where the pill sits in a field, in the field's own coordinates (border box).
+	 * `field` is the field's size and border widths; `restWidth` is how wide the pill is with its resting
+	 * label ("Private email") and `labelWidth` with the label it shows now. The pill is anchored by its
+	 * right edge, so a label change grows or shrinks it leftward and never past the field. It collapses
+	 * to the icon (a circle) when the resting label would crowd the field, and, for a moment, when a
+	 * longer status ("Couldn't create one") wouldn't fit inside it. When even the icon doesn't fit, it
+	 * isn't shown (null).
+	 * @returns {{ top: number, right: number, height: number, compact: boolean } | null}
+	 */
+	function pillLayout(field, restWidth, labelWidth = restWidth) {
+		const innerWidth = field.width - field.borderLeft - field.borderRight;
+		const innerHeight = field.height - field.borderTop - field.borderBottom;
+		const height = Math.min(PILL_HEIGHT, Math.floor(innerHeight - 2 * PILL_MIN_INSET));
+		if (height < PILL_MIN_HEIGHT) return null;
+		const inset = Math.min(PILL_MAX_INSET, Math.max(PILL_MIN_INSET, Math.floor((innerHeight - height) / 2)));
+		const room = innerWidth - 2 * inset;
+		if (height > room) return null;
+		return {
+			top: field.borderTop + (innerHeight - height) / 2,
+			right: field.width - field.borderRight - inset,
+			height,
+			compact: restWidth > room * PILL_MAX_SHARE || labelWidth > room,
+		};
+	}
+	if (globalThis.__inboxiesTest) globalThis.__inboxiesTest.pillLayout = pillLayout;
+
 	if (window.top !== window) return;
 
 	if (location.pathname.startsWith("/extension/connect")) {
@@ -175,7 +210,8 @@
 
 	function attachPill(input) {
 		const host = document.createElement("div");
-		host.style.cssText = "position:absolute;z-index:2147483647;display:none;";
+		// Anchored at the pill's right edge (translateX(-100%)): label changes grow it leftward, into the field.
+		host.style.cssText = "position:absolute;z-index:2147483647;display:none;transform:translateX(-100%);";
 		document.documentElement.appendChild(host);
 
 		const shadow = host.attachShadow({ mode: "closed" });
@@ -201,11 +237,11 @@
 					}
 				}
 				.pill {
-					display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 4px;
+					display: inline-flex; align-items: center; gap: 6px; height: var(--h, 24px); padding: 0 10px 0 4px; box-sizing: border-box;
 					border-radius: 9999px; border: 1px solid var(--border); background: var(--control); color: var(--text);
 					font: 500 12px/1 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 					box-shadow: var(--shadow); cursor: pointer; white-space: nowrap;
-					outline: 2px solid transparent; outline-offset: 4px;
+					outline: 2px solid transparent; outline-offset: 3px;
 					transition: background-color 150ms var(--ease-out), opacity 200ms var(--ease-out), transform 150ms var(--ease-out),
 						outline-color 160ms var(--ease-out), outline-offset 220ms var(--spring);
 					/* Fades in each time it's shown beside a field (restarts when the host un-hides). */
@@ -213,8 +249,12 @@
 				}
 				.pill:hover { background: var(--hover); }
 				.pill:active { transform: scale(0.97); transition-duration: 0ms; }
-				/* The focus ring draws in, tightening onto the pill. */
-				.pill:focus-visible { outline-color: var(--focus); outline-offset: 2px; }
+				/* The focus ring draws in, tightening onto the pill (it stays within the field's inset). */
+				.pill:focus-visible { outline-color: var(--focus); outline-offset: 0px; }
+				/* Too narrow a field for the label: the icon alone, in a circle. The label leaves the flow
+				   but stays measurable, so the pill knows when it fits again. */
+				.pill.compact { width: var(--h, 24px); padding: 0; justify-content: center; }
+				.pill.compact .label, .pill.compact .chevron, .measure { position: absolute; visibility: hidden; }
 				/* Waiting on the server: the label breathes like the native skeleton pulse, only while busy. */
 				.pill[aria-busy="true"] { cursor: progress; }
 				.pill[aria-busy="true"] .label { animation: breathe 950ms ease-in-out infinite alternate; }
@@ -229,12 +269,12 @@
 				.pill[aria-haspopup] .chevron { display: block; }
 				[hidden] { display: none !important; }
 				.menu {
-					position: absolute; top: 30px; right: 0; min-width: 240px; max-width: 320px; padding: 4px;
+					position: absolute; top: calc(100% + 6px); right: 0; min-width: 240px; max-width: 320px; padding: 4px;
 					border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: var(--shadow-menu);
 					font: 400 13px/1.4 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 					transform-origin: top right; animation: menu-in 160ms var(--ease-out) backwards;
 				}
-				.menu.up { top: auto; bottom: 30px; transform-origin: bottom right; }
+				.menu.up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
 				.menu.left { right: auto; left: 0; }
 				.heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 500; color: var(--muted); }
 				.item {
@@ -272,6 +312,7 @@
 					<path pathLength="1" d="M4.75 8.25 7 10.5l4.25-4.75" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
 				<span class="label">Private email</span>
+				<span class="measure" aria-hidden="true">Private email</span>
 				<svg class="chevron" aria-hidden="true" viewBox="0 0 10 10">
 					<path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
@@ -288,6 +329,7 @@
 		`;
 		const btn = shadow.querySelector(".pill");
 		const label = shadow.querySelector(".label");
+		const measure = shadow.querySelector(".measure");
 		const menu = shadow.querySelector(".menu");
 		const menuHeading = shadow.querySelector(".heading");
 		const menuItems = shadow.querySelector(".items");
@@ -301,6 +343,7 @@
 		function setLabel(text) {
 			if (label.textContent === text) return;
 			label.textContent = text;
+			reposition();
 			if (!reducedMotion() && label.animate) label.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
 		}
 
@@ -311,9 +354,41 @@
 				return;
 			}
 			host.style.display = "block";
-			const pillWidth = btn.offsetWidth || 110;
-			host.style.top = `${window.scrollY + rect.top + (rect.height - 24) / 2}px`;
-			host.style.left = `${window.scrollX + Math.max(rect.left, rect.right - pillWidth - 6)}px`;
+			const style = getComputedStyle(input);
+			const px = (value) => parseFloat(value) || 0;
+			const layout = pillLayout(
+				{
+					width: rect.width,
+					height: rect.height,
+					borderTop: px(style.borderTopWidth),
+					borderRight: px(style.borderRightWidth),
+					borderBottom: px(style.borderBottomWidth),
+					borderLeft: px(style.borderLeftWidth),
+				},
+				pillWidth(measure),
+				pillWidth(label),
+			);
+			if (!layout) {
+				host.style.display = "none";
+				return;
+			}
+			host.style.setProperty("--h", `${layout.height}px`);
+			btn.classList.toggle("compact", layout.compact);
+			// Compact, the label isn't drawn, so it's offered as a tooltip instead.
+			if (layout.compact) btn.title = label.textContent;
+			else btn.removeAttribute("title");
+			host.style.top = `${window.scrollY + rect.top + layout.top}px`;
+			host.style.left = `${window.scrollX + rect.left + layout.right}px`;
+		}
+		/**
+		 * The pill's width with a label showing, whether or not it is showing right now. Measured off the
+		 * text so a compact pill knows when it fits again; the resting label decides compactness, so a
+		 * narrow field keeps the icon through Creating… and Filled instead of flipping to a label.
+		 */
+		function pillWidth(text) {
+			// Border 2 + padding 14 + icon 16 + gap 6, and the chevron (gap 6 + 10 - 2) when there's a menu.
+			const chevron = btn.hasAttribute("aria-haspopup") ? 14 : 0;
+			return text.offsetWidth + 38 + chevron;
 		}
 		function show() {
 			clearTimeout(hideTimer);
