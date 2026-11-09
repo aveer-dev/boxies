@@ -1,0 +1,53 @@
+{
+	"_comment": "AVE-216: which links get the Invite card's Join button. Shared by web (workers/test/meeting-links.test.mjs), iOS (MeetingLinksTests) and Android (MeetingLinksTest). `hosts` mirrors shared/meeting-links.ts; each client asserts its own list matches. `join` is the normalized link, or null for no Join.",
+	"hosts": {
+		"exact": [
+			"meet.google.com",
+			"teams.microsoft.com",
+			"teams.live.com",
+			"meet.jit.si",
+			"whereby.com",
+			"facetime.apple.com",
+			"chime.aws",
+			"meet.goto.com",
+			"app.slack.com"
+		],
+		"withSubdomains": ["zoom.us", "zoomgov.com", "webex.com", "gotomeeting.com"]
+	},
+	"urls": [
+		{ "url": "https://zoom.us/j/123", "join": "https://zoom.us/j/123" },
+		{ "url": "https://us02web.zoom.us/j/123?pwd=abc", "join": "https://us02web.zoom.us/j/123?pwd=abc" },
+		{ "url": "https://acme.zoomgov.com/j/1", "join": "https://acme.zoomgov.com/j/1" },
+		{ "url": "https://meet.google.com/abc-defg-hij", "join": "https://meet.google.com/abc-defg-hij" },
+		{ "url": "https://teams.microsoft.com/l/meetup-join/19%3ameeting", "join": "https://teams.microsoft.com/l/meetup-join/19%3ameeting" },
+		{ "url": "https://acme.webex.com/meet/pat", "join": "https://acme.webex.com/meet/pat" },
+		{ "url": "https://meet.jit.si/Standup", "join": "https://meet.jit.si/Standup" },
+		{ "url": "  https://whereby.com/room  ", "join": "https://whereby.com/room" },
+		{ "url": "https://zoom-us.evil.test/j/123?login=1", "join": null, "note": "lookalike host" },
+		{ "url": "https://zoom.us.evil.test/j/1", "join": null, "note": "known host as a label of another domain" },
+		{ "url": "https://evilzoom.us/j/1", "join": null, "note": "suffix without a dot" },
+		{ "url": "https://evil.meet.google.com/abc", "join": null, "note": "exact-only host" },
+		{ "url": "http://zoom.us/j/123", "join": null, "note": "https only" },
+		{ "url": "https://zoom.us@evil.test/j/1", "join": null, "note": "user info; the host is evil.test" },
+		{ "url": "https://evil.test@zoom.us/j/1", "join": null, "note": "user info is refused even on a known host" },
+		{ "url": "https://zoom.us:pw@evil.test/j/1", "join": null, "note": "user info with a password" },
+		{ "url": "https://evil.test\\@zoom.us/j/1", "join": null, "note": "backslash" },
+		{ "url": "https://zoom.us./j/1", "join": null, "note": "trailing-dot host" },
+		{ "url": "https://example.com/agenda", "join": null },
+		{ "url": "javascript:alert(1)", "join": null },
+		{ "url": "zoom.us/j/1", "join": null, "note": "no scheme" },
+		{ "url": "https://zoom.us/j/1 x", "join": null, "note": "whitespace" },
+		{ "url": "", "join": null }
+	],
+	"locations": [
+		{ "location": "Zoom: https://zoom.us/j/123.", "join": "https://zoom.us/j/123" },
+		{ "location": "https://us02web.zoom.us/j/987?pwd=x", "join": "https://us02web.zoom.us/j/987?pwd=x" },
+		{ "location": "Agenda https://example.com/agenda then https://meet.google.com/abc-defg-hij", "join": "https://meet.google.com/abc-defg-hij" },
+		{ "location": "https://zoom-us.evil.test/j/123?login=1", "join": null },
+		{ "location": "Join here: https://example.com/meeting", "join": null },
+		{ "location": "http://zoom.us/j/123", "join": null },
+		{ "location": "https://zoom.us@evil.test/j/1", "join": null },
+		{ "location": "Room 4, HQ", "join": null },
+		{ "location": "Zoom", "join": null }
+	]
+}
