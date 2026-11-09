@@ -6,11 +6,11 @@ import {
 	JPEG_QUALITY_LADDER,
 	MAX_IMAGE_EDGE_PX,
 	OUTBOUND_SIZE_ERROR,
-	VIDEO_REJECT_MESSAGE,
 	attachmentFitsBudget,
+	attachmentTooLargeMessage,
+	EMPTY_ATTACHMENT_MESSAGE,
 	bytesToBase64,
 	isImageMime,
-	isVideoMime,
 	jpegFilename,
 	nextDownscaleEdge,
 	shouldReencodeAsJpeg,
@@ -126,16 +126,14 @@ export async function prepareComposeAttachment(
 	const mime = file.type || "application/octet-stream";
 	const filename = file.name || "untitled";
 
-	if (isVideoMime(mime, filename)) {
-		return { ok: false, error: VIDEO_REJECT_MESSAGE };
-	}
-
 	if (isImageMime(mime, filename) && shouldReencodeAsJpeg(mime, filename, file.size, budget)) {
 		return compressImage(file, budget);
 	}
 
+	// Videos, PDFs and other files go as they are when they fit the budget.
 	if (!attachmentFitsBudget(file.size, budget)) {
-		return { ok: false, error: OUTBOUND_SIZE_ERROR };
+		if (file.size === 0) return { ok: false, error: EMPTY_ATTACHMENT_MESSAGE };
+		return { ok: false, error: attachmentTooLargeMessage(file.size, budget, mime, filename) };
 	}
 
 	const bytes = await blobToBytes(file);

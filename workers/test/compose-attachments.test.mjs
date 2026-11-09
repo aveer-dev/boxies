@@ -13,7 +13,8 @@ import {
 	shouldReencodeAsJpeg,
 	bytesToBase64,
 	formatByteSize,
-	VIDEO_REJECT_MESSAGE,
+	attachmentTooLargeMessage,
+	OUTBOUND_LIMIT_LABEL,
 	JPEG_QUALITY_LADDER,
 	MAX_IMAGE_EDGE_PX,
 } from "../../shared/compose-attachments.ts";
@@ -25,7 +26,7 @@ import {
 
 assert.equal(MAX_IMAGE_EDGE_PX, 1600);
 assert.deepEqual(JPEG_QUALITY_LADDER, [0.72, 0.55, 0.4]);
-assert.ok(VIDEO_REJECT_MESSAGE.includes("5 MiB"));
+assert.equal(OUTBOUND_LIMIT_LABEL, "5 MB");
 
 assert.equal(isImageMime("image/jpeg", "photo.jpg"), true);
 assert.equal(isImageMime("application/octet-stream", "shot.heic"), true);
@@ -69,6 +70,33 @@ assert.equal(
 		attachments: [{ content: helloB64 }],
 	}),
 	MAX_OUTBOUND_MESSAGE_BYTES - used,
+);
+
+// Videos attach like any other file when they fit (AVE-183): no MIME is
+// re-encoded except photos, and the only gate is the remaining budget.
+assert.equal(shouldReencodeAsJpeg("video/mp4", "clip.mp4", 2_000_000, MAX_OUTBOUND_MESSAGE_BYTES), false);
+assert.equal(shouldReencodeAsJpeg("video/quicktime", "screen.mov", 2_000_000, MAX_OUTBOUND_MESSAGE_BYTES), false);
+assert.equal(attachmentFitsBudget(2_000_000, MAX_OUTBOUND_MESSAGE_BYTES), true);
+assert.equal(attachmentFitsBudget(MAX_OUTBOUND_MESSAGE_BYTES + 1, MAX_OUTBOUND_MESSAGE_BYTES), false);
+
+// Over the budget, the message names the file's size and the 5 MB limit.
+const bigVideo = Math.round(12.4 * 1024 * 1024);
+assert.equal(
+	attachmentTooLargeMessage(bigVideo, MAX_OUTBOUND_MESSAGE_BYTES, "video/mp4", "clip.mp4"),
+	"This video is 12 MB. Messages can be up to 5 MB, attachments included.",
+);
+assert.equal(
+	attachmentTooLargeMessage(Math.round(6.2 * 1024 * 1024), 4 * 1024 * 1024, "application/zip", "logs.zip"),
+	"This file is 6.2 MB. Messages can be up to 5 MB, attachments included.",
+);
+// Fits on its own, but other attachments already use most of the message.
+assert.equal(
+	attachmentTooLargeMessage(3 * 1024 * 1024, Math.round(1.5 * 1024 * 1024), "video/quicktime", "screen.mov"),
+	"This video is 3.0 MB, but only 1.5 MB is left of the 5 MB message limit.",
+);
+assert.equal(
+	attachmentTooLargeMessage(3 * 1024 * 1024, 0, "", "screen.mov"),
+	"This video is 3.0 MB, and this message is already at the 5 MB limit.",
 );
 
 console.log("compose-attachments tests passed");
