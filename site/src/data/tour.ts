@@ -109,8 +109,7 @@ const allChapters: TourChapter[] = [
 			{
 				lead: "Focus & Reply.",
 				text: "Work through the pile one thread at a time, with the reply already open.",
-				platforms: ["web"],
-				src: "FSW#reply-later; RM#3 (Focus & Reply web only)",
+				src: "FSW#reply-later; RM#3; AVE-193 (Focus & Reply on iOS and Android)",
 			},
 		],
 		supportHref: "/support#reply-later",
@@ -206,7 +205,7 @@ const allChapters: TourChapter[] = [
 	},
 ];
 
-// A row that only runs somewhere visitors can't get yet (Focus & Reply while
+// A row that only runs somewhere visitors can't get yet (a web-only row while
 // the web app isn't public) drops out rather than read as everywhere.
 export const chapters: TourChapter[] = allChapters.map((c) => ({
 	...c,

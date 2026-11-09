@@ -171,4 +171,46 @@ final class ReplyLaterReminderTests: XCTestCase {
         let sections = EmailListPaging.inboxSections([fresh, reminded], sectionFloor: nil)
         XCTAssertEqual(sections.new.map(\.id), ["reminded", "fresh"])
     }
+
+    // MARK: Focus & Reply (AVE-193)
+
+    private func pileEmail(_ id: String, replyLater: Bool = true) -> Email {
+        Email(
+            id: id, subject: id, sender: "a@x.com", recipient: "b@x.com",
+            date: "2026-10-28T08:00:00.000Z", read: true, starred: false,
+            replyLater: replyLater
+        )
+    }
+
+    func testFocusReplyWorksThePileInOrder() {
+        var run = FocusReplyRun(queue: [pileEmail("a"), pileEmail("b"), pileEmail("c")])
+        XCTAssertEqual(run.current?.id, "a")
+        XCTAssertEqual(run.progressLabel, "1 of 3")
+        run.markReplied("a")
+        XCTAssertEqual(run.current?.id, "b")
+        XCTAssertEqual(run.progressLabel, "2 of 3")
+        run.markSkipped("b")
+        XCTAssertEqual(run.current?.id, "c")
+        XCTAssertEqual(run.progressLabel, "3 of 3")
+        run.markReplied("c")
+        XCTAssertNil(run.current)
+        XCTAssertEqual(run.result, FocusReplyResult(replied: 2, skipped: 1))
+        XCTAssertEqual(run.result.summary, "Reached the end · 1 skipped")
+    }
+
+    func testFocusReplyUndoPutsTheThreadBackFirst() {
+        var run = FocusReplyRun(queue: [pileEmail("a"), pileEmail("b")])
+        run.markReplied("a")
+        XCTAssertEqual(run.current?.id, "b")
+        run.undoReply("a")
+        XCTAssertEqual(run.current?.id, "a")
+        XCTAssertEqual(run.progressLabel, "1 of 2")
+    }
+
+    func testFocusReplyIgnoresMailOutsideThePileAndAbsorbsNewRows() {
+        var run = FocusReplyRun(queue: [pileEmail("a"), pileEmail("x", replyLater: false)])
+        XCTAssertEqual(run.total, 1)
+        run.absorb([pileEmail("a"), pileEmail("b")])
+        XCTAssertEqual(run.remaining.map(\.id), ["a", "b"])
+    }
 }

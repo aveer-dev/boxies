@@ -235,8 +235,8 @@ const everyday: Faq[] = [
 		id: "reply-later",
 		group: "everyday-topic",
 		q: "What’s Reply Later?",
-		a: [`A pile for emails that need an answer. Mark a thread Reply Later from its actions and it shows up in the pile with a count. When you reply, it leaves the pile on its own.${flags.webAppPublic ? " On the web, Focus & Reply opens each thread with a reply ready, and you can skip as you go." : ""} Search \`is:reply-later\` to find them too.`],
-		src: "FSW#reply-later; FC#4.3; RM#3 (Focus & Reply web only)",
+		a: [`A pile for emails that need an answer. Mark a thread Reply Later from its actions and it shows up in the pile with a count. When you reply, it leaves the pile on its own. Focus & Reply opens each thread with a reply ready, and you can skip as you go. Search \`is:reply-later\` to find them too.`],
+		src: "FSW#reply-later; FC#4.3; RM#3; AVE-193 (Focus & Reply on iOS and Android)",
 	},
 	{
 		id: "reply-later-timer",

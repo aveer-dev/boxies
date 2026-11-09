@@ -41,6 +41,13 @@ struct ComposeSheetView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        if let focus = app.focusReply {
+                            FocusReplyComposeBar(progress: focus.progressLabel) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                app.skipFocusReply()
+                            }
+                        }
+
                         composeHeader
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -101,6 +108,26 @@ struct ComposeSheetView: View {
                     }
                 }
             }
+            .overlay(alignment: .bottom) {
+                // Focus & Reply keeps the sheet up between threads, so the "Sent · Undo"
+                // toast that normally shows on the list shows here.
+                if app.focusReply != nil, let toast = app.toast {
+                    InboxiesToast(
+                        message: toast.message,
+                        icon: toast.toastIcon,
+                        action: toast.isUndo
+                            ? ToastAction(title: "Undo", accessibilityHint: "Reverses the last action") {
+                                app.undoPendingAction()
+                            }
+                            : toast.action,
+                        onDismiss: { app.hideToast() }
+                    )
+                    .padding(.horizontal, ToastMetrics.screenInset)
+                    .padding(.bottom, ToastMetrics.standaloneBottomInset)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(ToastMetrics.animation, value: app.toast?.id)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showQuotedOriginal)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: form.visibleSuppressedRecipients)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showFormatSheet)
@@ -781,7 +808,12 @@ struct ComposeSheetView: View {
         guard form.toTokens.isEmpty == false else { return }
         
         // Undo window, kill-safe persistence and failure docking live on AppModel.
-        app.scheduleSend(session)
+        if app.focusReply != nil {
+            // Focus & Reply (AVE-193): send, then the next thread's reply takes this one's place.
+            app.sendFocusReply(session)
+        } else {
+            app.scheduleSend(session)
+        }
     }
 
     /// Lift the shown suppressions, then send again through the normal path

@@ -85,6 +85,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     /** Reader left open after Accept → Promotions: Screener bar gone, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`, AVE-182). */
     ScreenerReaderAccept("screenerReaderAccept", "previewScreenerReaderAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
+    /** Focus & Reply on the first thread in the pile: reply open with "Focus & Reply · 1 of N · Skip" (iOS `-previewReplyLater -previewFocusReply`, AVE-193). */
+    FocusReply("focusReply", "previewFocusReply"),
+    /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */
+    FocusReplyDone("focusReplyDone", "previewFocusReplyDone"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),

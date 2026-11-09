@@ -3,6 +3,7 @@ package co.inboxies.app.ui.compose
 import co.inboxies.app.theme.ToastMetrics
 import co.inboxies.app.ui.components.toastIcon
 import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.email.FocusReplyComposeBar
 import co.inboxies.app.ui.components.AnimatedToast
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
@@ -158,6 +159,7 @@ fun ComposeSheetView(
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val mailboxes by app.mailboxes.collectAsState()
+    val focusReply by app.focusReply.collectAsState()
     val density = LocalDensity.current
     val context = LocalContext.current
     val view = LocalView.current
@@ -576,6 +578,20 @@ fun ComposeSheetView(
                     .padding(horizontal = 16.dp)
                     .padding(top = 12.dp, bottom = 8.dp),
             )
+
+            focusReply?.let { run ->
+                // Focus & Reply (AVE-193): where you are in the pile, and Skip.
+                FocusReplyComposeBar(
+                    progress = run.progressLabel,
+                    onSkip = {
+                        if (sending || form.isSending) return@FocusReplyComposeBar
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        commitTokens()
+                        persist()
+                        app.skipFocusReply()
+                    },
+                )
+            }
             }
 
             // Single page scroll: header + growing body. EditText must wrap content

@@ -15,6 +15,7 @@ import co.inboxies.app.services.ThreadNoteSummary
 import co.inboxies.app.services.InviteCalendar
 import co.inboxies.app.services.ReauthChallenge
 import co.inboxies.app.services.ReauthMethod
+import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.ReplyLaterReminderPresets
 import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.ToastAction
@@ -319,8 +320,9 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.ReplyLater -> {
-                val queued = allEmails.filter { it.replyLater }
+            PreviewMode.ReplyLater, PreviewMode.FocusReply, PreviewMode.FocusReplyDone -> {
+                // FocusReplyDone: a Focus & Reply run just emptied the pile (AVE-193).
+                val queued = if (mode == PreviewMode.FocusReplyDone) emptyList() else allEmails.filter { it.replyLater }
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
@@ -426,6 +428,9 @@ object PreviewSupport {
             app.setScreenerQueueForPreview(app.emails.value)
             val destination = if (mode == PreviewMode.ScreenerUndo) null else "promotions"
             app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
+        }
+        if (mode == PreviewMode.FocusReplyDone) {
+            app.applyFocusReplyResultForPreview(FocusReplyResult(replied = 3, skipped = 0))
         }
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
