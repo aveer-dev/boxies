@@ -224,7 +224,7 @@ function FolderList({ folder }: { folder: string }) {
 	};
 
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(emails, actions);
+	useListShortcuts(emails, actions, { selectedId: emailId, open: handleOpen });
 
 	const [emptyingTrash, setEmptyingTrash] = useState(false);
 	const handleEmptyTrash = async () => {

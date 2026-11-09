@@ -139,6 +139,34 @@ data class McpGrant(
     val expiresAt: String? = null,
 )
 
+/**
+ * One entry of Account → Devices & sessions → Recent security activity (AVE-151).
+ * Mirrors the Worker's `SecurityActivityItem`; [kind] stays a string so a kind newer
+ * than this build still renders (as a generic label).
+ */
+@Serializable
+data class SecurityActivityItem(
+    val id: String,
+    val kind: String,
+    val createdAt: String,
+    /** "Chrome on macOS"; null when unknown. */
+    val device: String? = null,
+    /** "Lagos, Nigeria" (approximate); null when unknown. */
+    val location: String? = null,
+    val country: String? = null,
+    /** Sign-ins only: from a device not seen in the last 90 days. */
+    val newDevice: Boolean = false,
+    /** Sign-in method events: "google", "apple", "password". */
+    val provider: String? = null,
+)
+
+/** `GET /api/v1/me/security-activity`: the caller's last 30 days, newest first. */
+@Serializable
+data class SecurityActivityResponse(
+    val since: String? = null,
+    val events: List<SecurityActivityItem> = emptyList(),
+)
+
 @Serializable
 data class RevokeSessionsResponse(
     val ok: Boolean = false,
@@ -633,6 +661,10 @@ data class Email(
     @SerialName("inline_note_count") val inlineNoteCount: Int? = null,
     /** RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99). */
     @SerialName("one_click_unsubscribe") val oneClickUnsubscribe: Boolean? = null,
+    /** One-time code for the reader's Code card (reader payloads only; AVE-175/177). */
+    @Serializable(with = LenientOtpSerializer::class) val otp: EmailOtp? = null,
+    /** Calendar invite for the reader's Invite card (reader payloads only; AVE-175/177). */
+    @Serializable(with = LenientInviteSerializer::class) val invite: EmailInvite? = null,
 ) {
     /** A pending reminder on a mail still in Reply Later (AVE-86). */
     val hasPendingReplyLaterReminder: Boolean

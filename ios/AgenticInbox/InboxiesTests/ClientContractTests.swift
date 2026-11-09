@@ -437,6 +437,44 @@ final class ClientContractTests: XCTestCase {
             "Moved out of Spam"
         )
     }
+
+    // MARK: - Screener Undo (AVE-159)
+
+    func testSenderTriageDecisionDecodesMovedIds() throws {
+        let response = try decode(SenderTriageDecisionResponse.self, """
+        {"triage":{"sender":"a@x.com","status":"rejected"},"moved":{"moved":2,"ids":["e1","e2"]}}
+        """)
+        XCTAssertEqual(response.moved?.ids, ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e2"), ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e3"), ["e1", "e2", "e3"])
+        let bare = try decode(SenderTriageDecisionResponse.self, #"{"triage":null}"#)
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: bare, emailId: "e9"), ["e9"])
+    }
+
+    func testScreenerDecisionToastCopy() {
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: nil), "Declined")
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: "inbox"), "Accepted")
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "promotions"),
+            "Accepted · future mail goes to Promotions"
+        )
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "updates"),
+            "Accepted · future mail goes to Updates"
+        )
+    }
+
+    func testSenderTriagePathEncodesTheAddress() {
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "ada+news@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/ada+news@x.example"
+        )
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "a/b?c@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/a%2Fb%3Fc@x.example"
+        )
+    }
+
     // MARK: - Custom folders / tags (AVE-158)
 
     func testFolderCreateResponseDecodes() throws {
@@ -505,5 +543,56 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(CustomFolders.displayName(tag), "#Receipts")
         XCTAssertEqual(CustomFolders.normalizedName("  #Receipts "), "Receipts")
         XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
+    }
+
+    // MARK: - Recent security activity (AVE-151)
+
+    func testSecurityActivityDecodesWorkerShape() throws {
+        let response = try decode(SecurityActivityResponse.self, """
+        {"since":"2026-10-03T12:00:00.000Z","events":[
+          {"id":"e1","kind":"sign_in","createdAt":"2026-11-01T09:00:00.000Z","device":"Chrome on macOS",
+           "location":"Lagos, Nigeria","country":"NG","newDevice":true,"provider":null},
+          {"id":"e2","kind":"sign_in_method_added","createdAt":"2026-10-30T09:00:00.000Z","device":null,
+           "location":null,"country":null,"newDevice":false,"provider":"google"},
+          {"id":"e3","kind":"some_future_kind","createdAt":"2026-10-29T09:00:00.000Z"}
+        ]}
+        """)
+        XCTAssertEqual(response.events.count, 3)
+        XCTAssertTrue(response.events[0].newDevice)
+        XCTAssertEqual(response.events[0].location, "Lagos, Nigeria")
+        XCTAssertEqual(response.events[1].provider, "google")
+        XCTAssertFalse(response.events[2].newDevice, "missing fields default instead of failing the list")
+        XCTAssertEqual(SecurityActivity.title(response.events[2]), SecurityActivity.fallbackTitle)
+    }
+
+    func testSecurityActivityTitlesCoverEveryWorkerKind() {
+        // Keep in sync with SECURITY_EVENT_KINDS in workers/auth/security-activity.ts.
+        let kinds = [
+            "sign_in", "password_changed", "password_added", "password_reset",
+            "two_factor_enabled", "two_factor_disabled", "passkey_added", "passkey_removed",
+            "sign_in_method_added", "sign_in_method_removed", "recovery_email_set", "recovery_email_removed",
+        ]
+        for kind in kinds {
+            let title = SecurityActivity.title(SecurityActivityItem(id: kind, kind: kind, createdAt: ""))
+            XCTAssertNotEqual(title, SecurityActivity.fallbackTitle, kind)
+            XCTAssertFalse(title.contains("_"), kind)
+        }
+    }
+
+    func testSecurityActivityTitlesAndDetail() {
+        func item(_ kind: String, newDevice: Bool = false, provider: String? = nil, device: String? = nil, location: String? = nil) -> SecurityActivityItem {
+            SecurityActivityItem(id: "x", kind: kind, createdAt: "", device: device, location: location, newDevice: newDevice, provider: provider)
+        }
+        XCTAssertEqual(SecurityActivity.title(item("sign_in")), "Signed in")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in", newDevice: true)), "Signed in from a new device")
+        XCTAssertEqual(SecurityActivity.title(item("two_factor_disabled")), "Two-factor authentication turned off")
+        XCTAssertEqual(SecurityActivity.title(item("recovery_email_set")), "Recovery email changed")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_added", provider: "google")), "Google sign-in connected")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_removed", provider: "apple")), "Apple sign-in removed")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_added", provider: "credential")), "Password sign-in connected")
+        XCTAssertEqual(SecurityActivity.title(item("sign_in_method_removed")), "Sign-in method removed")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: "Chrome on macOS", location: "Lagos, Nigeria")), "Chrome on macOS · Lagos, Nigeria")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", location: "Nigeria")), "Nigeria")
+        XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: " ")), "")
     }
 }

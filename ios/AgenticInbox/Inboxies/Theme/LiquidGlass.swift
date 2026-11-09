@@ -101,10 +101,12 @@ enum ToastMetrics {
 }
 
 extension View {
+    /// `interactive: false` for glass that holds its own controls (reader mail cards):
+    /// the surface stays still and only its buttons respond to touch.
     @ViewBuilder
-    func liquidGlass<S: Shape>(in shape: S) -> some View {
+    func liquidGlass<S: Shape>(in shape: S, interactive: Bool = true) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
+            self.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
         } else {
             self
                 .background(.ultraThinMaterial, in: shape)

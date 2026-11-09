@@ -35,6 +35,9 @@ struct PendingSendRecord: Codable, Equatable {
     /// The compose's `Idempotency-Key`, so a restored message that is sent again can't
     /// go out twice if the first attempt did reach the server. Nil in older records.
     var idempotencyKey: String?
+    /// Forward only: whether "Include N attachments" was on (AVE-181). Nil in older records
+    /// and when the original had no files; the files themselves are fetched again on send.
+    var includesForwardedAttachments: Bool?
     /// The commit started before the app died, so it may or may not have gone out.
     /// Stored as a separate marker file, never in the JSON payload.
     var sendStarted = false
@@ -42,6 +45,7 @@ struct PendingSendRecord: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, accountKey, mailboxId, mode, to, cc, bcc, subject, body
         case originalEmailId, threadId, draftId, attachments, createdAt, idempotencyKey
+        case includesForwardedAttachments
     }
 
     /// Records older than this are dropped instead of restored.

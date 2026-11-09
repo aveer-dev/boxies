@@ -450,6 +450,8 @@ struct SignInMethodsSettingsView: View {
     }
 
     private func friendlyAttachError(_ error: Error) -> String {
+        // Closed "Confirm it's you" (AVE-170): say why nothing changed.
+        if case APIError.reauthRequired = error { return error.localizedDescription }
         let text = error.localizedDescription
         if text.localizedCaseInsensitiveContains("already linked") {
             return "That identity is already linked to another Inboxies account"
@@ -461,6 +463,7 @@ struct SignInMethodsSettingsView: View {
     }
 
     private func friendlyChangePasswordError(_ error: Error) -> String {
+        if case APIError.reauthRequired = error { return error.localizedDescription }
         let text = error.localizedDescription
         if text.localizedCaseInsensitiveContains("incorrect") {
             return "Current password is incorrect"

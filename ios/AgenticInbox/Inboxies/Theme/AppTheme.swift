@@ -142,6 +142,31 @@ enum AppTheme {
         static let homeSubtitle: CGFloat = 12
     }
 
+    /// Reader Code card / Invite card pinned above the bottom bar (AVE-176).
+    /// Android twin: `InboxiesColors` + `MailCardMetrics` (AVE-177).
+    enum MailCard {
+        /// Liquid glass container (`.liquidGlass(in:interactive: false)`): real glass on
+        /// iOS 26+, ultraThinMaterial + white hairline + shadow before.
+        static let cornerRadius: CGFloat = 22
+        static let padding: CGFloat = 14
+        /// Matches the reader's 16pt side gutter.
+        static let horizontalInset: CGFloat = 16
+        static let bottomInset: CGFloat = 8
+        static let eyebrow: CGFloat = 12
+        static let title: CGFloat = 15
+        static let detail: CGFloat = 13
+        /// Monospaced, semibold, tracked.
+        static let code: CGFloat = 22
+        static let codeTracking: CGFloat = 2
+        /// Buttons: system glass (iOS 26) / bordered (iOS 17–25), capsule, app tint.
+        static let buttonFont: CGFloat = 14
+        static let buttonMinHeight: CGFloat = 34
+        static let buttonSpacing: CGFloat = 8
+        static let iconSize: CGFloat = 13
+        /// The copied code expires from the clipboard after this long.
+        static let clipboardExpiry: TimeInterval = 90
+    }
+
     /// List row typography and spacing (email list, AI chat list, search).
     enum List {
         /// Primary title size (email sender name or chat title).

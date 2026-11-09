@@ -1,4 +1,5 @@
-// The landing tour (§4.1 L2): six stops, each with its screen. Media names
+// The landing tour (§4.1 L2): six stops, each with its screen. Your domain
+// comes first: the domain and its price are the main thing Inboxies sells. Media names
 // map to src/data/media.ts. Chapters have no status: only shipped work gets
 // a stop, and validate.ts keeps "private email" out of them until it ships.
 import { flags } from "../config";
@@ -7,13 +8,55 @@ import type { Operator, TourChapter } from "./types";
 
 const allChapters: TourChapter[] = [
 	{
-		id: "tour-screener",
+		id: "tour-domains",
 		num: "01",
+		name: "Your domain",
+		platforms: ["ios", "android", "web"],
+		title: flags.domainPurchaseLive ? "Your own domain, from $20 a year." : "Your own name, set up for you.",
+		body: flags.domainPurchaseLive
+			? "Register a new domain in the app, with the platform and the assistant in one yearly price, and it’s ready as soon as you’ve paid. Already own one? Connecting it has no charge today: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off."
+			: "Bring a domain you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off.",
+		rows: [
+			...(flags.domainPurchaseLive
+				? [
+						{
+							lead: "One price, everything in.",
+							text: "$20 a year covers the domain, its setup, your contact details kept private, and Inboxies itself. Pricier domains are their wholesale price plus $10 a year.",
+							src: "pricing.ts registered plan and price rule (PS#1: $20 total at wholesale ≤ $15, else wholesale + $10)",
+						},
+					]
+				: []),
+			{
+				lead: "Bring the team.",
+				text: "In Domain Admin, create mailboxes, invite people by email, and share a mailbox without sharing a password.",
+				src: "FSW#domain-admin-console; FSW#shared-mailboxes",
+			},
+			{
+				lead: "hello@ and support@.",
+				text: "While you set up the domain, send addresses like these to any mailbox on it.",
+				src: "FC#4.1 (alias presets during onboarding); FSW#domain-aliases",
+			},
+			{
+				lead: "Leave with your mail.",
+				text: "Domain admins can export every mailbox to .mbox. Domains registered through Inboxies come with their transfer code.",
+				src: "FSW#leave-anytime; PS#5 (EPP only for domains bought through Inboxies)",
+			},
+		],
+		supportHref: "/support#connect-domain",
+		railLabel: "Domains",
+		media: { still: "domain-admin" },
+		src: flags.domainPurchaseLive
+			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains; registered ones skip it)"
+			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains)",
+	},
+	{
+		id: "tour-screener",
+		num: "02",
 		name: "Screener",
 		lineage: "HEY",
 		platforms: ["ios", "android", "web"],
 		title: "Strangers wait at the door.",
-		body: "The first time someone emails you, their message waits in the Screener instead of your Inbox. Accept them into Inbox, Promotions or Updates, or decline and their mail is filed quietly in Screened out.",
+		body: "The first time someone emails you, their message waits in the Screener instead of your Inbox. On your phone, a row at the top of the Inbox opens the Screening room. Accept them into Inbox, Promotions or Updates, or decline and their mail is filed quietly in Screened out.",
 		rows: [
 			{
 				lead: "Quiet by design.",
@@ -22,13 +65,19 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "People you write to are already in.",
-				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail. Their mail is sorted for you: list mail to Promotions or Updates, the rest to Inbox.",
+				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail. Their mail is sorted for you: mailing lists to Promotions or Updates, the rest to Inbox.",
 				src: "FSW#the-screener (allow-list seeded from Sent and existing mail); dev 31c58c6 (those seeds carry no destination, so classify-email.ts files them; migration 25)",
 			},
 			{
 				lead: "On from the first email.",
-				text: "Every new mailbox starts with the Screener on. There’s no switch to turn it off yet.",
-				src: "FSW#the-screener (screener.enabled true; no client switch); PS#5",
+				text: "Every new mailbox starts with the Screener on. Rather not screen? Switch it off in Settings, and new senders’ mail is sorted like everyone else’s.",
+				src: "FSW#the-screener (screener.enabled defaults true); AVE-104 a9fead1 (Screener switch in Settings on web, iOS, Android; off: unknown senders file like everyone else, spam and blocked still to Spam); PS#5",
+			},
+			{
+				lead: "Changed your mind?",
+				text: "Undo an Accept or Decline right after you make it.",
+				platforms: ["ios", "android"],
+				src: "AVE-159 f920e9d (iOS + Android: undo a Screener decision, toast with Undo)",
 			},
 		],
 		supportHref: "/support#screener",
@@ -38,7 +87,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-reply-later",
-		num: "02",
+		num: "03",
 		name: "Reply Later",
 		lineage: "HEY",
 		platforms: ["ios", "android", "web"],
@@ -48,9 +97,9 @@ const allChapters: TourChapter[] = [
 			: "Mark a thread Reply Later from its actions and it joins a pile with a live count in the bar at the bottom of the screen. Send your reply and it leaves the pile on its own.",
 		rows: [
 			{
-				lead: "A pile, not a timer.",
-				text: "Nothing disappears and nothing comes back at a set time. The pile waits until you’re ready.",
-				src: "RM#2 (Snooze: \"Reply Later is a pile, not a timer\")",
+				lead: "Reminders when you want them.",
+				text: "Nothing is hidden while it waits. Add a reminder and, at the time you pick, the thread comes back unread at the top of your Inbox, with a notification on your phone.",
+				src: "AVE-86 409d1b4: reply-later-reminders.ts (due: mark unread, back to Inbox if filed away, top of New, push to iOS/Android; web shows N due); Remind me… on web, iOS, Android",
 			},
 			{
 				lead: "Needs reply.",
@@ -71,7 +120,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-ask-ai",
-		num: "03",
+		num: "04",
 		name: "Ask AI",
 		platforms: ["ios", "android", "web"],
 		title: "An assistant that drafts. You press send.",
@@ -84,14 +133,9 @@ const allChapters: TourChapter[] = [
 				src: "FC#4.8 (custom AI prompt per mailbox)",
 			},
 			{
-				lead: "Runs on Cloudflare.",
-				text: "The assistant uses models on Cloudflare Workers AI. Inboxies doesn’t send your mail to another AI provider.",
+				lead: "Stays in-house.",
+				text: "The assistant runs on the same network as your mail. Inboxies doesn’t send your mail to another AI company.",
 				src: "PS#5 (AI data handling: no third-party LLM API)",
-			},
-			{
-				lead: "Your own AI tools, too.",
-				text: "On a self-hosted install, connect Claude Code, Cursor or another MCP client. It acts with your access, including sending and deleting mail, so only connect tools you trust.",
-				src: "FSW#mcp-server (send_reply, send_email, delete_email tools); dev tools.ts toolDeleteEmail (to Trash first, permanent only from Trash or Drafts); D3: /mcp needs Access or a session token, and inboxies.email offers no way to get one (app.ts, MCPPanel.tsx, unchanged on dev); BRIEF (disclose plainly)",
 			},
 		],
 		supportHref: "/support#ask-ai",
@@ -101,12 +145,11 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-search",
-		num: "04",
+		num: "05",
 		name: "Search",
-		lineage: "Gmail",
 		platforms: ["ios", "android", "web"],
 		title: "Find it the way you remember it.",
-		body: "Search reads the whole message body, not just the preview, and understands the operators you already use in Gmail.",
+		body: "Search reads the whole message, not just the preview, and narrows things down by sender, folder, date and more.",
 		extra: "operators",
 		rows: [
 			{
@@ -134,7 +177,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-compose",
-		num: "05",
+		num: "06",
 		name: "Compose",
 		platforms: ["ios", "android"],
 		title: "Drafts that step aside.",
@@ -152,7 +195,7 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "Fits the limit.",
-				text: "Photos are resized on your phone to fit the 5 MiB send limit. Videos can’t be attached.",
+				text: "Photos are resized on your phone to fit the 5 MB send limit. Videos can’t be attached.",
 				src: "FC#4.6; PS#4",
 			},
 		],
@@ -160,39 +203,6 @@ const allChapters: TourChapter[] = [
 		railLabel: "Compose",
 		media: { still: "compose-minimized", clip: "compose-dock" },
 		src: "CT (chapter title); FC#4.6 (compose that minimizes instead of discarding)",
-	},
-	{
-		id: "tour-domains",
-		num: "06",
-		name: "Your domain",
-		platforms: ["ios", "android", "web"],
-		title: "Your own name, with the records written for you.",
-		body: flags.domainPurchaseLive
-			? "Connect a domain you own with one TXT record and a nameserver switch, or register a new one in the app. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off."
-			: "Connect a domain you own with one TXT record and a nameserver switch. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off.",
-		rows: [
-			{
-				lead: "Bring the team.",
-				text: "In Domain Admin, create mailboxes, invite people by email, and share a mailbox without sharing a password.",
-				src: "FSW#domain-admin-console; FSW#shared-mailboxes",
-			},
-			{
-				lead: "hello@ and support@.",
-				text: "While you set up the domain, send addresses like these to any mailbox on it.",
-				src: "FC#4.1 (alias presets during onboarding); FSW#domain-aliases",
-			},
-			{
-				lead: "Leave with your mail.",
-				text: "Domain admins can export every mailbox to .mbox. Domains registered through Inboxies come with their transfer code.",
-				src: "FSW#leave-anytime; PS#5 (EPP only for domains bought through Inboxies)",
-			},
-		],
-		supportHref: "/support#connect-domain",
-		railLabel: "Domains",
-		media: { still: "domain-admin" },
-		src: flags.domainPurchaseLive
-			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains; registered ones skip it)"
-			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains)",
 	},
 ];
 
@@ -203,7 +213,7 @@ export const chapters: TourChapter[] = allChapters.map((c) => ({
 	rows: c.rows.filter((r) => !r.platforms || onSomePublicPlatform(r.platforms)),
 }));
 
-// Chapter 04's chips. Each chip's meaning becomes its tooltip and a
+// The Search chapter's chips. Each chip's meaning becomes its tooltip and a
 // screen-reader suffix ("from: — Sender’s name or address").
 export const operators: Operator[] = [
 	{ op: "from:", meaning: "Sender’s name or address", src: "FSW#search; FC#4.7; durableObject searchEmails (sender, sender_name)" },
@@ -225,7 +235,7 @@ export const operatorExample = {
 	src: "FSW#search; FC#4.7",
 };
 
-// Chapter 03's strip: the receipts Ask AI shows while it works, joined by " · ".
+// The Ask AI chapter's strip: the receipts Ask AI shows while it works, joined by " · ".
 export const agentStrip = {
 	label: "What Ask AI shows as it works",
 	steps: ["Searched mailbox", "Read thread context", "Thought for 3s", "Drafted a reply in your Drafts folder."],

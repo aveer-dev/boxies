@@ -1,8 +1,10 @@
 import SwiftUI
+import WidgetKit
 
-// "Today's inbox" widget, design mocks (AVE-138). Plain SwiftUI views in the app
-// target: no WidgetKit yet. The later widget extension reuses these views as its
-// entry view, so keep them free of app state (`AppModel`, networking, `@AppStorage`).
+// "Today's inbox" widget, design mocks (AVE-138). Plain SwiftUI views compiled into the
+// app (DEBUG gallery) and the `InboxiesWidget` extension (AVE-149), which builds its entry
+// view from the round 2 pieces. Keep them free of app state (`AppModel`, networking,
+// `@AppStorage`). The extension compiles with `INBOXIES_WIDGET` set.
 // Android twin: `ui/widget/InboxWidgetMock.kt`.
 
 extension AppTheme {
@@ -80,6 +82,25 @@ struct InboxWidgetMock: View {
         case (.medium, false): MediumHasMail(snapshot: snapshot)
         case (.medium, true): MediumInboxZero(snapshot: snapshot)
         }
+    }
+}
+
+// MARK: - Glass
+
+extension View {
+    /// Glass for the widget pieces. In the app (gallery) it's the real `liquidGlass`; in the
+    /// widget extension Liquid Glass and materials don't render live, so it falls back to
+    /// a translucent `surface` fill with the chrome's white hairline (what Android draws).
+    @ViewBuilder
+    func inboxWidgetGlass<S: InsettableShape>(in shape: S) -> some View {
+        #if INBOXIES_WIDGET
+        self
+            .background { shape.fill(AppTheme.surface.opacity(0.6)) }
+            .overlay { shape.strokeBorder(Color.white.opacity(0.45), lineWidth: 0.5) }
+            .overlay { shape.strokeBorder(AppTheme.line.opacity(0.5), lineWidth: 0.5) }
+        #else
+        self.liquidGlass(in: shape)
+        #endif
     }
 }
 
@@ -264,6 +285,8 @@ struct InboxWidgetCount: View {
             .minimumScaleFactor(0.6)
             // WidgetKit plays this when a new timeline entry changes the count (iOS 17+).
             .contentTransition(.numericText(value: Double(count)))
+            // Tinted / clear home screens (iOS 26): the user's tint replaces ink.
+            .widgetAccentable()
     }
 }
 
@@ -326,7 +349,7 @@ struct InboxWidgetReplyLaterPill: View {
         .foregroundStyle(AppTheme.ink.opacity(0.85))
         .padding(.horizontal, compact ? 8 : 9)
         .frame(height: 24)
-        .liquidGlass(in: Capsule())
+        .inboxWidgetGlass(in: Capsule())
         .accessibilityLabel("\(count) Reply later")
     }
 }
@@ -339,8 +362,9 @@ struct InboxWidgetZeroMark: View {
         Image(systemName: "checkmark")
             .font(.system(size: size * 0.4, weight: .bold))
             .foregroundStyle(AppTheme.ink)
+            .widgetAccentable()
             .frame(width: size, height: size)
-            .liquidGlass(in: Circle())
+            .inboxWidgetGlass(in: Circle())
             .background {
                 Circle()
                     .fill(AppTheme.ink.opacity(0.10))
@@ -367,7 +391,7 @@ private struct InboxWidgetThreadPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .liquidGlass(in: RoundedRectangle(cornerRadius: AppTheme.Widget.threadPanelRadius, style: .continuous))
+        .inboxWidgetGlass(in: RoundedRectangle(cornerRadius: AppTheme.Widget.threadPanelRadius, style: .continuous))
     }
 }
 
@@ -418,7 +442,7 @@ private struct InboxWidgetThreadRow: View {
     InboxWidgetMock(family: .medium, snapshot: .sampleInboxZero).padding()
 }
 
-#if DEBUG
+#if DEBUG && !INBOXIES_WIDGET
 #Preview("Gallery · dark") {
     InboxWidgetGallery().preferredColorScheme(.dark)
 }

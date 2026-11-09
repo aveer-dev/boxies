@@ -14,7 +14,11 @@ interface ScreenerTriageBarProps {
 	emailId: string;
 	sender: string;
 	senderName?: string | null;
-	onDone: () => void;
+	/**
+	 * Decline closes the reader. Accept keeps it open (AVE-182): the message
+	 * refetches in its new folder, so this bar goes away on its own.
+	 */
+	onDeclined: () => void;
 }
 
 export default function ScreenerTriageBar({
@@ -22,7 +26,7 @@ export default function ScreenerTriageBar({
 	emailId,
 	sender,
 	senderName,
-	onDone,
+	onDeclined,
 }: ScreenerTriageBarProps) {
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
@@ -54,7 +58,6 @@ export default function ScreenerTriageBar({
 						: `Allowed — future mail goes to ${FOLDER_DISPLAY_NAMES[destinationFolderId] ?? destinationFolderId}`,
 			});
 			await invalidate();
-			onDone();
 		} catch (err) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Could not approve sender",
@@ -76,7 +79,7 @@ export default function ScreenerTriageBar({
 			});
 			toastManager.add({ title: "Sender screened out" });
 			await invalidate();
-			onDone();
+			onDeclined();
 		} catch (err) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Could not reject sender",
