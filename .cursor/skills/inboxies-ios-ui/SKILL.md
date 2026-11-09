@@ -206,6 +206,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewSessions -previewSecurityActivity [empty\|error]` | Devices & sessions scrolled to Recent security activity: fixture events, or the empty / couldn't-load state, no API (AVE-151) |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
+| `-previewSignature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API (AVE-204; Android: `signature`) |
 | `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
