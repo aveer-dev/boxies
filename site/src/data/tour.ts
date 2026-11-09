@@ -195,8 +195,8 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "Fits the limit.",
-				text: "Photos are resized on your phone to fit the 5 MB send limit. Videos can’t be attached.",
-				src: "FC#4.6; PS#4",
+				text: "Photos are resized on your phone to fit the 5 MB send limit. Videos attach as they are, as long as the whole message fits.",
+				src: "FC#4.6; PS#4; AVE-183 (videos attach when the message fits shared/outbound-limits.ts MAX_OUTBOUND_MESSAGE_BYTES)",
 			},
 		],
 		supportHref: "/support#compose",

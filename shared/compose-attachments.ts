@@ -23,8 +23,10 @@ export const MAX_IMAGE_EDGE_PX = 1600;
 /** Try these JPEG qualities in order until the file fits remaining budget. */
 export const JPEG_QUALITY_LADDER = [0.72, 0.55, 0.4];
 
-export const VIDEO_REJECT_MESSAGE =
-	"Videos aren't supported (5 MiB send limit)";
+/** How the 5 MiB cap reads in user-facing copy ("5 MB", like {@link formatByteSize}). */
+export const OUTBOUND_LIMIT_LABEL = "5 MB";
+
+export const EMPTY_ATTACHMENT_MESSAGE = "That file is empty.";
 
 export type OutboundAttachmentPayload = {
 	content: string;
@@ -116,6 +118,28 @@ export function formatByteSize(bytes: number): string {
 	}
 	const mb = bytes / (1024 * 1024);
 	return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+/**
+ * Why a file that can't be resized (video, PDF, archive...) won't attach:
+ * names its size and the 5 MB limit. When the file alone fits but the
+ * message already carries other attachments, says how much room is left.
+ */
+export function attachmentTooLargeMessage(
+	byteLength: number,
+	budget: number,
+	mime = "",
+	filename = "",
+): string {
+	const subject = isVideoMime(mime, filename) ? "This video" : "This file";
+	const size = formatByteSize(byteLength);
+	if (byteLength > MAX_OUTBOUND_MESSAGE_BYTES || budget >= MAX_OUTBOUND_MESSAGE_BYTES) {
+		return `${subject} is ${size}. Messages can be up to ${OUTBOUND_LIMIT_LABEL}, attachments included.`;
+	}
+	if (budget <= 0) {
+		return `${subject} is ${size}, and this message is already at the ${OUTBOUND_LIMIT_LABEL} limit.`;
+	}
+	return `${subject} is ${size}, but only ${formatByteSize(budget)} is left of the ${OUTBOUND_LIMIT_LABEL} message limit.`;
 }
 
 export function nextDownscaleEdge(currentEdge: number): number {

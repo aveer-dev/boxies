@@ -18,7 +18,11 @@ assert.match(source, /MAX_MESSAGE_BYTES = 5 \* 1024 \* 1024/);
 assert.match(source, /Message exceeds the 5 MiB outbound limit/);
 assert.match(source, /MAX_IMAGE_EDGE = 1600/);
 assert.match(source, /0\.72f, 0\.55f, 0\.4f/);
-assert.match(source, /Videos aren't supported \(5 MiB send limit\)/);
+// Videos attach when they fit (AVE-183): no blanket rejection, and an
+// oversized file is named by size against the shared 5 MB label.
+assert.doesNotMatch(source, /Videos aren't supported/);
+assert.match(source, /LIMIT_LABEL = "5 MB"/);
+assert.match(source, /Messages can be up to \$LIMIT_LABEL, attachments included\./);
 assert.match(source, /byteLength <= 256 \* 1024/);
 assert.match(source, /fun remainingBudget/);
 assert.match(source, /fun estimateMessageBytes/);

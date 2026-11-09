@@ -207,7 +207,7 @@ struct ComposeSheetView: View {
                 isPresented: $showPhotosPicker,
                 selection: $photoSelection,
                 maxSelectionCount: 8,
-                matching: .images
+                matching: .any(of: [.images, .videos])
             )
             .onChange(of: photoSelection) { _, items in
                 Task { await ingestPhotos(items) }
@@ -722,6 +722,10 @@ struct ComposeSheetView: View {
 
     private func ingestPhotos(_ items: [PhotosPickerItem]) async {
         for item in items {
+            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                await ingestPickedVideo(item)
+                continue
+            }
             let data: Data?
             if let picked = try? await item.loadTransferable(type: ComposePickedData.self) {
                 data = picked.data
@@ -739,21 +743,59 @@ struct ComposeSheetView: View {
         photoSelection = []
     }
 
+    /// Videos come over as a file, so an oversized clip is rejected by its size
+    /// without reading it into memory. One that fits attaches as-is.
+    private func ingestPickedVideo(_ item: PhotosPickerItem) async {
+        guard let movie = try? await item.loadTransferable(type: ComposePickedMovie.self) else {
+            form.showToast("Couldn't attach that video", isError: true)
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: movie.url) }
+        let type = item.supportedContentTypes.first { $0.conforms(to: .movie) } ?? .quickTimeMovie
+        let ext = movie.url.pathExtension.isEmpty
+            ? (type.preferredFilenameExtension ?? "mov")
+            : movie.url.pathExtension
+        let filename = "video-\(UUID().uuidString.prefix(8)).\(ext)"
+        let mime = UTType(filenameExtension: ext)?.preferredMIMEType
+            ?? type.preferredMIMEType
+            ?? "video/quicktime"
+        ingestFile(at: movie.url, filename: filename, mime: mime, failure: "Couldn't attach that video")
+    }
+
     private func ingestFiles(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
         for url in urls {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
-                form.showToast("Couldn't attach that file", isError: true)
-                continue
-            }
-            ingestAttachment(
-                data: data,
+            ingestFile(
+                at: url,
                 filename: url.lastPathComponent,
-                mime: OutboundImageCompressor.mime(for: url.lastPathComponent)
+                mime: OutboundImageCompressor.mime(for: url.lastPathComponent),
+                failure: "Couldn't attach that file"
             )
         }
+    }
+
+    /// Reads a picked file and attaches it. Files that go as-is (videos, PDFs, ...)
+    /// are size-checked first, so a large one never has to be loaded.
+    private func ingestFile(at url: URL, filename: String, mime: String, failure: String) {
+        let budget = form.remainingAttachmentBudget
+        if !OutboundImageCompressor.isImage(mime: mime, filename: filename),
+           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > budget {
+            let error = OutboundAttachmentError.fileTooLarge(
+                byteLength: size,
+                budget: budget,
+                isVideo: OutboundImageCompressor.isVideo(mime: mime, filename: filename)
+            )
+            form.showToast(error.localizedDescription, isError: true)
+            return
+        }
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+            form.showToast(failure, isError: true)
+            return
+        }
+        ingestAttachment(data: data, filename: filename, mime: mime)
     }
 
     private func ingestCamera(_ image: UIImage) {
@@ -1182,6 +1224,23 @@ private struct ComposePickedData: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(importedContentType: .image) { data in
             ComposePickedData(data: data)
+        }
+    }
+}
+
+/// A video picked from Photos, copied to a temporary file. The picker's own
+/// file is only valid inside the import closure; the caller removes the copy.
+private struct ComposePickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .movie) { received in
+            let ext = received.file.pathExtension
+            var copy = FileManager.default.temporaryDirectory
+                .appendingPathComponent("compose-video-\(UUID().uuidString)")
+            if !ext.isEmpty { copy.appendPathExtension(ext) }
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return ComposePickedMovie(url: copy)
         }
     }
 }

@@ -116,3 +116,51 @@ final class ForwardAttachmentsTests: XCTestCase {
         XCTAssertFalse(restored.includeForwardedAttachments)
     }
 }
+
+/// Videos attach when they fit the 5 MiB budget (AVE-183). Lives beside the
+/// forward tests so the committed project file needs no new entry.
+final class OutboundVideoAttachmentTests: XCTestCase {
+    func testVideoThatFitsAttachesAsIs() throws {
+        let data = Data(repeating: 7, count: 2 * 1024 * 1024)
+        let prepared = try OutboundImageCompressor.prepare(
+            data: data,
+            filename: "screen.mov",
+            mimeType: "video/quicktime",
+            budget: OutboundLimits.maxMessageBytes
+        )
+        XCTAssertEqual(prepared.filename, "screen.mov")
+        XCTAssertEqual(prepared.mimeType, "video/quicktime")
+        XCTAssertEqual(prepared.size, data.count)
+    }
+
+    func testOversizedVideoNamesItsSizeAndTheLimit() {
+        let data = Data(repeating: 7, count: Int(12.4 * 1024 * 1024))
+        XCTAssertThrowsError(try OutboundImageCompressor.prepare(
+            data: data,
+            filename: "clip.mp4",
+            mimeType: "video/mp4",
+            budget: OutboundLimits.maxMessageBytes
+        )) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "This video is 12 MB. Messages can be up to 5 MB, attachments included."
+            )
+        }
+    }
+
+    /// Same strings as `workers/test/compose-attachments.test.mjs`.
+    func testTooLargeMessageMatchesShared() {
+        XCTAssertEqual(
+            OutboundLimits.tooLargeMessage(byteLength: Int(6.2 * 1024 * 1024), budget: 4 * 1024 * 1024, isVideo: false),
+            "This file is 6.2 MB. Messages can be up to 5 MB, attachments included."
+        )
+        XCTAssertEqual(
+            OutboundLimits.tooLargeMessage(byteLength: 3 * 1024 * 1024, budget: Int(1.5 * 1024 * 1024), isVideo: true),
+            "This video is 3.0 MB, but only 1.5 MB is left of the 5 MB message limit."
+        )
+        XCTAssertEqual(
+            OutboundLimits.tooLargeMessage(byteLength: 3 * 1024 * 1024, budget: 0, isVideo: true),
+            "This video is 3.0 MB, and this message is already at the 5 MB limit."
+        )
+    }
+}

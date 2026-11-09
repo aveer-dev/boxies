@@ -58,6 +58,7 @@ import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.liquidGlass
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.util.ComposePendingAttachment
+import co.inboxies.app.util.OutboundLimits
 import kotlin.math.roundToInt
 
 @Composable
@@ -316,12 +317,4 @@ fun ComposeAttachChips(
     }
 }
 
-private fun formatBytes(bytes: Int): String {
-    if (bytes < 1024) return "$bytes B"
-    if (bytes < 1024 * 1024) {
-        val kb = bytes / 1024.0
-        return if (kb >= 10) "${kb.roundToInt()} KB" else "${"%.1f".format(kb)} KB"
-    }
-    val mb = bytes / (1024.0 * 1024.0)
-    return if (mb >= 10) "${mb.roundToInt()} MB" else "${"%.1f".format(mb)} MB"
-}
+private fun formatBytes(bytes: Int): String = OutboundLimits.formatByteSize(bytes.toLong())

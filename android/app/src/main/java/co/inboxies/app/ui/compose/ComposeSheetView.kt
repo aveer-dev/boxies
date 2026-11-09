@@ -243,6 +243,10 @@ fun ComposeSheetView(
             "heic" in type || "heif" in type -> "heic"
             type.startsWith("image/") -> "jpg"
             "pdf" in type -> "pdf"
+            "quicktime" in type -> "mov"
+            "webm" in type -> "webm"
+            "3gpp" in type -> "3gp"
+            type.startsWith("video/") -> "mp4"
             else -> "bin"
         }
     }
@@ -268,6 +272,17 @@ fun ComposeSheetView(
         return fallback
     }
 
+    /** Provider-reported byte size, or null when the provider doesn't know. */
+    fun uriSize(uri: Uri): Long? {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+            }
+        }
+        return null
+    }
+
     suspend fun ingestUri(uri: Uri, fallbackStem: String) {
         persist()
         val budget = form.remainingAttachmentBudget()
@@ -281,16 +296,22 @@ fun ComposeSheetView(
                     "$fallbackStem.${extensionForMime(mime)}"
                 }
                 val name = uriDisplayName(uri, fallback)
-                if (OutboundImageCompressor.isVideo(mime, name)) {
-                    throw OutboundAttachmentException(OutboundLimits.VIDEO_REJECT)
+                val isImage = OutboundImageCompressor.isImage(mime, name)
+                // Videos, PDFs and other files go as they are, so the remaining
+                // budget is their cap; say how big an oversized one is.
+                val tooLarge = { total: Long ->
+                    OutboundLimits.tooLargeMessage(total, budget, OutboundImageCompressor.isVideo(mime, name))
                 }
-                val cap = if (OutboundImageCompressor.isImage(mime, name)) {
-                    OutboundLimits.MAX_IMAGE_SOURCE_BYTES
-                } else {
-                    budget
+                if (!isImage) {
+                    val size = uriSize(uri)
+                    if (size != null && size > budget) throw OutboundAttachmentException(tooLarge(size))
                 }
                 val bytes = context.contentResolver.openInputStream(uri)?.use {
-                    OutboundLimits.readCapped(it, cap)
+                    if (isImage) {
+                        OutboundLimits.readCapped(it, OutboundLimits.MAX_IMAGE_SOURCE_BYTES)
+                    } else {
+                        OutboundLimits.readCapped(it, budget, tooLarge)
+                    }
                 } ?: throw OutboundAttachmentException("Couldn't read file")
                 OutboundImageCompressor.prepare(
                     bytes = bytes,
@@ -835,7 +856,7 @@ fun ComposeSheetView(
                         onClick = {
                             showAttachMenu = false
                             photoLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                             )
                         },
                     )

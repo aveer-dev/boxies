@@ -596,7 +596,7 @@ const data: Faq[] = [
 					["Sending", "100 recipients an hour, 300 a day per mailbox"],
 					["Recipients per message", "50, across To, Cc and Bcc"],
 					["Ask AI", "50 chats a day per mailbox"],
-					["Videos in compose", "not supported"],
+					["Videos in compose", "attach if the whole message fits in 5 MB"],
 					["Filters", "50 per mailbox"],
 					["Auto-reply", "once per sender per 24 hours"],
 					["Password", "10 to 200 characters"],
@@ -606,7 +606,7 @@ const data: Faq[] = [
 				],
 			},
 		],
-		src: "PS#4; dev password-reset.ts (1 h TTL, 5 attempts, 5 issues per window)",
+		src: "PS#4; dev password-reset.ts (1 h TTL, 5 attempts, 5 issues per window); AVE-183 (videos in compose)",
 	},
 ];
 

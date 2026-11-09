@@ -84,7 +84,7 @@ export default function ComposeBodyChrome({
 			<input
 				ref={photoInput}
 				type="file"
-				accept="image/*"
+				accept="image/*,video/*"
 				multiple
 				className="hidden"
 				onChange={(e) => {

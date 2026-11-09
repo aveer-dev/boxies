@@ -6,15 +6,18 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.util.Base64
 import java.io.ByteArrayOutputStream
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 object OutboundLimits {
     const val MAX_MESSAGE_BYTES = 5 * 1024 * 1024
     const val SIZE_ERROR = "Message exceeds the 5 MiB outbound limit"
-    const val VIDEO_REJECT = "Videos aren't supported (5 MiB send limit)"
+    /** How the 5 MiB cap reads in user-facing copy (twin of shared `OUTBOUND_LIMIT_LABEL`). */
+    const val LIMIT_LABEL = "5 MB"
     const val MAX_IMAGE_EDGE = 1600
     /**
      * Read cap for picked images before re-encode (they shrink to fit the 5 MiB
@@ -31,19 +34,61 @@ object OutboundLimits {
     fun remainingBudget(html: String, text: String, attachmentBytes: List<Int>): Int =
         max(0, MAX_MESSAGE_BYTES - estimateMessageBytes(html, text, attachmentBytes))
 
+    /** Twin of shared `formatByteSize`: binary units, "12 MB" / "3.4 MB" / "512 B". */
+    fun formatByteSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        if (bytes < 1024 * 1024) {
+            val kb = bytes / 1024.0
+            return if (kb >= 10) "${kb.roundToInt()} KB" else "${String.format(Locale.US, "%.1f", kb)} KB"
+        }
+        val mb = bytes / (1024.0 * 1024.0)
+        return if (mb >= 10) "${mb.roundToLong()} MB" else "${String.format(Locale.US, "%.1f", mb)} MB"
+    }
+
     /**
-     * Read at most [maxBytes] from [input]; throws [OutboundAttachmentException] with
-     * [SIZE_ERROR] instead of buffering an oversized file into memory. Call off Main.
+     * Twin of shared `attachmentTooLargeMessage`: names the file's size and the 5 MB
+     * limit, or how much room is left when other attachments already use part of it.
      */
-    fun readCapped(input: java.io.InputStream, maxBytes: Int): ByteArray {
+    fun tooLargeMessage(byteLength: Long, budget: Int, isVideo: Boolean): String {
+        val subject = if (isVideo) "This video" else "This file"
+        val size = formatByteSize(byteLength)
+        return when {
+            byteLength > MAX_MESSAGE_BYTES || budget >= MAX_MESSAGE_BYTES ->
+                "$subject is $size. Messages can be up to $LIMIT_LABEL, attachments included."
+            budget <= 0 ->
+                "$subject is $size, and this message is already at the $LIMIT_LABEL limit."
+            else ->
+                "$subject is $size, but only ${formatByteSize(budget.toLong())} is left of the $LIMIT_LABEL message limit."
+        }
+    }
+
+    /**
+     * Read at most [maxBytes] from [input]; throws [OutboundAttachmentException] instead
+     * of buffering an oversized file into memory. Call off Main. With [overflowMessage],
+     * the rest of the stream is counted (not kept) so the message can name the real size;
+     * otherwise it is [SIZE_ERROR].
+     */
+    fun readCapped(
+        input: java.io.InputStream,
+        maxBytes: Int,
+        overflowMessage: ((totalBytes: Long) -> String)? = null,
+    ): ByteArray {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
-        var total = 0
+        var total = 0L
         while (true) {
             val read = input.read(buffer)
             if (read < 0) break
             total += read
-            if (total > maxBytes) throw OutboundAttachmentException(SIZE_ERROR)
+            if (total > maxBytes) {
+                if (overflowMessage == null) throw OutboundAttachmentException(SIZE_ERROR)
+                while (true) {
+                    val more = input.read(buffer)
+                    if (more < 0) break
+                    total += more
+                }
+                throw OutboundAttachmentException(overflowMessage(total))
+            }
             out.write(buffer, 0, read)
         }
         return out.toByteArray()
@@ -71,15 +116,16 @@ object OutboundImageCompressor {
         budget: Int,
     ): ComposePendingAttachment {
         val mime = mimeType.ifBlank { mimeFor(filename) }
-        if (isVideo(mime, filename)) {
-            throw OutboundAttachmentException(OutboundLimits.VIDEO_REJECT)
-        }
         if (shouldReencodeAsJpeg(mime, filename, bytes.size, budget)) {
             return compressImage(bytes, filename, budget)
                 ?: throw OutboundAttachmentException(OutboundLimits.SIZE_ERROR)
         }
-        if (bytes.isEmpty() || bytes.size > budget) {
-            throw OutboundAttachmentException(OutboundLimits.SIZE_ERROR)
+        // Videos, PDFs and other files go as they are when they fit the budget.
+        if (bytes.isEmpty()) throw OutboundAttachmentException("Couldn't read file")
+        if (bytes.size > budget) {
+            throw OutboundAttachmentException(
+                OutboundLimits.tooLargeMessage(bytes.size.toLong(), budget, isVideo(mime, filename)),
+            )
         }
         return ComposePendingAttachment(
             filename = filename.ifBlank { "untitled" },
@@ -202,6 +248,10 @@ object OutboundImageCompressor {
             "webp" -> "image/webp"
             "heic", "heif" -> "image/heic"
             "pdf" -> "application/pdf"
+            "mp4", "m4v" -> "video/mp4"
+            "mov" -> "video/quicktime"
+            "webm" -> "video/webm"
+            "3gp" -> "video/3gpp"
             else -> "application/octet-stream"
         }
     }
