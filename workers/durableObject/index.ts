@@ -201,12 +201,15 @@ import {
 import {
 	deleteSummariesForEmail,
 	resolveSummary,
+	shareInflight,
 	SummaryGenerationError,
+	SummaryQuotaExceededError,
 	type SummaryMessageMeta,
+	type SummaryQuotaCheck,
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
-import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import type { AiQuotaExceededError, AiUsageSnapshot } from "../../shared/ai-quota";
 import {
 	AI_DAILY_LIMITS,
 	aiUsageSnapshot,
@@ -218,10 +221,21 @@ import {
 } from "../lib/ai-quota";
 
 /**
- * DO-side summary result. Model failures come back as a value rather than a
- * thrown error because custom error classes don't survive the RPC boundary.
+ * DO-side summary result. Model failures and a reached daily AI quota come
+ * back as values rather than thrown errors because custom error classes
+ * don't survive the RPC boundary.
  */
-export type MailboxSummaryResult = AiSummaryResponse | { status: "generation_failed"; error: string };
+export type MailboxSummaryResult =
+	| AiSummaryResponse
+	| { status: "generation_failed"; error: string }
+	| { status: "quota_exceeded"; error: AiQuotaExceededError };
+
+/**
+ * Quota bucket AI summaries count against (AVE-215). The ai_usage table only
+ * accepts 'chat' and 'inbound' (migration 41), so summaries share the
+ * user-initiated 'chat' bucket rather than adding a bucket and a migration.
+ */
+const SUMMARY_QUOTA_BUCKET: AiQuotaBucket = "chat";
 
 /** KV flag set when a purge starts (before any wipe) so writers cannot resurrect mail. */
 const MAILBOX_DELETED_KEY = "mailbox_deleted";
@@ -1717,11 +1731,32 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.#hydrateBody(emailId, row.body, row.snippet);
 	}
 
+	/** One summary model run against today's quota; fails open like tryConsumeAiQuota. */
+	#consumeSummaryQuota(tier: PlanTier): SummaryQuotaCheck {
+		try {
+			const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+			const result = consumeAiQuota(
+				this.ctx.storage.sql,
+				SUMMARY_QUOTA_BUCKET,
+				dailyLimit(planTier, SUMMARY_QUOTA_BUCKET),
+			);
+			if (!result.allowed) {
+				console.warn(`AI quota reached for a summary: ${result.used}/${result.limit}`);
+				return { allowed: false, error: result.error };
+			}
+			return { allowed: true };
+		} catch (e) {
+			console.error("AI quota check failed (summary), allowing:", (e as Error).message);
+			return null;
+		}
+	}
+
 	async #resolveSummary(
 		type: AiSummaryTargetType,
 		targetId: string,
 		threadKey: string,
 		mode: "cached" | "lazy" | "force",
+		tier: PlanTier,
 	): Promise<MailboxSummaryResult | null> {
 		const threadMessages = this.#summaryThreadMetas(threadKey);
 		if (threadMessages.length === 0) return null;
@@ -1737,10 +1772,14 @@ export class MailboxDO extends DurableObject<Env> {
 				loadBody: (id) => this.#summaryBody(id),
 				mode,
 				assertWritable: () => this.#assertMailboxWritable(),
+				consumeQuota: () => this.#consumeSummaryQuota(tier),
 			});
 		} catch (e) {
 			if (e instanceof SummaryGenerationError) {
 				return { status: "generation_failed", error: e.message };
+			}
+			if (e instanceof SummaryQuotaExceededError) {
+				return { status: "quota_exceeded", error: e.quota };
 			}
 			throw e;
 		}
@@ -1750,42 +1789,45 @@ export class MailboxDO extends DurableObject<Env> {
 		return result;
 	}
 
-	/** Shares one in-flight generation per target; "cached" reads never wait on it. */
+	/**
+	 * Shares one in-flight generation per target, so concurrent calls run the
+	 * model (and use quota) once; "cached" reads never wait on it.
+	 */
 	#dedupedSummary(
 		type: AiSummaryTargetType,
 		targetId: string,
 		threadKey: string,
 		mode: "cached" | "lazy" | "force",
+		tier: PlanTier,
 	): Promise<MailboxSummaryResult | null> {
-		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode);
-		const key = `${type}:${targetId}`;
-		const pending = this.#summaryInflight.get(key);
-		if (pending) return pending;
-		const run = this.#resolveSummary(type, targetId, threadKey, mode).finally(() => {
-			this.#summaryInflight.delete(key);
-		});
-		this.#summaryInflight.set(key, run);
-		return run;
+		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode, tier);
+		return shareInflight(this.#summaryInflight, `${type}:${targetId}`, () =>
+			this.#resolveSummary(type, targetId, threadKey, mode, tier),
+		);
 	}
 
 	/**
 	 * Thread summary for the detail screen: cached, or generated on first open
 	 * ("lazy") / always ("force", Regenerate). Null when the thread has no mail.
+	 * A model run counts against `tier`'s daily AI quota.
 	 */
 	async getThreadSummary(
 		threadKey: string,
 		mode: "lazy" | "force" = "lazy",
+		tier: PlanTier = "free",
 	): Promise<MailboxSummaryResult | null> {
-		return this.#dedupedSummary("thread", threadKey, threadKey, mode);
+		return this.#dedupedSummary("thread", threadKey, threadKey, mode, tier);
 	}
 
 	/**
 	 * Quick summary of one message in a multi-message thread. "cached" never
-	 * runs the model. Null when the email doesn't exist.
+	 * runs the model. Null when the email doesn't exist. A model run counts
+	 * against `tier`'s daily AI quota.
 	 */
 	async getEmailSummary(
 		emailId: string,
 		mode: "cached" | "lazy" | "force" = "cached",
+		tier: PlanTier = "free",
 	): Promise<MailboxSummaryResult | null> {
 		const row = this.db
 			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
@@ -1793,7 +1835,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.emails.id, emailId))
 			.get();
 		if (!row) return null;
-		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode);
+		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode, tier);
 	}
 
 	// ── Notes to self (private to their author; see lib/thread-notes) ──
