@@ -665,6 +665,10 @@ data class Email(
     @Serializable(with = LenientOtpSerializer::class) val otp: EmailOtp? = null,
     /** Calendar invite for the reader's Invite card (reader payloads only; AVE-175/177). */
     @Serializable(with = LenientInviteSerializer::class) val invite: EmailInvite? = null,
+    /** Tracking pixels the server removed from [body] (reader payloads only; AVE-195). */
+    @SerialName("blocked_trackers")
+    @Serializable(with = LenientBlockedTrackersSerializer::class)
+    val blockedTrackers: BlockedTrackers? = null,
 ) {
     /** A pending reminder on a mail still in Reply Later (AVE-86). */
     val hasPendingReplyLaterReminder: Boolean
@@ -1795,3 +1799,37 @@ data class RenewDomainResponse(
     val sessionId: String? = null,
     val pricing: DomainPricingBreakdown? = null,
 )
+
+// region Tracking pixels (AVE-195)
+
+/**
+ * Tracking pixels the Worker stripped from a message body before serving it
+ * (`shared/tracking-pixels.ts`), in every folder but Drafts. The list of trackers
+ * lives only on the server; the reader just shows [TrackerNote].
+ */
+@Serializable
+data class BlockedTrackers(
+    val count: Int = 0,
+    /** Services named from the server's known list, first seen first. May be empty. */
+    val services: List<String> = emptyList(),
+)
+
+object LenientBlockedTrackersSerializer : LenientCardSerializer<BlockedTrackers>(BlockedTrackers.serializer())
+
+/**
+ * The reader's small "Blocked tracking from …" line. Same strings as web `trackerNote`
+ * and iOS `TrackerNote.text`, checked against `shared/tracker-note.fixtures.json`.
+ */
+object TrackerNote {
+    fun text(blocked: BlockedTrackers?): String? {
+        if (blocked == null || blocked.count < 1) return null
+        val services = blocked.services.filter { it.isNotBlank() }
+        if (services.isNotEmpty()) return "Blocked tracking from ${joined(services)}"
+        return if (blocked.count == 1) "Blocked a tracking pixel" else "Blocked ${blocked.count} tracking pixels"
+    }
+
+    private fun joined(names: List<String>): String =
+        if (names.size == 1) names.first() else "${names.dropLast(1).joinToString(", ")} and ${names.last()}"
+}
+
+// endregion

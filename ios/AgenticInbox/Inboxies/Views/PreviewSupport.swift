@@ -275,6 +275,7 @@ enum PreviewSupport {
     /// `-previewDetail -previewNewsletter` (AVE-89): a long marketing mail with a fixed 640px card,
     /// a long unbroken URL and a rigid 900px table, for the fit-to-width / sideways-scroll body.
     /// Android twin: `PreviewSupport.newsletterEmail` (`run-debug-preview.sh newsletter`).
+    /// Carries the "Blocked tracking from Mailchimp" note above the body (AVE-195).
     static let newsletterEmail = Email(
         id: "preview-newsletter",
         folderId: "inbox",
@@ -286,7 +287,8 @@ enum PreviewSupport {
         read: true,
         starred: false,
         body: newsletterHTML,
-        snippet: "Good morning. This issue is built like most marketing mail."
+        snippet: "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers: BlockedTrackers(count: 1, services: ["Mailchimp"])
     )
 
     /// `-previewMailbox -previewReplyQuote` (AVE-133): reply to a promo mail whose HTML carries a

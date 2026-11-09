@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { EmailInvite, EmailOtp } from "shared/mail-cards";
+import type { BlockedTrackers } from "shared/tracking-pixels";
 
 export interface SignatureSettings {
 	enabled: boolean;
@@ -483,6 +484,11 @@ export interface Email {
 	 * Detail/thread payloads only; same gating as `otp`.
 	 */
 	invite?: EmailInvite | null;
+	/**
+	 * Tracking pixels the server removed from `body` (AVE-195). Detail/thread
+	 * payloads only; null when none were found, and always in Drafts.
+	 */
+	blocked_trackers?: BlockedTrackers | null;
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)
 	thread_count?: number;

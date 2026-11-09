@@ -1,0 +1,11 @@
+[
+	{ "name": "none", "blocked": null, "note": null },
+	{ "name": "zero count", "blocked": { "count": 0, "services": [] }, "note": null },
+	{ "name": "one unnamed", "blocked": { "count": 1, "services": [] }, "note": "Blocked a tracking pixel" },
+	{ "name": "several unnamed", "blocked": { "count": 3, "services": [] }, "note": "Blocked 3 tracking pixels" },
+	{ "name": "one service", "blocked": { "count": 1, "services": ["Mailchimp"] }, "note": "Blocked tracking from Mailchimp" },
+	{ "name": "one service, two pixels", "blocked": { "count": 2, "services": ["SendGrid"] }, "note": "Blocked tracking from SendGrid" },
+	{ "name": "two services", "blocked": { "count": 2, "services": ["Mailchimp", "HubSpot"] }, "note": "Blocked tracking from Mailchimp and HubSpot" },
+	{ "name": "three services", "blocked": { "count": 4, "services": ["Mailchimp", "HubSpot", "Klaviyo"] }, "note": "Blocked tracking from Mailchimp, HubSpot and Klaviyo" },
+	{ "name": "blank service ignored", "blocked": { "count": 1, "services": [" "] }, "note": "Blocked a tracking pixel" }
+]

@@ -36,9 +36,9 @@ export const facts: Principle[] = [
 export const plainly: CalloutCopy = {
 	id: "plainly",
 	title: "Plainly:",
-	body: "Inboxies doesn’t add end-to-end encryption. Stored mail is encrypted at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Remote images load when you open a message, so a sender’s tracking pixel can fire. In Spam they stay hidden until you choose Load images. [More in Support](/support#encryption)",
+	body: "Inboxies doesn’t add end-to-end encryption. Stored mail is encrypted at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Known tracking pixels are removed, but other images load when you open a message, so a sender can still see it was opened. In Spam, remote images stay hidden until you choose Load images. [More in Support](/support#encryption)",
 	claim: "negated",
-	src: "PS#5 (privacy of mail at rest); dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)",
+	src: "PS#5 (privacy of mail at rest); dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)",
 	ownerConfirm: "approve candid wording",
 };
 

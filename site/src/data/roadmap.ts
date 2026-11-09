@@ -133,7 +133,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	},
 	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", platforms: ["ios", "android", "web"], note: "Mail pretending to be from someone else is flagged.", src: "FSW#spoofing-protection" },
 	{ id: "safe-html", group: "privacy", name: "Safe to open", status: "available", platforms: ["ios", "android", "web"], note: "Code hidden in an email never runs.", src: "FSW#supporting-features" },
-	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
+	{ id: "tracking-pixels", group: "privacy", name: "Tracking pixels blocked", status: "available", platforms: ["ios", "android", "web"], note: "Known tracking pixels are removed in every folder, and the message says who tried. Other images load; in Spam, remote images stay hidden until you choose Load images.", src: "dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
 	{
 		id: "delete-account",
 		group: "privacy",

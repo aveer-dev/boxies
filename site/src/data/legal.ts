@@ -140,9 +140,9 @@ export const privacy: LegalDoc = {
 						],
 					],
 				},
-				"Mail you send goes to its recipients and their providers, and forwarding sends copies where you’ve told it to. Outside Spam, images in a message load from the sender’s servers when you open it, so the sender can see that it was opened and the IP address it was opened from. We may also disclose data when the law requires it, to protect people’s safety or our service from abuse, or to a successor if Inboxies is reorganised or sold, in which case this policy keeps applying to your data.",
+				"Mail you send goes to its recipients and their providers, and forwarding sends copies where you’ve told it to. Outside Spam, images in a message load from the sender’s servers when you open it (we remove tracking pixels we recognise first), so the sender can see that it was opened and the IP address it was opened from. We may also disclose data when the law requires it, to protect people’s safety or our service from abuse, or to a successor if Inboxies is reorganised or sold, in which case this policy keeps applying to your data.",
 			],
-			src: "wrangler.jsonc bindings; workers/lib/cloudflare-registrar.ts; workers/lib/stripe.ts, workers/routes/billing.ts:336-344; workers/auth/apple.ts; workers/lib/apns.ts, push-payload.ts (title, subtitle, 140-char preview); workers/lib/fcm.ts; app/root.tsx:98-106 (Google Fonts); app/components/settings/SignInSettings.tsx:79 (GSI); shared/remote-images.ts (remote images load outside Spam, AVE-132)",
+			src: "wrangler.jsonc bindings; workers/lib/cloudflare-registrar.ts; workers/lib/stripe.ts, workers/routes/billing.ts:336-344; workers/auth/apple.ts; workers/lib/apns.ts, push-payload.ts (title, subtitle, 140-char preview); workers/lib/fcm.ts; app/root.tsx:98-106 (Google Fonts); app/components/settings/SignInSettings.tsx:79 (GSI); shared/remote-images.ts (remote images load outside Spam, AVE-132); shared/tracking-pixels.ts (known pixels stripped, AVE-195)",
 		},
 		{
 			id: "privacy-location",
