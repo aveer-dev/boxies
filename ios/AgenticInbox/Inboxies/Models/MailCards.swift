@@ -21,6 +21,23 @@ struct EmailInviteOrganizer: Codable, Hashable {
         if let email, !email.isEmpty { return email }
         return nil
     }
+
+    /// "Pat Lee <pat@x.com>", or whichever half there is.
+    var fullLabel: String? {
+        let name = name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let email = email?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        if let name, let email, name.lowercased() != email.lowercased() { return "\(name) <\(email)>" }
+        return name ?? email
+    }
+}
+
+/// What the invite card says about who organized it (AVE-220).
+enum InviteOrganizerLine: Equatable {
+    case none
+    /// The organizer lines up with the From (or an older server didn't say).
+    case organizer(String)
+    /// It doesn't: the real sender leads; the organizer is only a claim.
+    case claimed(sender: String?, claimed: String)
 }
 
 /// A calendar event parsed from a real `text/calendar` part or `.ics` attachment.
@@ -42,26 +59,33 @@ struct EmailInvite: Codable, Hashable {
     var timezone: String?
     var location: String?
     var organizer: EmailInviteOrganizer?
+    /// AVE-220: false when ORGANIZER doesn't line up with the message's From
+    /// (it is free text in the .ics). Nil from older servers: show it as before.
+    var organizerMatchesSender: Bool?
     var meetingUrl: String?
     /// Raw RRULE ("FREQ=WEEKLY;BYDAY=TU"), else nil.
     var recurrence: String?
     var description: String?
+    /// The message's real From, filled in by `MailCards.card(for:)`; not part of the payload.
+    var sentBy: EmailInviteOrganizer?
 
     init(
         method: String? = nil, status: String? = nil, cancelled: Bool = false, uid: String? = nil,
         sequence: Int? = nil, title: String? = nil, start: String, end: String? = nil, allDay: Bool = false,
         timezone: String? = nil, location: String? = nil, organizer: EmailInviteOrganizer? = nil,
-        meetingUrl: String? = nil, recurrence: String? = nil, description: String? = nil
+        organizerMatchesSender: Bool? = nil, meetingUrl: String? = nil, recurrence: String? = nil,
+        description: String? = nil, sentBy: EmailInviteOrganizer? = nil
     ) {
         self.method = method; self.status = status; self.cancelled = cancelled; self.uid = uid
         self.sequence = sequence; self.title = title; self.start = start; self.end = end; self.allDay = allDay
         self.timezone = timezone; self.location = location; self.organizer = organizer
+        self.organizerMatchesSender = organizerMatchesSender; self.sentBy = sentBy
         self.meetingUrl = meetingUrl; self.recurrence = recurrence; self.description = description
     }
 
     private enum CodingKeys: String, CodingKey {
         case method, status, cancelled, uid, sequence, title, start, end, allDay, timezone, location
-        case organizer, meetingUrl, recurrence, description
+        case organizer, organizerMatchesSender, meetingUrl, recurrence, description
     }
 
     init(from decoder: Decoder) throws {
@@ -78,9 +102,20 @@ struct EmailInvite: Codable, Hashable {
         timezone = try? c.decodeIfPresent(String.self, forKey: .timezone)
         location = try? c.decodeIfPresent(String.self, forKey: .location)
         organizer = try? c.decodeIfPresent(EmailInviteOrganizer.self, forKey: .organizer)
+        organizerMatchesSender = c.decodeLenientBool(forKey: .organizerMatchesSender)
         meetingUrl = try? c.decodeIfPresent(String.self, forKey: .meetingUrl)
         recurrence = try? c.decodeIfPresent(String.self, forKey: .recurrence)
         description = try? c.decodeIfPresent(String.self, forKey: .description)
+    }
+
+    /// Organizer as is when it matches the From; else the real sender and a claim.
+    var organizerLine: InviteOrganizerLine {
+        guard let organizer else { return .none }
+        if organizerMatchesSender != false {
+            return organizer.label.map(InviteOrganizerLine.organizer) ?? .none
+        }
+        guard let claimed = organizer.fullLabel else { return .none }
+        return .claimed(sender: sentBy?.fullLabel, claimed: claimed)
     }
 
     var displayTitle: String {
@@ -532,7 +567,10 @@ enum MailCards {
     /// The newest message in the conversation that carries a card.
     static func card(for messages: [Email]) -> Card? {
         for message in messages.reversed() where !message.isDraft && allowed(message) {
-            if let invite = message.invite { return .invite(invite, emailId: message.id) }
+            if var invite = message.invite {
+                invite.sentBy = EmailInviteOrganizer(email: message.sender, name: message.senderName)
+                return .invite(invite, emailId: message.id)
+            }
             if let otp = message.otp, !otp.code.isEmpty { return .code(otp, emailId: message.id) }
         }
         return nil
@@ -619,4 +657,8 @@ enum InviteAvailability: Equatable {
     private static func normalized(_ title: String) -> String {
         title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

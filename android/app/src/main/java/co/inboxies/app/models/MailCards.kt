@@ -3,6 +3,7 @@ package co.inboxies.app.models
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
@@ -40,6 +41,25 @@ data class EmailInviteOrganizer(
     /** "Pat Lee", else the address. */
     val label: String?
         get() = name?.trim()?.takeIf { it.isNotEmpty() } ?: email?.takeIf { it.isNotEmpty() }
+
+    /** "Pat Lee <pat@x.com>", or whichever half there is. */
+    val fullLabel: String?
+        get() {
+            val n = name?.trim()?.takeIf { it.isNotEmpty() }
+            val e = email?.trim()?.takeIf { it.isNotEmpty() }
+            return if (n != null && e != null && !n.equals(e, ignoreCase = true)) "$n <$e>" else n ?: e
+        }
+}
+
+/** What the invite card says about who organized it (AVE-220). iOS twin: `InviteOrganizerLine`. */
+sealed interface InviteOrganizerLine {
+    data object None : InviteOrganizerLine
+
+    /** The organizer lines up with the From (or an older server didn't say). */
+    data class Organizer(val label: String) : InviteOrganizerLine
+
+    /** It doesn't: the real sender leads; the organizer is only a claim. */
+    data class Claimed(val sender: String?, val claimed: String) : InviteOrganizerLine
 }
 
 /** A calendar event parsed from a real `text/calendar` part or `.ics` attachment. */
@@ -64,11 +84,29 @@ data class EmailInvite(
     val timezone: String? = null,
     val location: String? = null,
     val organizer: EmailInviteOrganizer? = null,
+    /**
+     * AVE-220: false when ORGANIZER doesn't line up with the message's From (it
+     * is free text in the .ics). Null from older servers: show it as before.
+     */
+    val organizerMatchesSender: Boolean? = null,
     val meetingUrl: String? = null,
     /** Raw RRULE ("FREQ=WEEKLY;BYDAY=TU"), else null. */
     val recurrence: String? = null,
     val description: String? = null,
+    /** The message's real From, filled in by [MailCards.card]; not part of the payload. */
+    @Transient val sentBy: EmailInviteOrganizer? = null,
 ) {
+    /** Organizer as is when it matches the From; else the real sender and a claim. */
+    val organizerLine: InviteOrganizerLine
+        get() {
+            val organizer = organizer ?: return InviteOrganizerLine.None
+            if (organizerMatchesSender != false) {
+                return organizer.label?.let { InviteOrganizerLine.Organizer(it) } ?: InviteOrganizerLine.None
+            }
+            val claimed = organizer.fullLabel ?: return InviteOrganizerLine.None
+            return InviteOrganizerLine.Claimed(sender = sentBy?.fullLabel, claimed = claimed)
+        }
+
     val displayTitle: String
         get() = title?.trim()?.takeIf { it.isNotEmpty() } ?: "Untitled event"
 
@@ -640,7 +678,10 @@ object MailCards {
     fun card(messages: List<Email>): Card? {
         for (message in messages.asReversed()) {
             if (message.isDraft || !allowed(message)) continue
-            message.invite?.let { return Card.Invite(it, message.id) }
+            message.invite?.let {
+                val sentBy = EmailInviteOrganizer(email = message.sender, name = message.senderName)
+                return Card.Invite(it.copy(sentBy = sentBy), message.id)
+            }
             message.otp?.takeIf { it.code.isNotBlank() }?.let { return Card.Code(it, message.id) }
         }
         return null

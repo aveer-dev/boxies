@@ -14,6 +14,8 @@
  */
 
 import type { EmailInvite, EmailInviteOrganizer } from "../../shared/mail-cards.ts";
+import { normalizeEmailAddress } from "./mail-automations.ts";
+import { isFreeMailDomain, senderRegistrableDomain } from "./sender-rules.ts";
 
 /** Calendars larger than this are not parsed (real invites are a few KB). */
 const MAX_ICS_BYTES = 256 * 1024;
@@ -590,6 +592,29 @@ export function inviteFromAttachments(
 		}
 	}
 	return null;
+}
+
+/**
+ * AVE-220: may the invite's ORGANIZER be presented as who sent it? ORGANIZER
+ * is free text in the .ics, so a stranger can name anyone.
+ * - Same address as the From: yes; it shows nothing the header doesn't.
+ * - Same registrable domain (subdomains included): only when the From
+ *   authenticated (auth tier "verified"), and never on a shared free-mail
+ *   domain, where one gmail.com user can't vouch for another.
+ * - Anything else, a failed sender, or no organizer address: no.
+ */
+export function organizerMatchesSender(
+	organizer: EmailInviteOrganizer | null | undefined,
+	sender: string | null | undefined,
+	authTier: string | null | undefined,
+): boolean {
+	const org = normalizeEmailAddress(organizer?.email);
+	const from = normalizeEmailAddress(sender);
+	if (!org || !from || authTier === "failed") return false;
+	if (org === from) return true;
+	if (authTier !== "verified") return false;
+	const domain = senderRegistrableDomain(org);
+	return domain != null && domain === senderRegistrableDomain(from) && !isFreeMailDomain(domain);
 }
 
 /** Stored JSON → invite; null for missing or corrupt values. */

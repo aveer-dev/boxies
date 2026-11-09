@@ -105,6 +105,44 @@ class MailCardsTest {
 
     // endregion
 
+    // region Organizer vs. sender (AVE-220)
+
+    @Test
+    fun organizerShownWhenItMatchesTheSender() {
+        val ceo = EmailInviteOrganizer(email = "ceo@acme.com", name = "CEO")
+        // Older servers don't send the flag: unchanged.
+        assertEquals(InviteOrganizerLine.Organizer("CEO"), invite().copy(organizer = ceo).organizerLine)
+        assertEquals(
+            InviteOrganizerLine.Organizer("CEO"),
+            invite().copy(organizer = ceo, organizerMatchesSender = true).organizerLine,
+        )
+        assertEquals(InviteOrganizerLine.None, invite().organizerLine)
+    }
+
+    @Test
+    fun unmatchedOrganizerIsOnlyAClaimBesideTheSender() {
+        val email = json.decodeFromString<Email>(
+            """
+            {"id":"e9","folder_id":"inbox","sender":"mallory@stranger.example","sender_name":"Mallory",
+             "invite":{"cancelled":false,"start":"2026-11-12T15:00:00.000Z","allDay":false,
+               "organizer":{"email":"ceo@acme.com","name":"CEO"},"organizerMatchesSender":false}}
+            """.trimIndent(),
+        )
+        assertEquals(false, email.invite?.organizerMatchesSender)
+        val card = MailCards.card(listOf(email)) as MailCards.Card.Invite
+        assertEquals(
+            InviteOrganizerLine.Claimed(sender = "Mallory <mallory@stranger.example>", claimed = "CEO <ceo@acme.com>"),
+            card.invite.organizerLine,
+        )
+        val bare = invite().copy(
+            organizer = EmailInviteOrganizer(email = "ceo@acme.com"),
+            organizerMatchesSender = false,
+        )
+        assertEquals(InviteOrganizerLine.Claimed(sender = null, claimed = "ceo@acme.com"), bare.organizerLine)
+    }
+
+    // endregion
+
     // region Gating
 
     @Test

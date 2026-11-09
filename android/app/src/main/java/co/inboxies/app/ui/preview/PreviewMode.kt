@@ -100,6 +100,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteCardAddressExpanded("inviteCardAddressExpanded", "previewInviteAddressExpanded"),
     /** Cancelled invite: struck-through title, "Cancelled", no actions (iOS `… -previewInvite -previewInviteCancelled`). */
     InviteCardCancelled("inviteCardCancelled", "previewInviteCancelled"),
+    /** AVE-220: a stranger's invite naming someone else as organizer, details open: "From …" + "Claims organizer: …" (iOS `… -previewInvite -previewInviteClaimed -previewInviteExpanded`). */
+    InviteCardClaimed("inviteCardClaimed", "previewInviteClaimed"),
     /** Invite card with fixture calendars: "You're free" + the calendar picker (iOS `… -previewInvite -previewInviteFreeBusy free`, AVE-206). */
     InviteCardFree("inviteCardFree", "previewInviteFree"),
     /** Fixture calendars: "Conflicts with Team sync +1 more" (iOS `… -previewInviteFreeBusy conflict`). */

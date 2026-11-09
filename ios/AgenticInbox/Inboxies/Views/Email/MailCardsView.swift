@@ -314,8 +314,26 @@ private struct InviteCard: View {
                     detailRow("mappin.and.ellipse", location)
                 }
             }
-            if let organizer = invite.organizer?.label {
+            switch invite.organizerLine {
+            case .none:
+                EmptyView()
+            case .organizer(let organizer):
                 detailRow("person", organizer)
+            case .claimed(let sender, let claimed):
+                // AVE-220: the organizer doesn't match the From, so the real
+                // sender leads and the organizer is only what the invite claims.
+                VStack(alignment: .leading, spacing: 2) {
+                    if let sender {
+                        detailRow("person", "From \(sender)", tint: AppTheme.ink)
+                    }
+                    Text("Claims organizer: \(claimed)")
+                        .font(.inter(size: AppTheme.MailCard.detail))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .padding(.leading, sender == nil ? 0 : 24)
+                }
+                .accessibilityElement(children: .combine)
             }
         }
         .padding(.leading, 28)
