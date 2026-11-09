@@ -39,7 +39,7 @@ export const hey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later pile", status: "partly", note: "One pile so far.", src: HEY },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", note: "Next to Reply Later.", src: HEY },
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Only Spam holds remote images back until you load them; trackers aren’t picked out.", src: `${HEY}; dev AVE-132 (#168, shared/remote-images.ts)` },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Tracker blocking", status: "available", note: "Known tracking pixels are removed in every folder, and the message says who tried. Other images still load; in Spam, remote images stay hidden until you load them.", src: `${HEY}; dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168, shared/remote-images.ts)` },
 	{ competitor: "hey", theirs: "Notes", ours: "Private notes", status: "available", note: "A sticky note on a thread, or a note on one message. Only you see them.", src: `${HEY}; AVE-59..62 (shared/thread-notes.ts; web, iOS, Android)` },
 	{ competitor: "hey", theirs: "Clips", ours: "—", status: "notyet", src: HEY },
 	{ competitor: "hey", theirs: "Rename subjects", ours: "—", status: "notyet", src: HEY },
@@ -66,5 +66,5 @@ export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Only in Spam, until you load them.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev AVE-132 (#168)" },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Tracker blocking", status: "available", note: "In every folder, naming who tried.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168)" },
 ]);

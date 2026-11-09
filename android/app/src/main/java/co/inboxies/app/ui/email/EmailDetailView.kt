@@ -54,6 +54,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.automirrored.outlined.StickyNote2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -125,6 +126,7 @@ import co.inboxies.app.ui.compose.rememberReduceMotion
 import co.inboxies.app.models.MailCards
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.models.TrackerNote
 import co.inboxies.app.services.ThreadNoteGroups
 import co.inboxies.app.util.DeliveryStatus
 import co.inboxies.app.utils.DateUtils
@@ -566,6 +568,13 @@ fun EmailDetailView(
                                     exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { 6 },
                                 ) {
                                     Column {
+                                        // The server stripped tracking pixels from this body (AVE-195).
+                                        TrackerNote.text(message.blockedTrackers)?.let { note ->
+                                            TrackerNoteLine(
+                                                text = note,
+                                                modifier = Modifier.padding(top = 10.dp),
+                                            )
+                                        }
                                         EmailBodyView(
                                             email = message,
                                             modifier = Modifier.padding(top = 20.dp),
@@ -872,6 +881,36 @@ private fun SpamReasonLine(text: String, modifier: Modifier = Modifier) {
             fontSize = AppThemeDims.FontSize.meta,
             color = colors.muted,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * "Blocked tracking from Mailchimp": the pixels the server removed from this body
+ * (AVE-195). Same quiet line as [SpamReasonLine]; iOS twin `TrackerNoteLine` in
+ * EmailDetailView.swift, web `TrackerNote` in MessageBody.tsx.
+ */
+@Composable
+private fun TrackerNoteLine(text: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.VisibilityOff,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
     }

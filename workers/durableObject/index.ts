@@ -50,6 +50,11 @@ import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
 import { decodeStoredInvite } from "../lib/calendar-invite";
 import { mailCardsAllowed, type EmailInvite, type EmailOtp } from "../../shared/mail-cards";
 import {
+	blockTrackingPixels,
+	shouldBlockTrackingPixels,
+	type BlockedTrackers,
+} from "../../shared/tracking-pixels";
+import {
 	buildInboxDigest,
 	type DigestEmailRow,
 } from "../lib/inbox-digest";
@@ -1041,6 +1046,23 @@ export class MailboxDO extends DurableObject<Env> {
 		};
 	}
 
+	/**
+	 * Tracking pixels (AVE-195, shared/tracking-pixels.ts): strip known open
+	 * pixels from the served body in every folder but Drafts, and report what
+	 * was removed so the readers can show a note. Stored mail is unchanged.
+	 */
+	#withTrackersBlocked<T extends object>(
+		email: T,
+	): T & { blocked_trackers: BlockedTrackers | null } {
+		const { body, folder_id } = email as { body?: unknown; folder_id?: unknown };
+		const folderId = typeof folder_id === "string" ? folder_id : null;
+		if (typeof body !== "string" || !shouldBlockTrackingPixels(folderId)) {
+			return { ...email, blocked_trackers: null };
+		}
+		const { html, blocked } = blockTrackingPixels(body);
+		return { ...email, body: html, blocked_trackers: blocked };
+	}
+
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
 
 	async getEmails(options: GetEmailsOptions = {}) {
@@ -1546,7 +1568,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return this.#withMailCards(this.#withDecodedAuth({
+		return this.#withTrackersBlocked(this.#withMailCards(this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
 			one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1557,7 +1579,7 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments.map(withAttachmentRisk),
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
-		}));
+		})));
 	}
 
 	/**
@@ -1624,7 +1646,7 @@ export class MailboxDO extends DurableObject<Env> {
 		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
 
 		return await Promise.all(
-			emailRows.map(async (email) => this.#withMailCards(this.#withDecodedAuth({
+			emailRows.map(async (email) => this.#withTrackersBlocked(this.#withMailCards(this.#withDecodedAuth({
 				...email,
 				...this.#aliasFields(email.alias_id),
 				one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1634,7 +1656,7 @@ export class MailboxDO extends DurableObject<Env> {
 				reply_later: !!email.reply_later,
 				attachments: (attachmentsByEmail.get(email.id) || []).map(withAttachmentRisk),
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
-			}))),
+			})))),
 		);
 	}
 

@@ -538,8 +538,8 @@ const data: Faq[] = [
 		id: "tracking",
 		group: "data-topic",
 		q: "Does Inboxies block tracking pixels?",
-		a: ["Only in Spam. Tracking pixels live in remote images, and outside Spam those load when you open a message, so a sender can tell you opened it. In Spam they stay hidden until you choose Load images on that message. Inboxies doesn’t send read receipts."],
-		src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam); a new Spam message starts blocked; RM#3 (read receipts)",
+		a: ["Yes, the known ones, in every folder. Inboxies removes tracking pixels it recognises before a message reaches you, and the message notes who tried, like “Blocked tracking from Mailchimp”. Other images still load from the sender’s servers when you open a message, and a tracker Inboxies doesn’t recognise can still fire. In Spam, remote images stay hidden until you choose Load images on that message. Inboxies doesn’t send read receipts."],
+		src: "dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam); a new Spam message starts blocked; RM#3 (read receipts)",
 	},
 	{
 		id: "export",

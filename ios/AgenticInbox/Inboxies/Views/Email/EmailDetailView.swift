@@ -444,6 +444,12 @@ struct EmailDetailView: View {
                         .padding(.top, 10)
                 }
 
+                // The server stripped tracking pixels from this body (AVE-195).
+                if isExpanded, let note = TrackerNote.text(message.blockedTrackers) {
+                    TrackerNoteLine(text: note)
+                        .padding(.top, 10)
+                }
+
                 if message.isDeliveryFailure {
                     DeliveryFailureBanner(
                         title: message.deliveryStatusLabel ?? DeliveryStatusHelpers.label(for: message.deliveryStatus),
@@ -1040,6 +1046,27 @@ private struct SpamReasonLine: View {
             Text(text)
                 .font(.inter(size: AppTheme.FontSize.meta))
                 .lineLimit(1)
+        }
+        .foregroundStyle(AppTheme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// "Blocked tracking from Mailchimp": the pixels the server removed from this
+/// body (AVE-195). Same quiet line as `SpamReasonLine`; Android twin
+/// `TrackerNoteLine` in EmailDetailView.kt, web `TrackerNote` in MessageBody.tsx.
+private struct TrackerNoteLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "eye.slash")
+                .font(.system(size: 12))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .lineLimit(2)
         }
         .foregroundStyle(AppTheme.muted)
         .frame(maxWidth: .infinity, alignment: .leading)

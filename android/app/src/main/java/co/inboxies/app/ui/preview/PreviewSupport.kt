@@ -5,6 +5,7 @@ import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
+import co.inboxies.app.models.BlockedTrackers
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.EmailInvite
 import co.inboxies.app.models.EmailInviteOrganizer
@@ -872,7 +873,8 @@ object PreviewSupport {
     /**
      * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
      * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
-     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`).
+     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
+     * "Blocked tracking from Mailchimp" note above the body (AVE-195).
      */
     fun newsletterEmail(you: String = addr("you")): Email = Email(
         id = "preview-newsletter",
@@ -886,6 +888,7 @@ object PreviewSupport {
         starred = false,
         body = NEWSLETTER_HTML,
         snippet = "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers = BlockedTrackers(count = 1, services = listOf("Mailchimp")),
     )
 
     private val NEWSLETTER_HTML = """
