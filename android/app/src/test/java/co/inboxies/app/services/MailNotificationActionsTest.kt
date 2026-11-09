@@ -3,6 +3,7 @@ package co.inboxies.app.services
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -40,6 +41,17 @@ class MailNotificationActionsTest {
         )
         assertNull(MailNotificationActions.request(MailNotificationAction.REPLY, "   ", now))
         assertNull(MailNotificationActions.request(MailNotificationAction.REPLY, null, now))
+    }
+
+    @Test
+    fun quickReplyBodySendsTheQuoteTimeZone() {
+        val body = ApiClient.quickReplyBody("Thanks!", "America/New_York")
+        assertEquals(JsonPrimitive("Thanks!"), body["text"])
+        assertEquals(JsonPrimitive("America/New_York"), body["quote_time_zone"])
+        assertEquals(
+            JsonPrimitive(java.util.TimeZone.getDefault().id),
+            ApiClient.quickReplyBody("Thanks!")["quote_time_zone"],
+        )
     }
 
     @Test

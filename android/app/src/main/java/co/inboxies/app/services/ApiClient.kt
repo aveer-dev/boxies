@@ -219,6 +219,17 @@ class ApiClient private constructor() {
             if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
 
         /**
+         * Body for `POST .../quick-reply`. `quote_time_zone` makes the quoted "On <date>"
+         * line use the device's zone instead of the Worker's UTC default (AVE-225; iOS twin
+         * sends `TimeZone.current.identifier`).
+         */
+        fun quickReplyBody(text: String, timeZoneId: String = java.util.TimeZone.getDefault().id): JsonObject =
+            buildJsonObject {
+                put("text", text)
+                put("quote_time_zone", timeZoneId)
+            }
+
+        /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
          * expired mobile session token". Per-mailbox ACL denials are also 403
          * but carry other text, so they keep their local handling.
@@ -1467,7 +1478,7 @@ class ApiClient private constructor() {
     ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/quick-reply",
         method = "POST",
-        body = buildJsonObject { put("text", text) },
+        body = quickReplyBody(text),
         headers = idempotencyHeaders(idempotencyKey),
     )
 
