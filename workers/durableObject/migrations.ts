@@ -970,4 +970,22 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_email_tags_tag ON email_tags(tag_id, email_id);
         `),
 	},
+	{
+		// Writing suggestions quota (AVE-189, workers/lib/ai-quota.ts): the
+		// 'suggest' bucket's daily counter. Same columns as ai_usage (41), whose
+		// CHECK only allows 'chat' and 'inbound', so the bucket gets its own
+		// table instead of a rebuild of ai_usage. Pruned on write like ai_usage.
+		// Additive only: a new table. Numbered 50: dev's highest is
+		// 48_email_tags and open PR #273 adds 49_piles; the runner tracks by
+		// name, so either can land first.
+		name: "50_ai_suggest_usage",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS ai_suggest_usage (
+                day TEXT NOT NULL,
+                bucket TEXT NOT NULL CHECK (bucket = 'suggest'),
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, bucket)
+            );
+        `),
+	},
 ];

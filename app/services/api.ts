@@ -44,6 +44,7 @@ import type {
 import { idempotencyHeaders } from "~/lib/send-idempotency";
 import { reauthChallenge, requestReauth, type ReauthChallenge } from "~/lib/reauth";
 import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import type { ComposeSuggestionRequest, ComposeSuggestionResponse } from "../../shared/compose-suggestions";
 import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -657,6 +658,16 @@ const api = {
 		post<AiSummaryResponse>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/emails/${encodeURIComponent(emailId)}/summary/generate`,
 			{ regenerate: opts?.regenerate ?? false },
+			{ signal: opts?.signal },
+		),
+	/**
+	 * Writing suggestion for the draft up to the caret (AVE-189). 403 when the
+	 * mailbox has suggestions off, 429 (AiQuotaExceededError) at the daily cap.
+	 */
+	suggestCompose: (mailboxId: string, body: ComposeSuggestionRequest, opts?: { signal?: AbortSignal }) =>
+		post<ComposeSuggestionResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/compose/suggest`,
+			body,
 			{ signal: opts?.signal },
 		),
 	markThreadRead: (mailboxId: string, threadId: string) =>

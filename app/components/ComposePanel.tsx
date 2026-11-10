@@ -8,6 +8,8 @@ import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperclipIcon, PaperPla
 import { includeAttachmentsLabel } from "shared/forward-attachments";
 import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import { useMailbox } from "~/queries/mailboxes";
+import { isWritingSuggestionsEnabled } from "shared/compose-suggestions";
 import type { ComposeOptions } from "~/hooks/useUIStore";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
@@ -53,6 +55,14 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 		handleSend,
 		closeCompose,
 	} = useComposeForm(mailboxId, panelKey, options);
+	const { data: mailbox } = useMailbox(mailboxId);
+	// Writing suggestions (AVE-189): off unless turned on in Settings → AI.
+	const suggestions = {
+		mailboxId,
+		enabled: isWritingSuggestionsEnabled(mailbox?.settings),
+		subject,
+		inReplyTo: quote?.mode === "reply" ? quote.originalId : undefined,
+	};
 
 	return (
 		<div className="flex flex-col h-full bg-kumo-base">
@@ -190,6 +200,7 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 
 					<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
 						<ComposeBodyChrome
+							suggestions={suggestions}
 							body={body}
 							onBodyChange={setBody}
 							attachments={attachments}
