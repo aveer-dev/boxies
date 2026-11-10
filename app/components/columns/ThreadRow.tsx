@@ -51,6 +51,7 @@ export default function ThreadRow({
 	hoverActions,
 	onMenu,
 	index = 0,
+	compact = false,
 }: {
 	email: Email;
 	isSelected: boolean;
@@ -70,6 +71,8 @@ export default function ThreadRow({
 	onMenu?: (from: MouseEvent<HTMLElement> | HTMLElement) => void;
 	/** Position in the list: staggers the entrance of the first rows. */
 	index?: number;
+	/** Tighter receipt row for Updates (AVE-192): pass no snippet with it. */
+	compact?: boolean;
 }) {
 	// The row stays marked while its menu is open.
 	const menuOpen = useContextMenu(
@@ -102,7 +105,7 @@ export default function ThreadRow({
 				}
 			}}
 			style={{ "--i": index } as CSSProperties}
-			className={`row-enter group relative mx-2 mb-0.5 flex gap-3 pl-3.5 pr-4 py-4 rounded-xl cursor-pointer transition-colors duration-150 active:bg-kumo-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${
+			className={`row-enter group relative mx-2 mb-0.5 flex gap-3 pl-3.5 pr-4 ${compact ? "py-3" : "py-4"} rounded-xl cursor-pointer transition-colors duration-150 active:bg-kumo-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${
 				isSelected
 					? "bg-kumo-fill [--row-bg:var(--color-kumo-fill)]"
 					: "hover:bg-kumo-tint data-[menu-open]:bg-kumo-tint [--row-bg:var(--color-kumo-tint)]"
@@ -185,7 +188,7 @@ export default function ThreadRow({
 					</span>
 				</div>
 				<div
-					className={`mt-1 truncate text-sm ${isUnread ? "font-medium text-kumo-default" : "text-kumo-strong"}`}
+					className={`${compact ? "mt-0.5" : "mt-1"} truncate text-sm ${isUnread ? "font-medium text-kumo-default" : "text-kumo-strong"}`}
 				>
 					{subject ?? (email.subject || "(no subject)")}
 				</div>

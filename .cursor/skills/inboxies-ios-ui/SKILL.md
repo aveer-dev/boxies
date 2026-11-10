@@ -223,6 +223,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
 | `-previewMailbox -previewLoadMore` | Inbox with the infinite-scroll skeleton footer (scroll to the bottom) |
+| `-previewMailbox -previewUpdates` | Updates as a quiet receipts view: compact rows (sender, subject, date; no preview) under month headers (AVE-192; Android `updates`) |
 | `-previewMailbox -previewToast` | Inbox with a pinned "Archived · Undo" toast above the bottom bar (AVE-134) |
 | `-previewMailbox -previewManyNew` | Inbox with a dozen New: New capped at 5 + "Show N more new" (pushes the All new screen) above Seen |
 | `-previewMailbox -previewNotes` | Inbox rows with the notes-to-self strip and "N private notes" chip |

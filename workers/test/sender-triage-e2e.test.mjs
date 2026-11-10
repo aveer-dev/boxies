@@ -64,7 +64,7 @@ function inboundPipeline({
 		!decision.skipAutoDraft &&
 		shouldAutoDraft(classification, auth) &&
 		!filterHit?.skipAutoDraft;
-	const push = !decision.skipPush && shouldSendPush(classification);
+	const push = !decision.skipPush && shouldSendPush(classification, decision.folderId);
 	return { ...decision, autoDraft, push, filterHit };
 }
 
@@ -127,6 +127,8 @@ function inboundPipeline({
 		sender: "orders@shop.example",
 	});
 	assert.equal(updates.folderId, "updates");
+	// Updates is a quiet receipts view: no push (AVE-192).
+	assert.equal(updates.push, false);
 
 	// Explicit sender preference (Settings → Senders) beats classify
 	const pinnedByPref = inboundPipeline({

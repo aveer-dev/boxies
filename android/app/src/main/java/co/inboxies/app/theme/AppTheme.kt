@@ -176,6 +176,8 @@ object AppThemeDims {
         val sectionHeader = 11.sp
         val tracking = 0.25.sp
         val rowVerticalPadding = 18.dp
+        /** Updates receipt rows (AVE-192): sender, subject, date; no preview line. */
+        val compactRowVerticalPadding = 12.dp
         val rowTextSpacing = 6.dp
         val rowHorizontalPadding = 20.dp
         val dotToText = 14.dp

@@ -225,6 +225,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Screener reader after Accept | `previewScreenerReaderAccept` | `screenerReaderAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`). AVE-182 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Focus & Reply | `previewFocusReply` · `previewFocusReplyDone` | `focusReply` · `focusReplyDone` | Reply Later with the first thread's reply open under "Focus & Reply · 1 of N · Skip" · the pile after a run emptied it ("All done"). Peer of iOS `-previewReplyLater -previewFocusReply` / `-previewFocusReplyDone` (AVE-193) |
+| Updates | `previewUpdates` | `updates` | Updates as a quiet receipts view: compact rows (sender, subject, date; no preview) under month headers. Peer of iOS `-previewMailbox -previewUpdates` (AVE-192) |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | Code card | `previewCode` | `code` | Sign-in mail in the reader with the Code card pinned above the bottom bar: 22.sp monospaced code + Copy (sensitive clip). Peer of iOS `-previewDetail -previewCode` (AVE-177) |

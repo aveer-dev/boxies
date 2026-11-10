@@ -2551,7 +2551,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
-		if (triageDecision.skipPush || !shouldSendPush(classification)) {
+		if (triageDecision.skipPush || !shouldSendPush(classification, filedFolder)) {
 			return;
 		}
 

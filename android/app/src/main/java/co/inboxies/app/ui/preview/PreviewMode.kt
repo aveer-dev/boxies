@@ -91,6 +91,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     FocusReply("focusReply", "previewFocusReply"),
     /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */
     FocusReplyDone("focusReplyDone", "previewFocusReplyDone"),
+    /** Updates as a quiet receipts view: compact rows under month headers (iOS `-previewMailbox -previewUpdates`, AVE-192). */
+    Updates("updates", "previewUpdates"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),

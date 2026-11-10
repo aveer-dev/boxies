@@ -118,6 +118,13 @@ struct EmailListView: View {
                         }
                     }
                     .padding(.top, 32)
+                } else if showsPaperTrail {
+                    ContentUnavailableView(
+                        "No updates",
+                        systemImage: "newspaper",
+                        description: Text(PaperTrail.emptyDescription)
+                    )
+                    .padding(.top, 48)
                 } else {
                     ContentUnavailableView(
                         "No emails",
@@ -173,6 +180,8 @@ struct EmailListView: View {
 
             if showNewSeenSections {
                 newSeenSections
+            } else if showsPaperTrail {
+                paperTrailSections
             } else {
                 ForEach(visibleEmails) { email in
                     emailRow(for: email)
@@ -294,6 +303,29 @@ struct EmailListView: View {
         }
     }
 
+    /// Updates as a quiet receipts view (AVE-192): compact rows under month headers.
+    private var showsPaperTrail: Bool {
+        PaperTrail.isPaperTrail(folderId: fallbackFolderId)
+    }
+
+    @ViewBuilder
+    private var paperTrailSections: some View {
+        let sections = PaperTrail.monthSections(visibleEmails)
+        ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+            Section {
+                sectionHeader(title: section.label)
+                    .listRowInsets(EdgeInsets(top: index == 0 ? 8 : 12, leading: 20, bottom: 4, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .accessibilityAddTraits(.isHeader)
+
+                ForEach(section.emails) { email in
+                    emailRow(for: email)
+                }
+            }
+        }
+    }
+
     private var showsFocusReplyStrip: Bool {
         onStartFocusReply != nil && !isSelectMode && !visibleEmails.isEmpty && !app.isReadOnly
     }
@@ -363,15 +395,17 @@ struct EmailListView: View {
         .accessibilityLabel("Show all new emails, \(hiddenCount) more")
     }
 
-    private func sectionHeader(title: String, count: Int) -> some View {
+    private func sectionHeader(title: String, count: Int? = nil) -> some View {
         HStack(spacing: 6) {
             Text(title.uppercased())
                 .font(.inter(size: AppTheme.List.sectionHeader, weight: .medium))
                 .tracking(AppTheme.List.tracking)
                 .foregroundStyle(AppTheme.muted)
-            Text("· \(count)")
-                .font(.inter(size: AppTheme.List.sectionHeader, weight: .regular))
-                .foregroundStyle(AppTheme.muted)
+            if let count {
+                Text("· \(count)")
+                    .font(.inter(size: AppTheme.List.sectionHeader, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+            }
             Spacer(minLength: 0)
         }
     }
@@ -416,7 +450,8 @@ struct EmailListView: View {
                         folderLabel: folderLabel,
                         showsTags: showsTags,
                         showsSeparator: !isScreener || app.isReadOnly,
-                        rowBackground: rowBackground
+                        rowBackground: rowBackground,
+                        compact: showsPaperTrail
                     )
                 }
             }
@@ -751,6 +786,12 @@ struct EmailRowView: View {
     var showsSeparator: Bool = true
     /// Fill behind the row; the two-pane list tints the row open in the reading pane.
     var rowBackground: Color = AppTheme.background
+    /// Updates receipt row (AVE-192): sender, subject, date; no preview line, tighter padding.
+    var compact: Bool = false
+
+    private var verticalPadding: CGFloat {
+        compact ? AppTheme.List.compactRowVerticalPadding : AppTheme.List.rowVerticalPadding
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
@@ -759,7 +800,7 @@ struct EmailRowView: View {
             VStack(alignment: .leading, spacing: AppTheme.List.rowTextSpacing) {
                 headerRow
                 subjectRow
-                if !previewText.isEmpty {
+                if !compact, !previewText.isEmpty {
                     previewRow
                 }
                 let tags = showsTags ? rowTags : []
@@ -782,8 +823,8 @@ struct EmailRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.top, AppTheme.List.rowVerticalPadding)
-        .padding(.bottom, showsSeparator ? AppTheme.List.rowVerticalPadding : 6)
+        .padding(.top, verticalPadding)
+        .padding(.bottom, showsSeparator ? verticalPadding : 6)
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)

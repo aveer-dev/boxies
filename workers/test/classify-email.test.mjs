@@ -219,6 +219,11 @@ function headers(...pairs) {
 	});
 	assert.equal(shouldAutoDraft(result), true);
 	assert.equal(shouldSendPush(result), true);
+	// Mail filed in Updates never pushes (AVE-192); other folders still do.
+	assert.equal(shouldSendPush(result, Folders.INBOX), true);
+	assert.equal(shouldSendPush(result, Folders.PROMOTIONS), true);
+	assert.equal(shouldSendPush(result, Folders.UPDATES), false);
+	assert.equal(shouldSendPush({ ...result, class: "bulk" }, Folders.UPDATES), false);
 }
 
 // JSON raw_headers string (PostalMime storage shape)

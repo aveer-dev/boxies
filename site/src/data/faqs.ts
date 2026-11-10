@@ -313,7 +313,7 @@ const everyday: Faq[] = [
 		id: "notifications",
 		group: "everyday-topic",
 		q: "Which emails send notifications?",
-		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener, sent to Spam, or moved by a filter somewhere other than Inbox, Promotions or Updates never notifies you. You can turn notifications off in Settings."],
+		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener, filed in Updates, sent to Spam, or moved by a filter somewhere other than Inbox or Promotions never notifies you. You can turn notifications off in Settings."],
 		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (skipPush: filedAway)",
 	},
 	{

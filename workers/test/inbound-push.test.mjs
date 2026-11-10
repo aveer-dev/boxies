@@ -252,4 +252,13 @@ const allowed = {
 	assert.ok(apnsCalls.every((call) => !/482913/.test(JSON.stringify(call.body))));
 }
 
+{
+	// Sender accepted into Updates (AVE-192): filed there quietly, no push.
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: { ...allowed, destination_folder_id: "updates" } });
+	await deliver(stub, MAILBOX, "m7@sender.example", createBucket(), { subject: "Your receipt" });
+	assert.deepEqual(stub.stored.map((s) => s.folder), ["updates"]);
+	assert.equal(apnsCalls.length, 0);
+}
+
 console.log("inbound push tests passed");

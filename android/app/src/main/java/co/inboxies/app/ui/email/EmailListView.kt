@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.MarkEmailRead
@@ -105,6 +106,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -116,6 +118,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.NoteText
+import co.inboxies.app.services.PaperTrail
 import co.inboxies.app.ui.notes.PrivateNotesChip
 import co.inboxies.app.ui.notes.StickyNoteRowStrip
 import co.inboxies.app.models.FolderIds
@@ -240,6 +243,7 @@ fun EmailListView(
                 bottomInset = bottomInset,
                 topRow = screeningRoomRow,
                 allDone = focusReplyResult != null && onStartFocusReply != null,
+                paperTrail = PaperTrail.isPaperTrail(fallbackFolderId),
             )
             else -> EmailRows(
                 emails = emails,
@@ -445,6 +449,29 @@ private fun EmailRows(
                     )
                 }
             }
+        } else if (PaperTrail.isPaperTrail(fallbackFolderId)) {
+            // Updates as a quiet receipts view (AVE-192): compact rows under month headers.
+            PaperTrail.monthSections(emails).forEach { section ->
+                item(key = section.id) {
+                    ListSectionHeader(title = section.label)
+                }
+                items(section.emails, key = { "${section.id}-${it.id}" }) { email ->
+                    EmailRowItem(
+                        email = email,
+                        isSelectMode = isSelectMode,
+                        selectedEmailIds = selectedEmailIds,
+                        onToggleSelect = onToggleSelect,
+                        highlightQuery = highlightQuery,
+                        folderLabel = folderLabel,
+                        fallbackFolderId = fallbackFolderId,
+                        swipePreferences = swipePreferences,
+                        showsTags = showsTags,
+                        compact = true,
+                        onOpen = onOpen,
+                        onMore = onMore,
+                    )
+                }
+            }
         } else {
             items(emails, key = { it.id }) { email ->
                 EmailRowItem(
@@ -585,7 +612,7 @@ private fun ShowAllNewRow(hiddenCount: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ListSectionHeader(title: String, count: Int) {
+private fun ListSectionHeader(title: String, count: Int? = null) {
     val colors = inboxiesColors()
     Row(
         modifier = Modifier
@@ -607,14 +634,16 @@ private fun ListSectionHeader(title: String, count: Int) {
             fontWeight = FontWeight.Medium,
             letterSpacing = AppThemeDims.List.tracking,
         )
-        Text(
-            text = "· $count",
-            color = colors.muted,
-            fontFamily = InterFontFamily,
-            fontSize = AppThemeDims.List.sectionHeader,
-            fontWeight = FontWeight.Normal,
-            letterSpacing = AppThemeDims.List.tracking,
-        )
+        if (count != null) {
+            Text(
+                text = "· $count",
+                color = colors.muted,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.List.sectionHeader,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = AppThemeDims.List.tracking,
+            )
+        }
     }
 }
 
@@ -629,6 +658,8 @@ private fun EmailRowItem(
     fallbackFolderId: String?,
     swipePreferences: SwipeActionPreferences,
     showsTags: Boolean = true,
+    /** Updates receipt row (AVE-192): no preview line, tighter padding. */
+    compact: Boolean = false,
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
@@ -652,6 +683,7 @@ private fun EmailRowItem(
         isScreener = isScreener,
         readOnly = readOnly,
         isOpenInPane = isOpenInPane,
+        compact = compact,
         onOpen = { onOpen(email) },
         onToggleSelect = { onToggleSelect?.invoke(email.id) },
         onMore = { onMore(email) },
@@ -671,6 +703,7 @@ private fun MailRow(
     isScreener: Boolean = false,
     readOnly: Boolean = false,
     isOpenInPane: Boolean = false,
+    compact: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
@@ -748,6 +781,7 @@ private fun MailRow(
                         showsTags = showsTags,
                         showDivider = !isScreener,
                         rowBackground = rowBackground,
+                        compact = compact,
                         modifier = Modifier
                             .fillMaxWidth()
                             .combinedClickable(
@@ -1056,6 +1090,8 @@ private fun EmptyList(
     topRow: (@Composable () -> Unit)? = null,
     /** Reply Later right after Focus & Reply emptied the pile (AVE-193). */
     allDone: Boolean = false,
+    /** Empty Updates: says what lands there (AVE-192). */
+    paperTrail: Boolean = false,
 ) {
     val colors = inboxiesColors()
     if (allDone) {
@@ -1089,23 +1125,37 @@ private fun EmptyList(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Icon(
-                    if (isFiltered) Icons.Outlined.FilterList else Icons.Outlined.Inbox,
+                    when {
+                        isFiltered -> Icons.Outlined.FilterList
+                        paperTrail -> Icons.Outlined.Newspaper
+                        else -> Icons.Outlined.Inbox
+                    },
                     contentDescription = null,
                     tint = colors.muted,
                     modifier = Modifier.size(40.dp),
                 )
                 Text(
-                    if (isFiltered) "No matching emails" else "No emails",
+                    when {
+                        isFiltered -> "No matching emails"
+                        paperTrail -> "No updates"
+                        else -> "No emails"
+                    },
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.sp,
                     color = colors.ink,
                 )
                 Text(
-                    if (isFiltered) "No emails match your active filters." else "This folder is empty.",
+                    when {
+                        isFiltered -> "No emails match your active filters."
+                        paperTrail -> PaperTrail.EMPTY_DESCRIPTION
+                        else -> "This folder is empty."
+                    },
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 32.dp),
                 )
                 if (isFiltered && onClearFilters != null) {
                     Button(
@@ -1237,6 +1287,8 @@ fun EmailRowView(
     modifier: Modifier = Modifier,
     /** Fill behind the row; the two-pane list tints the row open in the reading pane. */
     rowBackground: Color = inboxiesColors().background,
+    /** Updates receipt row (AVE-192): sender, subject, date; no preview line, tighter padding. */
+    compact: Boolean = false,
 ) {
     val colors = inboxiesColors()
     val list = AppThemeDims.List
@@ -1256,8 +1308,12 @@ fun EmailRowView(
                 .padding(
                     start = list.rowHorizontalPadding,
                     end = list.rowHorizontalPadding,
-                    top = list.rowVerticalPadding,
-                    bottom = if (showDivider) list.rowVerticalPadding else 6.dp,
+                    top = if (compact) list.compactRowVerticalPadding else list.rowVerticalPadding,
+                    bottom = when {
+                        !showDivider -> 6.dp
+                        compact -> list.compactRowVerticalPadding
+                        else -> list.rowVerticalPadding
+                    },
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -1385,7 +1441,7 @@ fun EmailRowView(
                 color = colors.ink,
             )
 
-            if (previewText.isNotEmpty()) {
+            if (!compact && previewText.isNotEmpty()) {
                 HighlightedText(
                     text = previewText,
                     query = highlightQuery,

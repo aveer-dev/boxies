@@ -224,6 +224,21 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.Updates -> {
+                // AVE-192: Updates as a quiet receipts view (compact rows by month).
+                val updates = updatesEmails(you)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = updates,
+                    selectedTab = HomeTab.Folder(FolderIds.UPDATES),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.Newsletter -> {
                 val newsletter = newsletterEmail(you)
                 DatabaseService.shared.upsertEmails(mailbox.id, listOf(newsletter))
@@ -881,6 +896,94 @@ object PreviewSupport {
      * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
      * "Blocked tracking from Mailchimp" note above the body (AVE-195).
      */
+    /** `updates` (AVE-192): receipts across this month, last month and last year (iOS `-previewMailbox -previewUpdates`). */
+    fun updatesEmails(you: String = addr("you")): List<Email> = listOf(
+        Email(
+            id = "preview-updates-1",
+            folderId = FolderIds.UPDATES,
+            subject = "Your receipt from Lumen Coffee",
+            sender = "receipts@lumen.example",
+            senderName = "Lumen Coffee",
+            recipient = you,
+            date = "2026-11-09T08:14:00.000Z",
+            read = false,
+            starred = false,
+            snippet = "Order #4821 · \$6.40 · Thanks for stopping by.",
+        ),
+        Email(
+            id = "preview-updates-2",
+            folderId = FolderIds.UPDATES,
+            subject = "Your package has shipped",
+            sender = "ship@parcel.example",
+            senderName = "Parcel",
+            recipient = you,
+            date = "2026-11-06T16:40:00.000Z",
+            read = false,
+            starred = false,
+            snippet = "Arriving Thursday. Track it any time.",
+        ),
+        Email(
+            id = "preview-updates-3",
+            folderId = FolderIds.UPDATES,
+            subject = "Payment received",
+            sender = "billing@studio.example",
+            senderName = "Studio Billing",
+            recipient = you,
+            date = "2026-11-02T12:05:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "We received your payment of \$24.00. Thank you.",
+        ),
+        Email(
+            id = "preview-updates-4",
+            folderId = FolderIds.UPDATES,
+            subject = "Your October statement is ready",
+            sender = "statements@bank.example",
+            senderName = "Northwind Bank",
+            recipient = you,
+            date = "2026-10-31T09:00:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Your statement for October is ready to view.",
+        ),
+        Email(
+            id = "preview-updates-5",
+            folderId = FolderIds.UPDATES,
+            subject = "Booking confirmed: Lisbon, Dec 12",
+            sender = "trips@stay.example",
+            senderName = "Stay",
+            recipient = you,
+            date = "2026-10-18T19:22:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Check-in from 3 PM. Your host will message you before you arrive.",
+        ),
+        Email(
+            id = "preview-updates-6",
+            folderId = FolderIds.UPDATES,
+            subject = "Password changed",
+            sender = "security@accounts.example",
+            senderName = "Accounts",
+            recipient = you,
+            date = "2026-10-03T07:48:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Your password was changed. If this wasn’t you, reset it now.",
+        ),
+        Email(
+            id = "preview-updates-7",
+            folderId = FolderIds.UPDATES,
+            subject = "Your 2025 annual summary",
+            sender = "hello@ride.example",
+            senderName = "Ride",
+            recipient = you,
+            date = "2025-12-30T10:10:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "142 trips this year. Here’s where you went.",
+        ),
+    )
+
     fun newsletterEmail(you: String = addr("you")): Email = Email(
         id = "preview-newsletter",
         folderId = FolderIds.INBOX,
