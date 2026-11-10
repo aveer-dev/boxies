@@ -15,6 +15,7 @@ import {
 	foldIcsLine,
 	googleCalendarUrl,
 	icsFilename,
+	inviteOrganizerLine,
 	inviteTimeSummary,
 	inviteVenue,
 	parseInviteTime,
@@ -63,11 +64,36 @@ test("readerCard picks the newest allowed message, invite before code", () => {
 		{ id: "both", folder_id: "inbox", otp: { code: "333333" }, invite: invite() },
 		{ id: "old", folder_id: "inbox", otp: { code: "444444" } },
 	];
-	assert.deepEqual(readerCard(msgs), { kind: "invite", invite: invite(), emailId: "both" });
+	assert.deepEqual(readerCard(msgs), { kind: "invite", invite: invite(), emailId: "both", sender: { email: null, name: null } });
+	assert.deepEqual(
+		readerCard([{ id: "s", folder_id: "inbox", invite: invite(), sender: "pat@acme.com", sender_name: " Pat " }]).sender,
+		{ email: "pat@acme.com", name: "Pat" },
+	);
 	assert.deepEqual(readerCard(msgs.slice(3)), { kind: "code", code: "444444", emailId: "old" });
 	assert.equal(readerCard([{ id: "a", folder_id: "inbox", otp: { code: "555" }, auth_tier: "failed" }]), null);
 	assert.equal(readerCard([{ id: "a", folder_id: "inbox", otp: { code: " " } }]), null);
 	assert.equal(readerCard([{ id: "a", folder_id: "inbox", otp: { code: "555555" } }], new Set(["a"])), null);
+});
+
+test("organizer: shown when it matches the From, else a claim beside the real sender (AVE-220)", () => {
+	const ceo = { email: "ceo@acme.com", name: "CEO" };
+	const sender = { email: "mallory@stranger.example", name: "Mallory" };
+	assert.deepEqual(inviteOrganizerLine(invite()), { kind: "none" });
+	// Older servers don't send the flag: unchanged.
+	assert.deepEqual(inviteOrganizerLine(invite({ organizer: ceo }), sender), { kind: "organizer", label: "CEO" });
+	assert.deepEqual(inviteOrganizerLine(invite({ organizer: ceo, organizerMatchesSender: true }), sender), {
+		kind: "organizer", label: "CEO",
+	});
+	assert.deepEqual(inviteOrganizerLine(invite({ organizer: ceo, organizerMatchesSender: false }), sender), {
+		kind: "claimed", sender: "Mallory <mallory@stranger.example>", claimed: "CEO <ceo@acme.com>",
+	});
+	assert.deepEqual(
+		inviteOrganizerLine(invite({ organizer: { email: "ceo@acme.com", name: null }, organizerMatchesSender: false }), { email: "m@x.example", name: null }),
+		{ kind: "claimed", sender: "m@x.example", claimed: "ceo@acme.com" },
+	);
+	assert.deepEqual(inviteOrganizerLine(invite({ organizer: ceo, organizerMatchesSender: false })), {
+		kind: "claimed", sender: null, claimed: "CEO <ceo@acme.com>",
+	});
 });
 
 // endregion

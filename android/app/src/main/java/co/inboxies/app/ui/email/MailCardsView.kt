@@ -108,6 +108,7 @@ import co.inboxies.app.ui.components.InboxiesToast
 import co.inboxies.app.ui.components.ToastIcon
 import co.inboxies.app.theme.ToastMetrics
 import co.inboxies.app.models.EmailInvite
+import co.inboxies.app.models.InviteOrganizerLine
 import co.inboxies.app.models.InviteRecurrence
 import co.inboxies.app.models.InviteTime
 import co.inboxies.app.models.InviteVenue
@@ -579,7 +580,31 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
                         DetailRow(Icons.Outlined.Place, location)
                     }
                 }
-                invite.organizer?.label?.let { DetailRow(Icons.Outlined.Person, it) }
+                when (val organizer = invite.organizerLine) {
+                    InviteOrganizerLine.None -> Unit
+                    is InviteOrganizerLine.Organizer -> DetailRow(Icons.Outlined.Person, organizer.label)
+                    // AVE-220: the organizer doesn't match the From, so the real
+                    // sender leads and the organizer is only what the invite claims.
+                    is InviteOrganizerLine.Claimed -> Column(
+                        modifier = Modifier.semantics(mergeDescendants = true) {},
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        organizer.sender?.let { DetailRow(Icons.Outlined.Person, "From $it", tint = colors.ink) }
+                        Text(
+                            "Claims organizer: ${organizer.claimed}",
+                            fontFamily = InterFontFamily,
+                            fontSize = MailCardMetrics.detail,
+                            color = colors.muted,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = if (organizer.sender != null) {
+                                Modifier.padding(start = MailCardMetrics.detailIconColumn + 8.dp)
+                            } else {
+                                Modifier
+                            },
+                        )
+                    }
+                }
             }
         }
 

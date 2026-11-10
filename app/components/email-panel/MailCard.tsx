@@ -27,10 +27,12 @@ import {
 	googleCalendarUrl,
 	icsFilename,
 	inviteAddress,
+	inviteOrganizerLine,
 	inviteTimeSummary,
 	inviteTitle,
 	inviteVenue,
 	recurrenceLabel,
+	type InviteSender,
 	type ReaderCard,
 } from "~/lib/mail-cards";
 import type { EmailInvite } from "~/types";
@@ -46,7 +48,7 @@ export default function MailCard({ card, className = "" }: { card: ReaderCard; c
 			aria-label={card.kind === "code" ? "Verification code" : "Calendar invite"}
 			className={`rounded-lg border border-kumo-line bg-kumo-tint px-3 py-2.5 animate-reveal ${className}`}
 		>
-			{card.kind === "code" ? <CodeCard code={card.code} /> : <InviteCard key={card.emailId} invite={card.invite} />}
+			{card.kind === "code" ? <CodeCard code={card.code} /> : <InviteCard key={card.emailId} invite={card.invite} sender={card.sender} />}
 		</section>
 	);
 }
@@ -129,7 +131,7 @@ function downloadIcs(invite: EmailInvite) {
  * One line (title, short time, chevron) and one row of actions; clicking the
  * line opens the details in place (AVE-176 review: not too full at first glance).
  */
-function InviteCard({ invite }: { invite: EmailInvite }) {
+function InviteCard({ invite, sender }: { invite: EmailInvite; sender: InviteSender }) {
 	const [expanded, setExpanded] = useState(false);
 	const detailsId = useId();
 	const title = inviteTitle(invite);
@@ -137,7 +139,7 @@ function InviteCard({ invite }: { invite: EmailInvite }) {
 	const summary = inviteTimeSummary(invite);
 	const repeats = recurrenceLabel(invite.recurrence);
 	const location = displayLocation(invite);
-	const organizer = invite.organizer?.name?.trim() || invite.organizer?.email || null;
+	const organizer = inviteOrganizerLine(invite, sender);
 	const venue = inviteVenue(invite);
 	const address = inviteAddress(invite);
 	const google = googleCalendarUrl(invite);
@@ -186,7 +188,15 @@ function InviteCard({ invite }: { invite: EmailInvite }) {
 							)}
 						</DetailRow>
 					)}
-					{organizer && <DetailRow icon={UserIcon}>{organizer}</DetailRow>}
+					{organizer.kind === "organizer" && <DetailRow icon={UserIcon}>{organizer.label}</DetailRow>}
+					{organizer.kind === "claimed" && (
+						// AVE-220: the organizer doesn't match the From, so the sender
+						// leads and the organizer is only what the invite claims.
+						<DetailRow icon={UserIcon}>
+							{organizer.sender && <span className="block">From {organizer.sender}</span>}
+							<span className="block text-kumo-subtle">Claims organizer: {organizer.claimed}</span>
+						</DetailRow>
+					)}
 				</div>
 			)}
 

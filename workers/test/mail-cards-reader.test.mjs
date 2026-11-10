@@ -71,7 +71,8 @@ const byId = async () => Object.fromEntries((await mailbox.getThreadEmails("t1")
 	const rows = await byId();
 	assert.deepEqual(rows.code.otp, { code: "482913" });
 	assert.equal(rows.code.invite, null);
-	assert.deepEqual(rows.invite.invite, invite);
+	// Organizer is the From itself (AVE-220).
+	assert.deepEqual(rows.invite.invite, { ...invite, organizerMatchesSender: true });
 	assert.equal(rows.invite.otp, null);
 	assert.equal(rows.plain.otp, null);
 	assert.equal(rows.plain.invite, null);
@@ -80,6 +81,18 @@ const byId = async () => Object.fromEntries((await mailbox.getThreadEmails("t1")
 	assert.equal("otp_code" in rows.code, false);
 	assert.equal("calendar_invite" in rows.invite, false);
 }
+
+// AVE-220: an unverified stranger naming someone else as organizer.
+insert.run(
+	"stranger", "inbox", "Invitation", "2026-11-01T14:00:00Z", "unverified", null,
+	JSON.stringify({ ...invite, organizer: { email: "ceo@example.com", name: "CEO" } }),
+);
+{
+	const rows = await byId();
+	assert.equal(rows.stranger.invite.organizerMatchesSender, false);
+	assert.deepEqual(rows.stranger.invite.organizer, { email: "ceo@example.com", name: "CEO" });
+}
+db.exec(`DELETE FROM emails WHERE id = 'stranger'`);
 
 // Moved to Spam: no cards. Back out: they return.
 db.exec(`UPDATE emails SET folder_id = 'spam' WHERE id IN ('code', 'invite')`);
