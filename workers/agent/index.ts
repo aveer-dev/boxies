@@ -36,6 +36,20 @@ import type { Env } from "../types";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
 import { AUTO_DRAFT_HISTORY_LIMIT } from "../lib/ai-quota";
 import { chatHistoryForModel, chatQuotaGate } from "../lib/agent-chat-limits";
+import {
+	PENDING_CONFIRMATIONS_KEY,
+	ConfirmationGate,
+	DraftRecipientPolicy,
+	actionKey,
+	beginConfirmationTurn,
+	historyReadEmail,
+	latestUserTurn,
+	moveNeedsConfirmation,
+	needsConfirmation,
+	operatorAddresses,
+	type PendingConfirmations,
+} from "../lib/agent-confirmations";
+import { capChatHistory } from "../lib/ai-quota";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
 // objects matching the Tool type to avoid overload resolution issues.
@@ -91,7 +105,10 @@ You can ONLY draft emails. You do NOT have the ability to send emails directly.
 **Don't paste draft contents into the chat.** The drafts are saved via tools - the operator can see them in the Drafts folder. In your chat message, just briefly say what you drafted (e.g. "Drafted a reply to Tim"). Don't duplicate the full email body in the chat.
 
 ## Draft Management
-Use discard_draft to delete drafts that the operator rejects or that are no longer needed.`;
+Use discard_draft to delete drafts that the operator rejects or that are no longer needed.
+
+## Confirmations
+Moving mail to Trash, Spam or Screened out, discarding a draft, and drafting a new email to an address the operator didn't give you need the operator's go-ahead. When a tool returns status "needs_confirmation", nothing happened yet: say plainly what you want to do and ask the operator to confirm. Only call the tool again, with the same arguments, after their next message says yes.`;
 
 /**
  * Build the system prompt for a mailbox: the fixed safety preamble, then the
@@ -114,11 +131,25 @@ async function getSystemPrompt(env: Env, mailboxId: string): Promise<string> {
 	return buildSystemPrompt(DEFAULT_SYSTEM_PROMPT, customPrompt);
 }
 
-function createEmailTools(env: Env, mailboxId: string) {
+/**
+ * Per-turn guards for the chat assistant (AVE-222). The auto-draft run never
+ * gets the gated tools, so it passes none.
+ */
+interface ChatTurnGuards {
+	confirmations: ConfirmationGate;
+	drafts: DraftRecipientPolicy;
+}
+
+function createEmailTools(env: Env, mailboxId: string, guards?: ChatTurnGuards) {
 	// Email text reaching the model through tools is untrusted: wrap it, and
 	// withhold anything the heuristic or the LLM scanner (one call per result)
 	// flags as a prompt injection.
 	const scan = (text: string) => isPromptInjection(env.AI, text);
+	// Email read in this turn: draft_email to an address outside it needs confirming.
+	const noteRead = <T>(result: T): T => {
+		guards?.drafts.noteRead(result);
+		return result;
+	};
 	return {
 		list_emails: defineTool({
 			description:
@@ -139,8 +170,10 @@ function createEmailTools(env: Env, mailboxId: string) {
 			}),
 			execute: async ({ folder, limit, page }): Promise<unknown> => {
 				// Metadata only (subjects, names): heuristic check, no AI call.
-				return guardEmailToolResult(
-					await toolListEmails(env, mailboxId, { folder, limit, page }),
+				return noteRead(
+					await guardEmailToolResult(
+						await toolListEmails(env, mailboxId, { folder, limit, page }),
+					),
 				);
 			},
 		}),
@@ -152,7 +185,9 @@ function createEmailTools(env: Env, mailboxId: string) {
 				emailId: z.string().describe("The email ID to retrieve"),
 			}),
 			execute: async ({ emailId }): Promise<unknown> => {
-				return guardEmailToolResult(await toolGetEmail(env, mailboxId, emailId), { scan });
+				return noteRead(
+					await guardEmailToolResult(await toolGetEmail(env, mailboxId, emailId), { scan }),
+				);
 			},
 		}),
 
@@ -167,7 +202,9 @@ function createEmailTools(env: Env, mailboxId: string) {
 					),
 			}),
 			execute: async ({ threadId }): Promise<unknown> => {
-				return guardEmailToolResult(await toolGetThread(env, mailboxId, threadId), { scan });
+				return noteRead(
+					await guardEmailToolResult(await toolGetThread(env, mailboxId, threadId), { scan }),
+				);
 			},
 		}),
 
@@ -186,16 +223,18 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe("Optional folder to restrict search to"),
 			}),
 			execute: async ({ query, folder }): Promise<unknown> => {
-				return guardEmailToolResult(
-					await toolSearchEmails(env, mailboxId, { query, folder }),
-					{ scan },
+				return noteRead(
+					await guardEmailToolResult(
+						await toolSearchEmails(env, mailboxId, { query, folder }),
+						{ scan },
+					),
 				);
 			},
 		}),
 
 		draft_email: defineTool({
 			description:
-				"Draft a new email (not a reply) and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review. Use this for composing new outbound emails. Write the body as plain text — no HTML tags.",
+				"Draft a new email (not a reply) and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review. Use this for composing new outbound emails. Write the body as plain text — no HTML tags. After reading mail, an address the operator didn't give you returns needs_confirmation: ask them first.",
 			parameters: z.object({
 				to: z.string().email().describe("Recipient email address"),
 				subject: z
@@ -208,6 +247,16 @@ function createEmailTools(env: Env, mailboxId: string) {
 					),
 			}),
 			execute: async ({ to, subject, body }): Promise<unknown> => {
+				const outside = guards?.drafts.outsideRecipients(to) ?? [];
+				if (outside.length > 0) {
+					const key = actionKey("draft_email", ...outside);
+					if (!(await guards!.confirmations.check(key))) {
+						return {
+							...needsConfirmation(`draft a new email to ${outside.join(", ")}, an address that isn't on the mail you read and that the operator didn't give`),
+							recipients: outside,
+						};
+					}
+				}
 				return toolDraftEmail(env, mailboxId, {
 					to,
 					subject,
@@ -262,7 +311,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 
 		move_email: defineTool({
 			description:
-				"Move an email to a different folder (inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash).",
+				"Move an email to a different folder (inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash). Moving to trash, spam or screened_out returns needs_confirmation first: ask the operator.",
 			parameters: z.object({
 				emailId: z.string().describe("The email ID"),
 				folderId: z
@@ -270,17 +319,29 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe(MOVE_FOLDER_TOOL_DESCRIPTION),
 			}),
 			execute: async ({ emailId, folderId }): Promise<unknown> => {
+				if (guards && moveNeedsConfirmation(folderId)) {
+					const key = actionKey("move_email", emailId, folderId);
+					if (!(await guards.confirmations.check(key))) {
+						return needsConfirmation(`move email ${emailId} to ${folderId}`);
+					}
+				}
 				return toolMoveEmail(env, mailboxId, emailId, folderId);
 			},
 		}),
 
 		discard_draft: defineTool({
 			description:
-				"Delete a draft email. Use this to discard drafts that are no longer needed or were rejected by the operator.",
+				"Delete a draft email. Use this to discard drafts that are no longer needed or were rejected by the operator. Returns needs_confirmation first: ask the operator.",
 			parameters: z.object({
 				draftId: z.string().describe("The ID of the draft to delete"),
 			}),
 			execute: async ({ draftId }): Promise<unknown> => {
+				if (guards) {
+					const key = actionKey("discard_draft", draftId);
+					if (!(await guards.confirmations.check(key))) {
+						return needsConfirmation(`discard draft ${draftId}`);
+					}
+				}
 				return toolDiscardDraft(env, mailboxId, draftId);
 			},
 		}),
@@ -301,7 +362,7 @@ export class EmailAgent extends AIChatAgent<any> {
 		if (overQuota) return overQuota;
 
 		const workersai = createWorkersAI({ binding: env.AI });
-		const tools = createEmailTools(env, mailboxId);
+		const tools = createEmailTools(env, mailboxId, await this.chatTurnGuards(mailboxId));
 		const systemPrompt = await getSystemPrompt(env, mailboxId);
 
 		const result = streamText({
@@ -316,6 +377,33 @@ export class EmailAgent extends AIChatAgent<any> {
 		});
 
 		return result.toUIMessageStreamResponse();
+	}
+
+	/**
+	 * Confirmation state for this chat turn (AVE-222). Actions the agent asked
+	 * about in the operator's previous turn are approved now; new requests are
+	 * stored for the next one. Only a new operator message can approve, so
+	 * email content read by the tools cannot.
+	 */
+	private async chatTurnGuards(mailboxId: string): Promise<ChatTurnGuards> {
+		const storage = this.ctx.storage;
+		const turn = latestUserTurn(this.messages) ?? { id: "", text: "" };
+		const stored = await storage.get<PendingConfirmations>(PENDING_CONFIRMATIONS_KEY);
+		const { approved, pending } = beginConfirmationTurn(stored, turn);
+		if (stored && stored.turnId !== pending.turnId) {
+			// Requests are good for one operator reply only.
+			await storage.delete(PENDING_CONFIRMATIONS_KEY);
+		}
+		const confirmations = new ConfirmationGate(approved, pending, (next) =>
+			storage.put(PENDING_CONFIRMATIONS_KEY, next),
+		);
+		// Same window the model sees (chatHistoryForModel).
+		const history = capChatHistory(this.messages);
+		const drafts = new DraftRecipientPolicy({
+			readEmail: historyReadEmail(history),
+			knownAddresses: [mailboxId, ...operatorAddresses(history)],
+		});
+		return { confirmations, drafts };
 	}
 
 	/**

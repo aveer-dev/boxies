@@ -28,6 +28,8 @@ import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "../auth/au
 import { grantCoversMailbox, type McpRequestProps } from "./oauth";
 import { serviceEndedErrorForMailbox } from "../lib/domain-service";
 import { scopeDeniedMessage, toolAllowed, type McpToolName } from "./scopes";
+import { guardEmailToolResult } from "../lib/agent-safety";
+import { isPromptInjection } from "../lib/ai";
 
 /** Wrap a plain result object into MCP content format. */
 function mcpText(result: unknown) {
@@ -75,6 +77,10 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 
 	async init() {
 		const env = this.env;
+		// Read results carry email written by outside senders, and the same
+		// grant can hold send tools: wrap them in the untrusted-content envelope
+		// the in-app agent uses (AVE-222), withholding likely prompt injections.
+		const scan = (text: string) => isPromptInjection(env.AI, text);
 
 		/**
 		 * Register a tool behind its OAuth scope (AVE-69, table in ./scopes.ts).
@@ -165,7 +171,8 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 				const access = await verifyMailbox(mailboxId);
 				if ("denied" in access) return access.denied;
 				const result = await toolListEmails(env, access.mailboxId, { folder, limit, page });
-				return mcpText(result);
+				// Metadata only (subjects, names): heuristic check, no AI call.
+				return mcpText(await guardEmailToolResult(result));
 			},
 		);
 
@@ -187,7 +194,7 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 						isError: true,
 					};
 				}
-				return mcpText(result);
+				return mcpText(await guardEmailToolResult(result, { scan }));
 			},
 		);
 
@@ -205,7 +212,7 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 				const access = await verifyMailbox(mailboxId);
 				if ("denied" in access) return access.denied;
 				const result = await toolGetThread(env, access.mailboxId, threadId);
-				return mcpText(result);
+				return mcpText(await guardEmailToolResult(result, { scan }));
 			},
 		);
 
@@ -225,7 +232,7 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 				const access = await verifyMailbox(mailboxId);
 				if ("denied" in access) return access.denied;
 				const result = await toolSearchEmails(env, access.mailboxId, { query, folder });
-				return mcpText(result);
+				return mcpText(await guardEmailToolResult(result, { scan }));
 			},
 		);
 
