@@ -38,6 +38,7 @@ export default [
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
 		route("tags/:tagRef/:emailId?", "routes/email-list.tsx", { id: "routes/tag-list" }),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),
+		route("set-aside/:emailId?", "routes/set-aside.tsx"),
 		route("new/:emailId?", "routes/inbox-new.tsx"),
 		route("search/:emailId?", "routes/search-results.tsx"),
 		// Settings is a side panel (useUIStore); old links open it.

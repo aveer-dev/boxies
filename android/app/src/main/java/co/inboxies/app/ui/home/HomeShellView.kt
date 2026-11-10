@@ -169,6 +169,9 @@ import co.inboxies.app.ui.compose.rememberReduceMotion
 import co.inboxies.app.ui.email.ReplyLaterReminderSheetModal
 import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
+import co.inboxies.app.ui.email.EmptyStateCopy
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.ui.graphics.vector.ImageVector
 import co.inboxies.app.ui.email.InboxNewListView
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.ui.settings.SettingsSheetView
@@ -195,6 +198,7 @@ fun HomeShellView(
     val folders by appModel.folders.collectAsState()
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
+    val setAsideCount by appModel.setAsideCount.collectAsState()
     val focusReplyResult by appModel.focusReplyResult.collectAsState()
     val replyLaterDueCount by appModel.replyLaterDueCount.collectAsState()
     val reminderPickerEmail by appModel.reminderPickerEmail.collectAsState()
@@ -230,7 +234,8 @@ fun HomeShellView(
     var highlightedComposeAction by remember { mutableStateOf<ComposeActionItem?>(null) }
     var composeActionFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     var tabNavigatingForward by remember { mutableStateOf(true) }
-    // Entering or leaving Reply Later or the Screening room is a push, not a folder-tab slide.
+    // Entering or leaving a pile (Reply Later, Set Aside) or the Screening room is a push,
+    // not a folder-tab slide.
     var isPushTransition by remember { mutableStateOf(false) }
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
@@ -296,7 +301,7 @@ fun HomeShellView(
     }
     val screeningRoomTab = remember { HomeTab.Folder(FolderIds.SCREENER) }
     val isScreeningRoom = selectedTab == screeningRoomTab
-    fun isPushedTab(tab: HomeTab) = tab is HomeTab.ReplyLater || tab == screeningRoomTab
+    fun isPushedTab(tab: HomeTab) = tab.isPile || tab == screeningRoomTab
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
     // Inbox "N waiting to be screened" row (AVE-136); 0 hides it (Screener off or nobody waiting).
@@ -364,6 +369,12 @@ fun HomeShellView(
                 else -> "$replyLaterCount to reply"
             }
         }
+        HomeTab.SetAside -> {
+            when {
+                setAsideCount == 0 -> "Nothing set aside"
+                else -> "$setAsideCount set aside"
+            }
+        }
         else -> ""
     }
 
@@ -374,12 +385,13 @@ fun HomeShellView(
             selectedEmailIds = emptySet()
         }
         isPushTransition = isPushedTab(tab) || isPushedTab(selectedTab)
-        if (tab is HomeTab.ReplyLater) {
-            if (selectedTab !is HomeTab.ReplyLater) {
+        if (tab.isPile) {
+            // Pile to pile keeps the folder both were opened from.
+            if (!selectedTab.isPile) {
                 previousTabBeforeReplyLater = selectedTab
             }
             tabNavigatingForward = true
-        } else if (selectedTab is HomeTab.ReplyLater) {
+        } else if (selectedTab.isPile) {
             tabNavigatingForward = false
         } else if (tab == screeningRoomTab) {
             tabNavigatingForward = true
@@ -395,10 +407,10 @@ fun HomeShellView(
         scope.launch { appModel.selectTab(tab) }
     }
 
-    /** Back out of Reply Later to the folder it was opened from (iOS: swipe right / pile button). */
+    /** Back out of a pile to the folder it was opened from (iOS: swipe right / pile button). */
     fun popReplyLater() {
-        if (selectedTab !is HomeTab.ReplyLater) return
-        val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
+        if (!selectedTab.isPile) return
+        val target = if (previousTabBeforeReplyLater.isPile) {
             HomeTab.Folder(FolderIds.INBOX)
         } else {
             previousTabBeforeReplyLater
@@ -478,7 +490,7 @@ fun HomeShellView(
 
     BackHandler(
         enabled = showSearch || showComposeActions || isSelectMode ||
-            selectedTab is HomeTab.ReplyLater || isScreeningRoom,
+            selectedTab.isPile || isScreeningRoom,
     ) {
         when {
             showComposeActions -> {
@@ -489,7 +501,7 @@ fun HomeShellView(
                 isSelectMode = false
                 selectedEmailIds = emptySet()
             }
-            selectedTab is HomeTab.ReplyLater -> popReplyLater()
+            selectedTab.isPile -> popReplyLater()
             isScreeningRoom -> popScreeningRoom()
         }
     }
@@ -513,6 +525,7 @@ fun HomeShellView(
                     selected = selectedTab,
                     unreadCount = { appModel.unreadCount(forFolderId = it) },
                     replyLaterCount = replyLaterCount,
+                    setAsideCount = setAsideCount,
                     onSelect = { selectTab(it) },
                     onHide = { showsFolderColumn = false },
                 )
@@ -834,8 +847,8 @@ fun HomeShellView(
                             detectHorizontalDragGestures(
                                 onDragStart = { dragAccum = 0f },
                                 onDragEnd = {
-                                    if (selectedTab is HomeTab.ReplyLater) {
-                                        // Reply Later is pushed over a folder: swipe right pops back.
+                                    if (selectedTab.isPile) {
+                                        // A pile is pushed over a folder: swipe right pops back.
                                         if (dragAccum >= 40f) popReplyLater()
                                     } else if (selectedTab == screeningRoomTab) {
                                         // The Screening room is pushed over Inbox: swipe right pops back.
@@ -982,6 +995,38 @@ fun HomeShellView(
                                     { scope.launch { appModel.startFocusReply() } }
                                 },
                             )
+                            // Set Aside (AVE-201): the Reply Later list without Focus & Reply or reminders.
+                            HomeTab.SetAside -> EmailListView(
+                                emails = tabEmails,
+                                isLoading = tabLoading,
+                                bottomInset = listBottomInset,
+                                fallbackFolderId = null,
+                                showsTags = false,
+                                isSelectMode = isSelectMode,
+                                selectedEmailIds = selectedEmailIds,
+                                onToggleSelect = { id ->
+                                    selectedEmailIds = if (selectedEmailIds.contains(id)) {
+                                        selectedEmailIds - id
+                                    } else {
+                                        selectedEmailIds + id
+                                    }
+                                },
+                                isFiltered = false,
+                                onClearFilters = null,
+                                filterChipsBar = null,
+                                onRefresh = { appModel.refreshCurrentTab() },
+                                loadError = emailListError,
+                                paging = paging,
+                                onLoadMore = { appModel.loadMoreEmails() },
+                                onOpen = { email ->
+                                    scope.launch { appModel.openEmail(email) }
+                                },
+                                emptyState = EmptyStateCopy(
+                                    icon = Icons.Outlined.BookmarkBorder,
+                                    title = "Nothing set aside",
+                                    message = "Keep mail you need handy, like tickets or a document you're waiting on.",
+                                ),
+                            )
                             HomeTab.Chats -> Unit
                         }
                     }
@@ -1118,8 +1163,19 @@ fun HomeShellView(
                                     appModel.showToast("There is no reply later mail")
                                     scope.launch { appModel.refreshReplyLaterCount() }
                                 } else {
-                                    previousTabBeforeReplyLater = selectedTab
                                     selectTab(HomeTab.ReplyLater)
+                                }
+                            },
+                            setAsideCount = setAsideCount,
+                            isSetAsideTab = selectedTab is HomeTab.SetAside,
+                            onSetAside = {
+                                if (selectedTab is HomeTab.SetAside) {
+                                    popReplyLater()
+                                } else if (setAsideCount == 0) {
+                                    appModel.showToast("Nothing set aside")
+                                    scope.launch { appModel.refreshReplyLaterCount() }
+                                } else {
+                                    selectTab(HomeTab.SetAside)
                                 }
                             },
                             onAskAi = {
@@ -1595,6 +1651,10 @@ private fun BottomBar(
     onAskAi: () -> Unit,
     /** Reply Later mails whose reminder fired (AVE-86): > 0 switches the button to attention. */
     replyLaterDueCount: Int = 0,
+    /** Set Aside pile (AVE-201): its pill shows while it holds mail or is open. */
+    setAsideCount: Int = 0,
+    isSetAsideTab: Boolean = false,
+    onSetAside: () -> Unit = {},
     onOpenComposeMenu: () -> Unit,
     onOpenCompose: () -> Unit,
     onCloseComposeMenu: () -> Unit,
@@ -1607,6 +1667,7 @@ private fun BottomBar(
     var composePressed by remember { mutableStateOf(false) }
 
     val showReplyLater = replyLaterCount > 0 || isReplyLaterTab
+    val showSetAside = setAsideCount > 0 || isSetAsideTab
 
     Row(
         modifier = Modifier
@@ -1614,78 +1675,33 @@ private fun BottomBar(
             .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding),
         verticalAlignment = Alignment.Bottom,
     ) {
-        AnimatedVisibility(
+        val isDue = replyLaterDueCount > 0
+        PileButton(
             visible = showReplyLater,
-            enter = fadeIn(selectModeSpring()) +
-                expandHorizontally(
-                    animationSpec = selectModeSpring(),
-                    expandFrom = Alignment.Start,
-                    clip = false,
-                ) +
-                scaleIn(animationSpec = selectModeSpring(), initialScale = 0.72f),
-            exit = fadeOut(selectModeSpring()) +
-                shrinkHorizontally(
-                    animationSpec = selectModeSpring(),
-                    shrinkTowards = Alignment.Start,
-                    clip = false,
-                ) +
-                scaleOut(animationSpec = selectModeSpring(), targetScale = 0.72f),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val isDue = replyLaterDueCount > 0
-                val contentTint = when {
-                    isDue -> colors.attention
-                    isReplyLaterTab -> colors.accent
-                    else -> colors.ink
-                }
-                val description = buildString {
-                    append("Reply Later")
-                    if (replyLaterCount > 0) append(", $replyLaterCount to reply")
-                    if (isDue) append(", $replyLaterDueCount due")
-                }
-                Row(
-                    modifier = Modifier
-                        .height(HomeChromeMetrics.actionBarHeight)
-                        .replyLaterAttentionGlow(isDue, colors.attention)
-                        .homeChromeToolbarSurface(RoundedCornerShape(50))
-                        .then(
-                            if (isDue) {
-                                Modifier.background(colors.attention.copy(alpha = 0.12f), RoundedCornerShape(50))
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .clickable {
-                            if (showComposeActions) {
-                                onCloseComposeMenu()
-                            } else {
-                                onReplyLater()
-                            }
-                        }
-                        .semantics(mergeDescendants = true) { contentDescription = description }
-                        .padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        if (isDue) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        tint = contentTint,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    if (replyLaterCount > 0) {
-                        Text(
-                            "$replyLaterCount",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            color = contentTint,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
-            }
-        }
+            icon = if (isDue) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,
+            count = replyLaterCount,
+            isSelected = isReplyLaterTab,
+            isDue = isDue,
+            description = buildString {
+                append("Reply Later")
+                if (replyLaterCount > 0) append(", $replyLaterCount to reply")
+                if (isDue) append(", $replyLaterDueCount due")
+            },
+            onClick = { if (showComposeActions) onCloseComposeMenu() else onReplyLater() },
+        )
+        // Set Aside sits right next to Reply Later (AVE-201): same pill, no reminders.
+        PileButton(
+            visible = showSetAside,
+            icon = Icons.Outlined.BookmarkBorder,
+            count = setAsideCount,
+            isSelected = isSetAsideTab,
+            isDue = false,
+            description = buildString {
+                append("Set Aside")
+                if (setAsideCount > 0) append(", $setAsideCount set aside")
+            },
+            onClick = { if (showComposeActions) onCloseComposeMenu() else onSetAside() },
+        )
 
         if (showAskAi) {
             Row(
@@ -2002,6 +2018,79 @@ private fun <T> selectModeSpring() = spring<T>(
     dampingRatio = 0.86f,
     stiffness = Spring.StiffnessMediumLow,
 )
+
+/**
+ * A workflow pile's pill in the bottom bar (Reply Later, Set Aside): glyph + count on the
+ * toolbar surface, accent while its pile is open, attention-tinted while a reminder is due.
+ * Springs in from the leading edge when the pile fills and out when it empties.
+ */
+@Composable
+private fun PileButton(
+    visible: Boolean,
+    icon: ImageVector,
+    count: Int,
+    isSelected: Boolean,
+    isDue: Boolean,
+    description: String,
+    onClick: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(selectModeSpring()) +
+            expandHorizontally(
+                animationSpec = selectModeSpring(),
+                expandFrom = Alignment.Start,
+                clip = false,
+            ) +
+            scaleIn(animationSpec = selectModeSpring(), initialScale = 0.72f),
+        exit = fadeOut(selectModeSpring()) +
+            shrinkHorizontally(
+                animationSpec = selectModeSpring(),
+                shrinkTowards = Alignment.Start,
+                clip = false,
+            ) +
+            scaleOut(animationSpec = selectModeSpring(), targetScale = 0.72f),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val contentTint = when {
+                isDue -> colors.attention
+                isSelected -> colors.accent
+                else -> colors.ink
+            }
+            Row(
+                modifier = Modifier
+                    .height(HomeChromeMetrics.actionBarHeight)
+                    .replyLaterAttentionGlow(isDue, colors.attention)
+                    .homeChromeToolbarSurface(RoundedCornerShape(50))
+                    .then(
+                        if (isDue) {
+                            Modifier.background(colors.attention.copy(alpha = 0.12f), RoundedCornerShape(50))
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clickable(onClick = onClick)
+                    .semantics(mergeDescendants = true) { contentDescription = description }
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(icon, contentDescription = null, tint = contentTint, modifier = Modifier.size(18.dp))
+                if (count > 0) {
+                    Text(
+                        "$count",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        color = contentTint,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
+        }
+    }
+}
 
 /**
  * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): a warm

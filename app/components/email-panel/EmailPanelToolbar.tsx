@@ -8,8 +8,10 @@ import FloatingPanel from "~/components/FloatingPanel";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import { isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
+import { isSetAside } from "~/lib/piles";
 import { keysFor } from "~/lib/shortcuts";
 import {
+	BookmarkSimpleIcon,
 	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
@@ -50,6 +52,8 @@ interface EmailPanelToolbarProps {
 	onToggleReplyLater: () => void;
 	/** Opens the Reply Later reminder picker (AVE-86). */
 	onRemindMe?: () => void;
+	/** Set Aside pile (AVE-201). */
+	onToggleSetAside: () => void;
 	onToggleRead: () => void;
 	/** Absent when the message is already archived. */
 	onArchive?: () => void;
@@ -80,6 +84,7 @@ export default function EmailPanelToolbar({
 	onToggleStar,
 	onToggleReplyLater,
 	onRemindMe,
+	onToggleSetAside,
 	onToggleRead,
 	onArchive,
 	onPopOut,
@@ -94,6 +99,8 @@ export default function EmailPanelToolbar({
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
 	const [laterPops, setLaterPops] = useState(0);
+	const [asidePops, setAsidePops] = useState(0);
+	const setAside = isSetAside(email);
 	// Read-only mailbox (its domain's subscription ended): flags only, no send/move/delete.
 	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	return (
@@ -170,6 +177,20 @@ export default function EmailPanelToolbar({
 					onClick={onRemindMe}
 				/>
 			)}
+			<IconButton
+				label={setAside ? "Remove from Set Aside" : "Set aside"}
+				shortcut={keysFor("setAside")}
+				icon={BookmarkSimpleIcon}
+				size="md"
+				weight={setAside ? "fill" : "regular"}
+				iconKey={asidePops}
+				iconClassName={`${setAside ? "text-kumo-default" : ""} ${asidePops ? "animate-pop" : ""}`}
+				aria-pressed={setAside}
+				onClick={() => {
+					if (!setAside) setAsidePops((n) => n + 1);
+					onToggleSetAside();
+				}}
+			/>
 			<IconButton
 				label={email.read ? "Mark as unread" : "Mark as read"}
 				shortcut={keysFor("toggleRead")}

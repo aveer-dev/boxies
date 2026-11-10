@@ -154,6 +154,7 @@ struct HomeFolderColumn: View {
                     .accessibilityAddTraits(.isHeader)
 
                 row(.replyLater, count: app.replyLaterCount, countLabel: "queued", dueCount: app.replyLaterDueCount)
+                row(.setAside, count: app.setAsideCount, countLabel: "set aside")
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 24)

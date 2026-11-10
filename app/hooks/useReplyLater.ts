@@ -9,6 +9,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { formatReminderLong } from "~/lib/reply-later-reminders";
 import { queryKeys } from "~/queries/keys";
 import { useUpdateEmail } from "~/queries/emails";
+import { PILE_SET_ASIDE, isSetAside } from "~/lib/piles";
 import type { Email } from "~/types";
 
 /**
@@ -31,7 +32,12 @@ export function useReplyLater(mailboxId: string | undefined) {
 			if (!mailboxId) return;
 			const adding = !email.reply_later;
 			updateEmail.mutate(
-				{ mailboxId, id: email.id, data: { reply_later: adding } },
+				{
+					mailboxId,
+					id: email.id,
+					// Adding moves Set Aside mail over (one pile at a time).
+					data: adding ? { reply_later: true, pile_id: "reply_later" } : { reply_later: false, pile_id: null },
+				},
 				{ onSettled: refreshPiles },
 			);
 			if (!adding) return;
@@ -53,6 +59,33 @@ export function useReplyLater(mailboxId: string | undefined) {
 			});
 		},
 		[mailboxId, updateEmail, refreshPiles, toastManager, openReminderPicker],
+	);
+
+	/**
+	 * Set Aside (AVE-201): the second pile, for mail to keep handy. A message
+	 * is in one pile at a time, so Reply Later mail moves over (and loses its
+	 * reminder); replying never takes it out.
+	 */
+	const toggleSetAside = useCallback(
+		(email: Email) => {
+			if (!mailboxId) return;
+			const adding = !isSetAside(email);
+			updateEmail.mutate(
+				{
+					mailboxId,
+					id: email.id,
+					data: adding
+						? { pile: PILE_SET_ASIDE, pile_id: PILE_SET_ASIDE, reply_later: false, reply_later_remind_at: null }
+						: { pile: null, pile_id: null },
+				},
+				{
+					onSettled: refreshPiles,
+					onError: () => toastManager.add({ title: "Couldn't update Set Aside", variant: "error" }),
+				},
+			);
+			toastManager.add({ title: adding ? "Set aside" : "Removed from Set Aside" });
+		},
+		[mailboxId, updateEmail, refreshPiles, toastManager],
 	);
 
 	/** `at` sets (and adds to Reply Later); null removes the pending reminder. */
@@ -79,7 +112,7 @@ export function useReplyLater(mailboxId: string | undefined) {
 	);
 
 	return useMemo(
-		() => ({ toggleReplyLater, setReminder, openReminderPicker }),
-		[toggleReplyLater, setReminder, openReminderPicker],
+		() => ({ toggleReplyLater, toggleSetAside, setReminder, openReminderPicker }),
+		[toggleReplyLater, toggleSetAside, setReminder, openReminderPicker],
 	);
 }

@@ -32,6 +32,126 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(email.aliasId, "al_1")
     }
 
+    // MARK: - Workflow piles (AVE-201)
+
+    func testPilesDecodeSetAsideBesideReplyLater() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[
+          {"id":"reply_later","name":"Reply Later","builtin":true,"clears_on_reply":true,"count":3,"due_count":1},
+          {"id":"set_aside","name":"Set Aside","builtin":true,"clears_on_reply":false,"count":2,"due_count":0}
+        ]}
+        """)
+        XCTAssertEqual(response.count(of: WorkflowPileID.replyLater), 3)
+        XCTAssertEqual(response.pile(WorkflowPileID.replyLater)?.dueCount, 1)
+        XCTAssertEqual(response.pile(WorkflowPileID.replyLater)?.clearsOnReply, true)
+        let setAside = try XCTUnwrap(response.pile(WorkflowPileID.setAside))
+        XCTAssertEqual(setAside.count, 2)
+        XCTAssertEqual(setAside.name, "Set Aside")
+        XCTAssertEqual(setAside.builtin, true)
+        XCTAssertEqual(setAside.clearsOnReply, false)
+    }
+
+    func testOlderWorkersListOnlyReplyLater() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[{"id":"reply_later","count":4,"due_count":0}]}
+        """)
+        XCTAssertEqual(response.count(of: WorkflowPileID.replyLater), 4)
+        XCTAssertNil(response.pile(WorkflowPileID.setAside))
+        XCTAssertEqual(response.count(of: WorkflowPileID.setAside), 0)
+        XCTAssertNil(response.pile(WorkflowPileID.replyLater)?.name)
+        XCTAssertNil(response.pile(WorkflowPileID.replyLater)?.clearsOnReply)
+    }
+
+    func testEmailDecodesPileId() throws {
+        let setAside = try decode(Email.self, """
+        {"id":"p1","folder_id":"archive","subject":"Ticket","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,
+         "pile_id":"set_aside","pile_at":"2026-10-11T09:00:00Z"}
+        """)
+        XCTAssertEqual(setAside.pileId, WorkflowPileID.setAside)
+        XCTAssertEqual(setAside.pileAt, "2026-10-11T09:00:00Z")
+        XCTAssertTrue(setAside.isSetAside)
+        XCTAssertFalse(setAside.replyLater)
+
+        let none = try decode(Email.self, """
+        {"id":"p2","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":null}
+        """)
+        XCTAssertNil(none.pileId)
+        XCTAssertFalse(none.isSetAside)
+    }
+
+    func testOlderWorkersWithoutPileIdFallBackToReplyLater() throws {
+        let queued = try decode(Email.self, """
+        {"id":"p3","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":false,"starred":false,"reply_later":1}
+        """)
+        XCTAssertEqual(queued.pileId, WorkflowPileID.replyLater)
+        XCTAssertFalse(queued.isSetAside)
+
+        let plain = try decode(Email.self, """
+        {"id":"p4","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":false,"starred":false}
+        """)
+        XCTAssertNil(plain.pileId)
+    }
+
+    @MainActor
+    func testSettingAsideMovesMailOutOfReplyLater() {
+        var email = Email(
+            id: "p5", subject: "Contract", sender: "a@x.com", recipient: "b@x.com",
+            date: "2026-10-10T10:00:00Z", read: true, starred: false,
+            replyLater: true, replyLaterAt: "2026-10-10T11:00:00Z",
+            replyLaterRemindAt: "2026-10-12T09:00:00Z"
+        )
+        email.pileId = WorkflowPileID.replyLater
+        let aside = AppModel.settingAside(email, true)
+        XCTAssertTrue(aside.isSetAside)
+        XCTAssertFalse(aside.replyLater)
+        XCTAssertNil(aside.replyLaterAt)
+        XCTAssertNil(aside.replyLaterRemindAt)
+        XCTAssertNotNil(aside.pileAt)
+
+        let back = AppModel.settingAside(aside, false)
+        XCTAssertNil(back.pileId)
+        XCTAssertNil(back.pileAt)
+        XCTAssertFalse(back.replyLater)
+    }
+
+    func testCacheKeepsOnePilePerMail() throws {
+        let db = DatabaseService(inMemory: true)
+        let mb = "mb@x.com"
+        let email = try decode(Email.self, """
+        {"id":"p6","folder_id":"inbox","subject":"Boarding pass","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":"set_aside"}
+        """)
+        db.upsertEmails(mailboxId: mb, emails: [email])
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getSetAsideEmails(mailboxId: mb).map(\.id), ["p6"])
+        XCTAssertEqual(db.getEmail(id: "p6")?.pileId, WorkflowPileID.setAside)
+        XCTAssertNotNil(db.getEmail(id: "p6")?.pileAt, "joining a pile without pile_at stamps one")
+
+        // Reply later moves it over.
+        db.updateEmailFlags(id: "p6", replyLater: true)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+        XCTAssertEqual(db.getReplyLaterCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getEmail(id: "p6")?.pileId, WorkflowPileID.replyLater)
+
+        // Set aside moves it back and drops Reply Later.
+        db.updateEmailPile(id: "p6", pileId: WorkflowPileID.setAside)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getReplyLaterCount(mailboxId: mb), 0)
+        XCTAssertEqual(db.getEmail(id: "p6")?.replyLater, false)
+
+        // Leaving Reply Later doesn't touch Set Aside.
+        db.updateEmailFlags(id: "p6", replyLater: false)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+
+        db.updateEmailPile(id: "p6", pileId: nil)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+        XCTAssertNil(db.getEmail(id: "p6")?.pileId)
+    }
+
     // MARK: - Tracking pixels (AVE-195)
 
     func testEmailDecodesBlockedTrackers() throws {

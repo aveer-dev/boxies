@@ -208,6 +208,7 @@ export default function EmailPanel({
 	useReaderKey("toggleRead");
 	useReaderKey("star");
 	useReaderKey("replyLater");
+	useReaderKey("setAside");
 	useReaderKey("popOut");
 
 	if (!email) {
@@ -218,6 +219,7 @@ export default function EmailPanel({
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
 	const toggleReplyLater = () => replyLaterActions.toggleReplyLater(email);
 	const remindMe = () => replyLaterActions.openReminderPicker(email);
+	const toggleSetAside = () => replyLaterActions.toggleSetAside(email);
 	const runMove = (folderId: string, setSenderPreference: boolean) => {
 		if (!mailboxId) return;
 		moveEmailMut.mutate(
@@ -388,6 +390,7 @@ export default function EmailPanel({
 		toggleRead,
 		star: toggleStar,
 		replyLater: toggleReplyLater,
+		setAside: toggleSetAside,
 	};
 
 	const hasThread = allMessages.length > 1;
@@ -426,6 +429,7 @@ export default function EmailPanel({
 				onToggleStar={toggleStar}
 				onToggleReplyLater={toggleReplyLater}
 				onRemindMe={remindMe}
+				onToggleSetAside={toggleSetAside}
 				onToggleRead={toggleRead}
 				onArchive={archive}
 				onPopOut={popOut}

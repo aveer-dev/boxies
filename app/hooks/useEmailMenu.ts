@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import {
+	BookmarkSimpleIcon,
 	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
@@ -22,6 +23,7 @@ import { Folders } from "shared/folders";
 import { type MenuEntry, useContextMenu } from "~/components/ContextMenu";
 import { type EmailActions, hasUnread } from "~/hooks/useEmailActions";
 import { pendingReminder } from "~/lib/reply-later-reminders";
+import { isSetAside } from "~/lib/piles";
 import { keysFor } from "~/lib/shortcuts";
 import { useFolders } from "~/queries/folders";
 import type { Email } from "~/types";
@@ -70,6 +72,13 @@ export function buildEmailMenu(
 			icon: ClockCounterClockwiseIcon,
 			shortcut: keysFor("replyLater"),
 			onSelect: () => actions.toggleReplyLater(email),
+		},
+		{
+			type: "item",
+			label: isSetAside(email) ? "Remove from Set Aside" : "Set aside",
+			icon: BookmarkSimpleIcon,
+			shortcut: keysFor("setAside"),
+			onSelect: () => actions.toggleSetAside(email),
 		},
 		{
 			type: "item",

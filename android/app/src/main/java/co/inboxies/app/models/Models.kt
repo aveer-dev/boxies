@@ -629,6 +629,13 @@ data class Email(
     @SerialName("reply_later_remind_at") val replyLaterRemindAt: String? = null,
     /** When the reminder fired, UTC ISO 8601. Set + unread = "due". */
     @SerialName("reply_later_reminded_at") val replyLaterRemindedAt: String? = null,
+    /**
+     * Workflow pile the message sits in (`reply_later` | `set_aside`), at most one (AVE-201).
+     * Older Workers omit it; [currentPileId] falls back to [replyLater].
+     */
+    @SerialName("pile_id") val pileId: String? = null,
+    /** When it joined [pileId], UTC ISO 8601 (non-threaded list rows only). */
+    @SerialName("pile_at") val pileAt: String? = null,
     val body: String? = null,
     val snippet: String? = null,
     @SerialName("in_reply_to") val inReplyTo: String? = null,
@@ -677,6 +684,14 @@ data class Email(
     @Serializable(with = LenientBlockedTrackersSerializer::class)
     val blockedTrackers: BlockedTrackers? = null,
 ) {
+    /** The pile this message is in; `reply_later` when an older Worker only sent the flag. */
+    val currentPileId: String?
+        get() = pileId ?: if (replyLater) PileIds.REPLY_LATER else null
+
+    /** In the Set Aside pile (AVE-201): kept handy, no reply owed. */
+    val isSetAside: Boolean
+        get() = currentPileId == PileIds.SET_ASIDE
+
     /** A pending reminder on a mail still in Reply Later (AVE-86). */
     val hasPendingReplyLaterReminder: Boolean
         get() = replyLater && !replyLaterRemindAt.isNullOrBlank()
@@ -1073,6 +1088,11 @@ data class EmailListResponse(
 @Serializable
 data class WorkflowPile(
     val id: String,
+    /** Absent on older Workers (they only return Reply Later). */
+    val name: String? = null,
+    val builtin: Boolean = true,
+    /** Replying takes a thread out of this pile (Reply Later yes, Set Aside no). */
+    @SerialName("clears_on_reply") val clearsOnReply: Boolean? = null,
     val count: Int = 0,
     /** Reply Later mails whose reminder fired and are still unread (AVE-86). 0 on older Workers. */
     @SerialName("due_count") val dueCount: Int = 0,
@@ -1081,7 +1101,18 @@ data class WorkflowPile(
 @Serializable
 data class WorkflowPilesResponse(
     val piles: List<WorkflowPile> = emptyList(),
-)
+) {
+    fun pile(id: String): WorkflowPile? = piles.firstOrNull { it.id == id }
+
+    /** A pile the Worker doesn't list yet (Set Aside on an older Worker) holds nothing. */
+    fun count(id: String): Int = pile(id)?.count ?: 0
+}
+
+/** Built-in workflow piles (AVE-201). A thread sits in at most one. */
+object PileIds {
+    const val REPLY_LATER = "reply_later"
+    const val SET_ASIDE = "set_aside"
+}
 
 @Serializable
 data class RecentRecipient(
@@ -1265,12 +1296,18 @@ sealed class HomeTab {
     data object Chats : HomeTab()
     data object AiInbox : HomeTab()
     data object ReplyLater : HomeTab()
+    /** Set Aside pile (AVE-201): pushed over a folder like Reply Later. */
+    data object SetAside : HomeTab()
+
+    /** Reply Later or Set Aside: a workflow pile, pushed over the folder it was opened from. */
+    val isPile: Boolean
+        get() = this == ReplyLater || this == SetAside
 
     val syncFolderId: String?
         get() = when (this) {
             is Folder -> id
             AiInbox -> "inbox"
-            Chats, ReplyLater -> null
+            Chats, ReplyLater, SetAside -> null
         }
 
     val title: String
@@ -1291,6 +1328,7 @@ sealed class HomeTab {
             Chats -> "AI"
             AiInbox -> "For you"
             ReplyLater -> "Reply Later"
+            SetAside -> "Set Aside"
         }
 
     companion object {

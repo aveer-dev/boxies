@@ -53,6 +53,7 @@ export function searchPath(mailboxRef: string, query: string) {
  *   /mailbox/:ref/emails/:folder/:emailId?   built-in folder list → reader
  *   /mailbox/:ref/tags/:tagRef/:emailId?     tag list (by index) → reader
  *   /mailbox/:ref/reply-later/:emailId?      Reply Later → reader
+ *   /mailbox/:ref/set-aside/:emailId?        Set Aside → reader
  *   /mailbox/:ref/new/:emailId?              all New Inbox mail → reader
  *   /mailbox/:ref/search/:emailId?q=…        results → reader
  *

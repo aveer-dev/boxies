@@ -975,12 +975,18 @@ final class APIClient: @unchecked Sendable {
         read: Bool? = nil,
         starred: Bool? = nil,
         replyLater: Bool? = nil,
-        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil
+        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil,
+        pile: PilePatch? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
         if let replyLater { body["reply_later"] = replyLater }
+        switch pile {
+        case .set(let id): body["pile"] = id
+        case .clear: body["pile"] = NSNull()
+        case nil: break
+        }
         switch replyLaterRemindAt {
         case .set(let iso): body["reply_later_remind_at"] = iso
         case .clear: body["reply_later_remind_at"] = NSNull()
@@ -1055,6 +1061,22 @@ final class APIClient: @unchecked Sendable {
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
             query: [
                 "reply_later": "true",
+                "page": String(page),
+                "limit": "25",
+            ]
+        )
+    }
+
+    /// One workflow pile's mail, oldest-added first (AVE-201). `reply_later` matches
+    /// `listReplyLaterEmails`; `set_aside` needs a Worker that knows piles.
+    func listPileEmails(mailboxId: String, pileId: String, page: Int = 1) async throws -> EmailListResponse {
+        if pileId == WorkflowPileID.replyLater {
+            return try await listReplyLaterEmails(mailboxId: mailboxId, page: page)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
+            query: [
+                "pile": pileId,
                 "page": String(page),
                 "limit": "25",
             ]
@@ -1684,17 +1706,48 @@ extension Notification.Name {
     static let inboxiesServiceEnded = Notification.Name("inboxiesServiceEnded")
 }
 
-struct WorkflowPile: Decodable {
+struct WorkflowPile: Decodable, Equatable {
     let id: String
     let count: Int
     /// Reply Later mails whose reminder fired and are still unread (AVE-86).
     /// Nil on older Workers that don't send it.
     var dueCount: Int? = nil
+    /// Display name, builtin flag and reply behaviour (AVE-201). Older Workers omit them.
+    var name: String? = nil
+    var builtin: Bool? = nil
+    var clearsOnReply: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, count
+        case id, count, name, builtin
         case dueCount = "due_count"
+        case clearsOnReply = "clears_on_reply"
     }
+
+    init(id: String, count: Int, dueCount: Int? = nil, name: String? = nil, builtin: Bool? = nil, clearsOnReply: Bool? = nil) {
+        self.id = id
+        self.count = count
+        self.dueCount = dueCount
+        self.name = name
+        self.builtin = builtin
+        self.clearsOnReply = clearsOnReply
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        count = (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? 0
+        dueCount = (try? c.decodeIfPresent(Int.self, forKey: .dueCount)) ?? nil
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        builtin = (try? c.decodeIfPresent(Bool.self, forKey: .builtin)) ?? nil
+        clearsOnReply = (try? c.decodeIfPresent(Bool.self, forKey: .clearsOnReply)) ?? nil
+    }
+}
+
+/// `pile` in the email PUT (AVE-201): put the mail in a pile (moving it out of any
+/// other) or take it out of whatever pile it's in.
+enum PilePatch: Equatable {
+    case set(String)
+    case clear
 }
 
 /// `reply_later_remind_at` in the email PUT (AVE-86): set a UTC ISO time (also adds the
@@ -1706,6 +1759,16 @@ enum ReplyLaterRemindAtPatch: Equatable {
 
 struct WorkflowPilesResponse: Decodable {
     let piles: [WorkflowPile]
+
+    /// A pile's entry; nil when the Worker doesn't know it (older Workers send only Reply Later).
+    func pile(_ id: String) -> WorkflowPile? {
+        piles.first(where: { $0.id == id })
+    }
+
+    /// Mail in a pile; 0 when the Worker doesn't list it.
+    func count(of id: String) -> Int {
+        pile(id)?.count ?? 0
+    }
 }
 
 /// Do not follow Cloudflare Access's 302 to the login HTML page — that body is

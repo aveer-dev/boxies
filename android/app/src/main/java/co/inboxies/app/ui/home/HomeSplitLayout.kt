@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -249,7 +250,7 @@ private fun Hairline(color: Color) {
 
 /**
  * Leading column of the three-column layout: the mailbox's folders plus the Reply Later
- * pile, like the web's Miller "Folders" column. Same destinations as the compose-stack
+ * and Set Aside piles, like the web's Miller "Folders" column. Same destinations as the compose-stack
  * folder menu and the folder swipe; it only switches [HomeTab]. Twin of iOS
  * `HomeFolderColumn`.
  */
@@ -261,6 +262,7 @@ fun HomeFolderColumn(
     selected: HomeTab,
     unreadCount: (String) -> Int,
     replyLaterCount: Int,
+    setAsideCount: Int = 0,
     onSelect: (HomeTab) -> Unit,
     onHide: () -> Unit,
     modifier: Modifier = Modifier,
@@ -355,6 +357,13 @@ fun HomeFolderColumn(
             isSelected = selected == HomeTab.ReplyLater,
             onClick = { onSelect(HomeTab.ReplyLater) },
         )
+        FolderColumnRow(
+            tab = HomeTab.SetAside,
+            count = setAsideCount,
+            countLabel = "set aside",
+            isSelected = selected == HomeTab.SetAside,
+            onClick = { onSelect(HomeTab.SetAside) },
+        )
     }
 }
 
@@ -414,6 +423,7 @@ private fun FolderColumnRow(
 private val HomeTab.folderColumnIcon: ImageVector
     get() = when (this) {
         HomeTab.ReplyLater -> Icons.Outlined.Schedule
+        HomeTab.SetAside -> Icons.Outlined.BookmarkBorder
         else -> ComposeActionItem.entries.firstOrNull { it.folderTab == this }?.icon ?: Icons.Outlined.Folder
     }
 

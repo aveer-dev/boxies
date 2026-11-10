@@ -18,6 +18,7 @@ import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
+import co.inboxies.app.models.PileIds
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
@@ -159,6 +160,10 @@ class AppModel {
 
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
+
+    /** Set Aside pile size (AVE-201): workflow-piles `set_aside.count`, 0 on older Workers. */
+    private val _setAsideCount = MutableStateFlow(0)
+    val setAsideCount: StateFlow<Int> = _setAsideCount.asStateFlow()
 
     /**
      * Reply Later mails whose reminder fired and are still unread (AVE-86): piles
@@ -539,8 +544,9 @@ class AppModel {
                 if (folders.isNotEmpty()) _folders.value = folders
                 _replyLaterCount.value = db.getReplyLaterCount(id)
                 _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
-                if (_selectedTab.value is HomeTab.ReplyLater) {
-                    val emails = db.getReplyLaterEmails(id)
+                _setAsideCount.value = db.getSetAsideCount(id)
+                if (_selectedTab.value.isPile) {
+                    val emails = cachedPileEmails(id, _selectedTab.value)
                     if (emails.isNotEmpty()) {
                         _emails.value = emails
                         _isLoading.value = false
@@ -783,9 +789,10 @@ class AppModel {
         }
         _replyLaterCount.value = db.getReplyLaterCount(id)
         _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
+        _setAsideCount.value = db.getSetAsideCount(id)
         _reminderPickerEmail.value = null
-        if (_selectedTab.value is HomeTab.ReplyLater) {
-            val cachedEmails = db.getReplyLaterEmails(id)
+        if (_selectedTab.value.isPile) {
+            val cachedEmails = cachedPileEmails(id, _selectedTab.value)
             if (cachedEmails.isNotEmpty()) {
                 _emails.value = cachedEmails
                 _isLoading.value = false
@@ -1029,13 +1036,14 @@ class AppModel {
         _paging.value = _paging.value.cleared()
         _emailListError.value = null
 
-        if (tab is HomeTab.ReplyLater) {
+        if (tab.isPile) {
             _selectedMailboxId.value?.let { mailboxId ->
-                val cached = db.getReplyLaterEmails(mailboxId)
+                val cached = cachedPileEmails(mailboxId, tab)
+                val pileCount = if (tab is HomeTab.SetAside) _setAsideCount.value else _replyLaterCount.value
                 if (cached.isNotEmpty()) {
                     _emails.value = cached
                     _isLoading.value = false
-                } else if (_replyLaterCount.value > 0) {
+                } else if (pileCount > 0) {
                     _emails.value = emptyList()
                     _isLoading.value = true
                 } else {
@@ -1096,13 +1104,13 @@ class AppModel {
         // Whether deeper pages survive is decided once the response is in (paging may have
         // moved on meanwhile): Reply Later merges, folders pick the prune mode in syncFolder.
 
-        if (listScope.replyLater) {
+        if (listScope.isPile) {
             if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
             _isSyncing.value = true
             try {
-                val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
+                val response = fetchPilePage(listScope, page = 1)
                 db.upsertEmails(mailboxId, response.emails)
-                ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
+                ifStillSelected(mailboxId) { setPileCount(listScope, response.totalCount) }
                 ifStillShowing(listScope) {
                     _emailListError.value = null
                     if (!resetPaging && _paging.value.keepsLoadedPages(listScope)) {
@@ -1195,8 +1203,8 @@ class AppModel {
         // Fixture: no network; leave the bottom skeleton row visible for the emulator preview.
         if (isDebugPreview) return
         try {
-            if (listScope.replyLater) {
-                val response = ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
+            if (listScope.isPile) {
+                val response = fetchPilePage(listScope, page = page)
                 db.upsertEmails(listScope.mailboxId, response.emails)
                 if (ifStillShowing(listScope) { _paging.value.accepts(listScope, generation) } == true) {
                     val known = _emails.value.map { it.id }.toSet()
@@ -1244,12 +1252,14 @@ class AppModel {
         if (isDebugPreview) {
             _replyLaterCount.value = localCount
             _replyLaterDueCount.value = db.getReplyLaterDueCount(mailboxId)
+            _setAsideCount.value = db.getSetAsideCount(mailboxId)
             return
         }
         if (localCount > 0 || _replyLaterCount.value == 0) {
             _replyLaterCount.value = localCount
         }
         val replyLaterScope = EmailListScope(mailboxId, folderId = null, replyLater = true)
+        var replyLaterFailed = false
         try {
             val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
             db.upsertEmails(mailboxId, response.emails)
@@ -1263,23 +1273,46 @@ class AppModel {
                 }
             }
         } catch (_: Exception) {
-            runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()?.let { piles ->
-                ifStillSelected(mailboxId) {
-                    _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
-                }
-            }
+            replyLaterFailed = true
         }
-        refreshReplyLaterDueCount(mailboxId)
+        refreshPileSummary(mailboxId, replyLaterFromPiles = replyLaterFailed)
     }
 
-    /** Piles `due_count` (0 on older Workers), never below what the local cache knows is due. */
-    private suspend fun refreshReplyLaterDueCount(mailboxId: String) {
+    /**
+     * One `workflow-piles` read: Reply Later's `due_count` (never below what the local cache
+     * knows is due) and Set Aside's count (AVE-201; an older Worker lists no Set Aside → 0).
+     * [replyLaterFromPiles]: the Reply Later list failed, so take its count from here too.
+     */
+    private suspend fun refreshPileSummary(mailboxId: String, replyLaterFromPiles: Boolean = false) {
         val localDue = db.getReplyLaterDueCount(mailboxId)
-        val serverDue = runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()
-            ?.piles?.firstOrNull { it.id == "reply_later" }?.dueCount
+        val piles = runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()
         ifStillSelected(mailboxId) {
-            _replyLaterDueCount.value = maxOf(serverDue ?: 0, localDue)
+            _replyLaterDueCount.value = maxOf(piles?.pile(PileIds.REPLY_LATER)?.dueCount ?: 0, localDue)
+            if (piles != null) {
+                if (replyLaterFromPiles) _replyLaterCount.value = piles.count(PileIds.REPLY_LATER)
+                _setAsideCount.value = piles.count(PileIds.SET_ASIDE)
+            } else {
+                val localSetAside = db.getSetAsideCount(mailboxId)
+                if (localSetAside > 0 || _setAsideCount.value == 0) _setAsideCount.value = localSetAside
+            }
         }
+    }
+
+    /** Cached rows for a pile tab (Reply Later / Set Aside), in the Worker's order. */
+    private fun cachedPileEmails(mailboxId: String, tab: HomeTab): List<Email> = when (tab) {
+        HomeTab.SetAside -> db.getSetAsideEmails(mailboxId)
+        else -> db.getReplyLaterEmails(mailboxId)
+    }
+
+    private suspend fun fetchPilePage(listScope: EmailListScope, page: Int) =
+        if (listScope.setAside) {
+            ApiClient.shared.listPileEmails(listScope.mailboxId, PileIds.SET_ASIDE, page = page)
+        } else {
+            ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
+        }
+
+    private fun setPileCount(listScope: EmailListScope, count: Int) {
+        if (listScope.setAside) _setAsideCount.value = count else _replyLaterCount.value = count
     }
 
     fun openReminderPicker(email: Email) {
@@ -1331,7 +1364,7 @@ class AppModel {
     /** Pull-to-refresh: start the list over at page 1. */
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
-            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater -> {
+            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater, is HomeTab.SetAside -> {
                 loadEmailsForCurrentTab(showLoading = false, resetPaging = true)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
@@ -2110,6 +2143,7 @@ class AppModel {
         _errorMessage.value = null
         _toast.value = null
         _replyLaterDueCount.value = 0
+        _setAsideCount.value = 0
         _reminderPickerEmail.value = null
         // Sign-out forgets the last mailbox; the next account starts on its own first one.
         if (!isDebugPreview) LastMailboxPreference.clear()
@@ -2164,6 +2198,7 @@ class AppModel {
         _threadEmails.value = threadEmails
         _replyLaterCount.value = replyLaterCount
         _replyLaterDueCount.value = selectedMailboxId?.let { db.getReplyLaterDueCount(it) } ?: 0
+        _setAsideCount.value = selectedMailboxId?.let { db.getSetAsideCount(it) } ?: 0
         _reminderPickerEmail.value = null
         _isAdmin.value = isAdmin
         _inboxDigest.value = null
@@ -2456,6 +2491,7 @@ class AppModel {
             SwipeQuickAction.STAR -> toggleStar(on)
             SwipeQuickAction.TOGGLE_READ -> toggleRead(on)
             SwipeQuickAction.REPLY -> startCompose(ComposeMode.Reply, original = on)
+            SwipeQuickAction.SET_ASIDE -> toggleSetAside(on)
         }
     }
 
@@ -2477,12 +2513,8 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.replyLater
         db.updateEmailFlags(target.id, replyLater = next)
-        val updated = target.copy(
-            replyLater = next,
-            replyLaterAt = if (next) java.time.Instant.now().toString() else null,
-            replyLaterRemindAt = if (next) target.replyLaterRemindAt else null,
-            replyLaterRemindedAt = if (next) target.replyLaterRemindedAt else null,
-        )
+        // A Set Aside mail moves over to Reply Later: one pile at a time (AVE-201).
+        val updated = target.inPile(if (next) PileIds.REPLY_LATER else null)
         applyEmailUpdate(updated)
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
@@ -2490,12 +2522,43 @@ class AppModel {
             if (next) showAddedToReplyLaterToast(updated) else showToast("Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
-            db.updateEmailFlags(target.id, replyLater = !next)
+            db.upsertEmails(mailboxId, listOf(target))
             applyEmailUpdate(target)
             showToast("Couldn't update Reply Later", isError = true)
         }
         refreshReplyLaterCount()
-        if (_selectedTab.value is HomeTab.ReplyLater) {
+        if (_selectedTab.value.isPile) {
+            loadEmailsForCurrentTab(showLoading = false)
+        }
+    }
+
+    /**
+     * Set a thread aside, or take it out of Set Aside (AVE-201). Same optimistic flow as
+     * [toggleReplyLater]; a Reply Later mail moves over (and loses its reminder). No reminders,
+     * and replying leaves it where it is.
+     */
+    suspend fun toggleSetAside(on: Email? = null) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = on?.let { e -> _emails.value.firstOrNull { it.id == e.id } ?: e }
+            ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
+        val next = !target.isSetAside
+        val pile = if (next) PileIds.SET_ASIDE else null
+        db.updateEmailPile(target.id, pile)
+        applyEmailUpdate(target.inPile(pile))
+        val ok = if (isDebugPreview) {
+            true
+        } else {
+            runCatching { ApiClient.shared.setEmailPile(mailboxId, target.id, pile) }.isSuccess
+        }
+        if (ok) {
+            showToast(if (next) "Set aside" else "Removed from Set Aside")
+        } else {
+            db.upsertEmails(mailboxId, listOf(target))
+            applyEmailUpdate(target)
+            showToast("Couldn't update Set Aside", isError = true)
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value.isPile && !isDebugPreview) {
             loadEmailsForCurrentTab(showLoading = false)
         }
     }
@@ -2519,14 +2582,9 @@ class AppModel {
         for (id in ids) {
             db.updateEmailFlags(id, replyLater = replyLater)
             _emails.value.firstOrNull { it.id == id }?.let { email ->
-                applyEmailUpdate(
-                    email.copy(
-                        replyLater = replyLater,
-                        replyLaterAt = if (replyLater) java.time.Instant.now().toString() else null,
-                        replyLaterRemindAt = if (replyLater) email.replyLaterRemindAt else null,
-                        replyLaterRemindedAt = if (replyLater) email.replyLaterRemindedAt else null,
-                    ),
-                )
+                if (replyLater || email.replyLater) {
+                    applyEmailUpdate(email.inPile(if (replyLater) PileIds.REPLY_LATER else null))
+                }
             }
         }
         refreshReplyLaterCount()
@@ -2538,7 +2596,7 @@ class AppModel {
             }
             refreshReplyLaterCount()
         }
-        if (_selectedTab.value is HomeTab.ReplyLater) {
+        if (_selectedTab.value.isPile) {
             loadEmailsForCurrentTab(showLoading = false)
         }
     }
@@ -2567,7 +2625,12 @@ class AppModel {
         if (_selectedEmail.value?.id == updated.id) _selectedEmail.value = updated
         _threadEmails.update { list -> list.map { if (it.id == updated.id) updated else it } }
         _emails.update { list ->
-            if (_selectedTab.value is HomeTab.ReplyLater && !updated.replyLater) {
+            val leftPile = when (_selectedTab.value) {
+                HomeTab.ReplyLater -> !updated.replyLater
+                HomeTab.SetAside -> !updated.isSetAside
+                else -> false
+            }
+            if (leftPile) {
                 list.filterNot { it.id == updated.id }
             } else {
                 val mapped = list.map {
@@ -2579,6 +2642,8 @@ class AppModel {
                         replyLaterAt = updated.replyLaterAt,
                         replyLaterRemindAt = updated.replyLaterRemindAt,
                         replyLaterRemindedAt = updated.replyLaterRemindedAt,
+                        pileId = updated.pileId,
+                        pileAt = updated.pileAt,
                         threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
                         listSection = if (updated.read) "seen" else "new",
                     )
@@ -2699,7 +2764,7 @@ class AppModel {
         }
         if (folderId == "trash" || folderId == "spam") {
             refreshReplyLaterCount()
-            if (_selectedTab.value is HomeTab.ReplyLater) {
+            if (_selectedTab.value.isPile) {
                 loadEmailsForCurrentTab(showLoading = false)
             }
         }

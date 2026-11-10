@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.WarningAmber
@@ -348,6 +349,12 @@ fun EmailActionsSheet(
                     Icons.Outlined.Schedule,
                 ) {
                     scope.launch { app.toggleReplyLater(email); onDismiss() }
+                }
+                ActionRow(
+                    if (email.isSetAside) "Remove from Set Aside" else "Set aside",
+                    Icons.Outlined.BookmarkBorder,
+                ) {
+                    scope.launch { app.toggleSetAside(email); onDismiss() }
                 }
                 ActionRow(
                     if (email.hasPendingReplyLaterReminder) "Change reminder" else "Remind me…",

@@ -62,6 +62,8 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 			toggleStar: (email: Email) =>
 				updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }),
 			toggleReplyLater: replyLater.toggleReplyLater,
+			/** Set Aside pile (AVE-201): in or out; Reply Later mail moves over. */
+			toggleSetAside: replyLater.toggleSetAside,
 			/** Opens the Reply Later reminder picker (AVE-86). */
 			remindMe: replyLater.openReminderPicker,
 			archive: (email: Email) => {

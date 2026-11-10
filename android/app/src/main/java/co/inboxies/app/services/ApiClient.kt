@@ -1198,6 +1198,33 @@ class ApiClient private constructor() {
         ),
     )
 
+    /** One page of a workflow pile, oldest-added first (AVE-201: `set_aside`). */
+    suspend fun listPileEmails(
+        mailboxId: String,
+        pileId: String,
+        page: Int = 1,
+    ): EmailListResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
+        query = mapOf(
+            "pile" to pileId,
+            "page" to page.toString(),
+            "limit" to "25",
+        ),
+    )
+
+    /**
+     * Put the message in [pileId] (moving it out of any other pile), or take it out of
+     * whatever pile it's in with `null` — sent as an explicit JSON `null` (AVE-201).
+     */
+    suspend fun setEmailPile(mailboxId: String, id: String, pileId: String?): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            if (pileId != null) put("pile", pileId)
+            else put("pile", kotlinx.serialization.json.JsonNull)
+        },
+    )
+
     suspend fun listWorkflowPiles(mailboxId: String): WorkflowPilesResponse =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/workflow-piles")
 

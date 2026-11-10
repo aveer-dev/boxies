@@ -40,6 +40,7 @@ export const SHORTCUTS = {
 	toggleRead: { keys: "U", label: "Mark read / unread", group: "Mail", match: { key: "u" } },
 	star: { keys: "S", label: "Star / unstar", group: "Mail", match: { key: "s" } },
 	replyLater: { keys: "L", label: "Reply later", group: "Mail", match: { key: "l" } },
+	setAside: { keys: "H", label: "Set aside", group: "Mail", match: { key: "h" } },
 	nextThread: { keys: "J", label: "Next message", group: "Navigation", match: { key: "j" } },
 	prevThread: { keys: "K", label: "Previous message", group: "Navigation", match: { key: "k" } },
 	openInColumn: { keys: "O", label: "Open in new column", group: "Navigation", match: { key: "o" } },

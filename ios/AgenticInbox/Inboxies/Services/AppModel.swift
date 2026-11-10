@@ -93,6 +93,8 @@ final class AppModel {
     /// Reply Later mails whose reminder fired and are still unread (piles `due_count`,
     /// else the cache). Drives the bottom-bar attention state (AVE-86).
     var replyLaterDueCount: Int = 0
+    /// Count for the Set Aside pile beside Reply Later (AVE-201).
+    var setAsideCount: Int = 0
     /// Mail the Reply Later reminder picker is open for (toast "Add reminder", list menu).
     var reminderPickerEmail: Email?
     /// Cached sign-in identities for settings navigation.
@@ -172,11 +174,11 @@ final class AppModel {
         )
     }
 
-    /// `mailboxId|folderId` (or `|reply_later`) of the list on screen.
+    /// `mailboxId|folderId` (or `|reply_later`, `|set_aside`) of the list on screen.
     var currentListKey: String? {
         guard let mailboxId = selectedMailboxId else { return nil }
-        if selectedTab == .replyLater {
-            return EmailListPaging.key(mailboxId: mailboxId, listId: "reply_later")
+        if let pileId = selectedTab.pileId {
+            return EmailListPaging.key(mailboxId: mailboxId, listId: pileId)
         }
         guard let folderId = selectedTab.syncFolderId else { return nil }
         return EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
@@ -538,8 +540,9 @@ final class AppModel {
                 }
                 replyLaterCount = db.getReplyLaterCount(mailboxId: id)
                 replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: id)
-                if selectedTab == .replyLater {
-                    let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
+                setAsideCount = db.getSetAsideCount(mailboxId: id)
+                if let pileId = selectedTab.pileId {
+                    let cached = cachedPileEmails(mailboxId: id, pileId: pileId)
                     if !cached.isEmpty {
                         emails = cached
                         isLoading = false
@@ -753,8 +756,9 @@ final class AppModel {
         }
         replyLaterCount = db.getReplyLaterCount(mailboxId: id)
         replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: id)
-        if selectedTab == .replyLater {
-            let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
+        setAsideCount = db.getSetAsideCount(mailboxId: id)
+        if let pileId = selectedTab.pileId {
+            let cached = cachedPileEmails(mailboxId: id, pileId: pileId)
             if !cached.isEmpty {
                 emails = cached
                 isLoading = false
@@ -874,6 +878,8 @@ final class AppModel {
         if isDebugPreview {
             if tab == .replyLater {
                 emails = PreviewSupport.emails.filter(\.replyLater)
+            } else if tab == .setAside {
+                emails = PreviewSupport.emails.filter(\.isSetAside)
             } else if let folderId = tab.syncFolderId {
                 emails = PreviewSupport.emails.filter { $0.folderId == folderId }
             }
@@ -882,13 +888,13 @@ final class AppModel {
         }
 
         // Instant local query (< 2ms)
-        if tab == .replyLater {
+        if let pileId = tab.pileId {
             if let mailboxId = selectedMailboxId {
-                let cached = db.getReplyLaterEmails(mailboxId: mailboxId, limit: 50)
+                let cached = cachedPileEmails(mailboxId: mailboxId, pileId: pileId)
                 if !cached.isEmpty {
                     emails = cached
                     isLoading = false
-                } else if replyLaterCount > 0 {
+                } else if pileCount(pileId) > 0 {
                     emails = []
                     isLoading = true
                 } else {
@@ -935,7 +941,7 @@ final class AppModel {
             return
         }
 
-        if selectedTab == .replyLater {
+        if let pileId = selectedTab.pileId {
             if showLoading && emails.isEmpty {
                 isLoading = true
             }
@@ -945,12 +951,12 @@ final class AppModel {
                 isSyncing = false
             }
             do {
-                let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
+                let response = try await APIClient.shared.listPileEmails(mailboxId: mailboxId, pileId: pileId)
                 db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
-                replyLaterCount = response.totalCount
+                setPileCount(pileId, response.totalCount)
                 lastSyncedAt = Date()
                 if currentListKey == key {
-                    applyReplyLaterFirstPage(response, resetPaging: resetPaging)
+                    applyPileFirstPage(response, resetPaging: resetPaging)
                     emailListError = nil
                 }
             } catch {
@@ -1025,7 +1031,26 @@ final class AppModel {
         )
     }
 
-    private func applyReplyLaterFirstPage(_ response: EmailListResponse, resetPaging: Bool) {
+    /// Cached rows for a workflow pile (AVE-201).
+    private func cachedPileEmails(mailboxId: String, pileId: String) -> [Email] {
+        pileId == WorkflowPileID.setAside
+            ? db.getSetAsideEmails(mailboxId: mailboxId, limit: 50)
+            : db.getReplyLaterEmails(mailboxId: mailboxId, limit: 50)
+    }
+
+    func pileCount(_ pileId: String) -> Int {
+        pileId == WorkflowPileID.setAside ? setAsideCount : replyLaterCount
+    }
+
+    private func setPileCount(_ pileId: String, _ count: Int) {
+        if pileId == WorkflowPileID.setAside {
+            setAsideCount = count
+        } else {
+            replyLaterCount = count
+        }
+    }
+
+    private func applyPileFirstPage(_ response: EmailListResponse, resetPaging: Bool) {
         let ids = response.emails.map(\.id)
         if resetPaging || (listPaging?.loadedPages ?? 0) <= 1 {
             listPaging?.apply(
@@ -1067,8 +1092,8 @@ final class AppModel {
             }
         }
         do {
-            if selectedTab == .replyLater {
-                let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId, page: next)
+            if let pileId = selectedTab.pileId {
+                let response = try await APIClient.shared.listPileEmails(mailboxId: mailboxId, pileId: pileId, page: next)
                 db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
                 guard currentListKey == key,
                       listPaging?.apply(
@@ -1077,7 +1102,7 @@ final class AppModel {
                           totalCount: response.totalCount,
                           oldestDate: nil
                       ) == true else { return }
-                replyLaterCount = response.totalCount
+                setPileCount(pileId, response.totalCount)
                 emails = EmailListPaging.appending(response.emails, to: emails)
             } else if let folderId = selectedTab.syncFolderId {
                 guard let page = try await syncService.syncFolderPage(
@@ -1113,6 +1138,7 @@ final class AppModel {
         if isDebugPreview {
             replyLaterCount = localCount
             replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: mailboxId)
+            setAsideCount = db.getSetAsideCount(mailboxId: mailboxId)
             return
         }
         if localCount > 0 || replyLaterCount == 0 {
@@ -1123,16 +1149,18 @@ final class AppModel {
             db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
             replyLaterCount = response.totalCount
             if selectedTab == .replyLater, listPaging?.key == currentListKey {
-                applyReplyLaterFirstPage(response, resetPaging: false)
+                applyPileFirstPage(response, resetPaging: false)
             }
             await refreshReplyLaterDueCount(mailboxId: mailboxId)
         } catch {
             if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
-                let pile = piles.piles.first(where: { $0.id == "reply_later" })
+                let pile = piles.pile(WorkflowPileID.replyLater)
                 replyLaterCount = pile?.count ?? 0
                 replyLaterDueCount = pile?.dueCount ?? db.getReplyLaterDueCount(mailboxId: mailboxId)
+                applySetAsideCount(from: piles, mailboxId: mailboxId)
             } else {
                 replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: mailboxId)
+                setAsideCount = db.getSetAsideCount(mailboxId: mailboxId)
             }
         }
     }
@@ -1142,14 +1170,29 @@ final class AppModel {
     private func refreshReplyLaterDueCount(mailboxId: String) async {
         let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId)
         guard selectedMailboxId == mailboxId else { return }
-        let serverDue = piles?.piles.first(where: { $0.id == "reply_later" })?.dueCount
+        let serverDue = piles?.pile(WorkflowPileID.replyLater)?.dueCount
         replyLaterDueCount = serverDue ?? db.getReplyLaterDueCount(mailboxId: mailboxId)
+        if let piles {
+            applySetAsideCount(from: piles, mailboxId: mailboxId)
+        } else {
+            setAsideCount = db.getSetAsideCount(mailboxId: mailboxId)
+        }
+    }
+
+    /// Set Aside's count from the piles list (AVE-201). An older Worker without the pile
+    /// reports none; the cache can't hold Set Aside mail there either.
+    private func applySetAsideCount(from piles: WorkflowPilesResponse, mailboxId: String) {
+        if piles.pile(WorkflowPileID.setAside) != nil {
+            setAsideCount = piles.count(of: WorkflowPileID.setAside)
+        } else {
+            setAsideCount = db.getSetAsideCount(mailboxId: mailboxId)
+        }
     }
 
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder, .aiInbox, .replyLater:
+        case .folder, .aiInbox, .replyLater, .setAside:
             await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -1969,6 +2012,7 @@ final class AppModel {
         toast = nil
         replyLaterCount = 0
         replyLaterDueCount = 0
+        setAsideCount = 0
         reminderPickerEmail = nil
         identities = nil
         adminMailboxes = nil
@@ -2125,19 +2169,30 @@ final class AppModel {
         outbox.trigger()
 
         var updated = target
+        let wasSetAside = target.isSetAside
         updated.replyLater = next
         if next {
             updated.replyLaterAt = ISO8601DateFormatter().string(from: Date())
+            // One pile per mail: Reply Later takes it out of Set Aside (AVE-201).
+            updated.pileId = WorkflowPileID.replyLater
+            updated.pileAt = updated.replyLaterAt
         } else {
             updated.replyLaterAt = nil
             updated.replyLaterRemindAt = nil
             updated.replyLaterRemindedAt = nil
+            if updated.pileId == WorkflowPileID.replyLater {
+                updated.pileId = nil
+                updated.pileAt = nil
+            }
         }
         applyEmailUpdate(updated)
         // Count optimistically. Refetching the pile here races the outbox: the server
         // still has the old flag, so the count would bounce back and a removed row (and
         // its local flag, via upsert) would reappear in the Reply Later pile.
         replyLaterCount = max(0, replyLaterCount + (next ? 1 : -1))
+        if next && wasSetAside {
+            setAsideCount = max(0, setAsideCount - 1)
+        }
         if next {
             showAddedToReplyLaterToast(for: updated)
         } else {
@@ -2186,16 +2241,22 @@ final class AppModel {
 
         var updated = target
         updated.replyLaterRemindAt = iso
+        let wasSetAside = target.isSetAside
         if iso != nil {
             updated.replyLater = true
             updated.replyLaterRemindedAt = nil
             if !wasInPile || updated.replyLaterAt == nil {
                 updated.replyLaterAt = ReplyLaterReminder.isoString(Date())
             }
+            if updated.pileId != WorkflowPileID.replyLater {
+                updated.pileId = WorkflowPileID.replyLater
+                updated.pileAt = updated.replyLaterAt
+            }
         }
         applyEmailUpdate(updated)
         if iso != nil, !wasInPile {
             replyLaterCount += 1
+            if wasSetAside { setAsideCount = max(0, setAsideCount - 1) }
         }
         if let date {
             showToast("Reminder set for \(ReplyLaterReminder.longLabel(date))", icon: "alarm")
@@ -2211,9 +2272,16 @@ final class AppModel {
             if var current = emails.first(where: { $0.id == id }) {
                 current.replyLater = replyLater
                 current.replyLaterAt = replyLater ? ISO8601DateFormatter().string(from: Date()) : nil
-                if !replyLater {
+                if replyLater {
+                    current.pileId = WorkflowPileID.replyLater
+                    current.pileAt = current.replyLaterAt
+                } else {
                     current.replyLaterRemindAt = nil
                     current.replyLaterRemindedAt = nil
+                    if current.pileId == WorkflowPileID.replyLater {
+                        current.pileId = nil
+                        current.pileAt = nil
+                    }
                 }
                 applyEmailUpdate(current)
             }
@@ -2231,9 +2299,59 @@ final class AppModel {
             }
             await refreshReplyLaterCount()
         }
-        if selectedTab == .replyLater {
+        if selectedTab.pileId != nil {
             await loadEmailsForCurrentTab(showLoading: false)
         }
+    }
+
+    // MARK: - Set Aside (AVE-201)
+    // A second pile beside Reply Later for mail to keep handy. No reply owed, so no
+    // reminders and no Focus & Reply, and replying leaves it in the pile.
+
+    /// Puts the mail in Set Aside, or takes it out when it's already there. Setting aside a
+    /// Reply Later mail moves it (one pile per mail).
+    func toggleSetAside(on email: Email? = nil) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let target = email ?? selectedEmail ?? threadEmails.last
+        guard let target else { return }
+        let next = !target.isSetAside
+        let wasReplyLater = target.replyLater
+
+        db.updateEmailPile(id: target.id, pileId: next ? WorkflowPileID.setAside : nil)
+        db.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: target.id,
+            actionType: "pile",
+            payload: ["pile": next ? WorkflowPileID.setAside : NSNull()]
+        )
+        outbox.trigger()
+
+        let updated = Self.settingAside(target, next)
+        applyEmailUpdate(updated)
+        // Optimistic counts, like Reply Later: a refetch would race the outbox.
+        setAsideCount = max(0, setAsideCount + (next ? 1 : -1))
+        if next && wasReplyLater {
+            replyLaterCount = max(0, replyLaterCount - 1)
+        }
+        showToast(next ? "Set aside" : "Removed from Set Aside", icon: next ? "bookmark" : nil)
+    }
+
+    /// The mail with Set Aside on or off. Joining Set Aside leaves Reply Later and drops
+    /// its reminder, as the Worker does.
+    static func settingAside(_ email: Email, _ setAside: Bool) -> Email {
+        var updated = email
+        if setAside {
+            updated.pileId = WorkflowPileID.setAside
+            updated.pileAt = ISO8601DateFormatter().string(from: Date())
+            updated.replyLater = false
+            updated.replyLaterAt = nil
+            updated.replyLaterRemindAt = nil
+            updated.replyLaterRemindedAt = nil
+        } else if updated.isSetAside {
+            updated.pileId = nil
+            updated.pileAt = nil
+        }
+        return updated
     }
 
     func toggleRead(on email: Email? = nil) async {
@@ -2270,6 +2388,8 @@ final class AppModel {
             emails[idx].replyLaterAt = updated.replyLaterAt
             emails[idx].replyLaterRemindAt = updated.replyLaterRemindAt
             emails[idx].replyLaterRemindedAt = updated.replyLaterRemindedAt
+            emails[idx].pileId = updated.pileId
+            emails[idx].pileAt = updated.pileAt
             if updated.read {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
@@ -2278,6 +2398,9 @@ final class AppModel {
             }
         }
         if selectedTab == .replyLater && !updated.replyLater {
+            emails.removeAll(where: { $0.id == updated.id })
+        }
+        if selectedTab == .setAside && !updated.isSetAside {
             emails.removeAll(where: { $0.id == updated.id })
         }
         if selectedTab.syncFolderId == "inbox" {
@@ -2771,15 +2894,29 @@ enum HomeTab: Hashable {
     case chats
     case aiInbox
     case replyLater
+    /// Set Aside pile (AVE-201): mail to keep handy, beside Reply Later.
+    case setAside
 
     static var inbox: HomeTab { .folder("inbox") }
+
+    /// Workflow pile this tab lists, nil for folders and chats (AVE-201).
+    var pileId: String? {
+        switch self {
+        case .replyLater: return WorkflowPileID.replyLater
+        case .setAside: return WorkflowPileID.setAside
+        default: return nil
+        }
+    }
+
+    /// Reply Later and Set Aside: piles pushed over a folder, popped back to it.
+    var isPile: Bool { pileId != nil }
 
     /// Folder id used for cache/sync when this tab shows mail-backed content.
     var syncFolderId: String? {
         switch self {
         case .folder(let id): return id
         case .aiInbox: return "inbox"
-        case .chats, .replyLater: return nil
+        case .chats, .replyLater, .setAside: return nil
         }
     }
 
@@ -2805,6 +2942,8 @@ enum HomeTab: Hashable {
             return "For you"
         case .replyLater:
             return "Reply Later"
+        case .setAside:
+            return "Set Aside"
         }
     }
 
@@ -2830,6 +2969,8 @@ enum HomeTab: Hashable {
             return "sparkles"
         case .replyLater:
             return "clock.arrow.circlepath"
+        case .setAside:
+            return "bookmark"
         }
     }
 }

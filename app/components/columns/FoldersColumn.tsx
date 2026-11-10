@@ -5,6 +5,7 @@
 import { Button, Dialog, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { Modal, ModalHeader } from "~/components/Modal";
 import {
+	BookmarkSimpleIcon,
 	ArchiveIcon,
 	AlarmIcon,
 	ClockCounterClockwiseIcon,
@@ -163,6 +164,7 @@ export default function FoldersColumn() {
 	const replyLaterPile = workflowPiles.find((p) => p.id === "reply_later");
 	const replyLaterCount = replyLaterPile?.count ?? 0;
 	const replyLaterDue = replyLaterPile?.due_count ?? 0;
+	const setAsideCount = workflowPiles.find((p) => p.id === "set_aside")?.count ?? 0;
 
 	const displayName = mailboxDisplayName(mailbox, mailboxId);
 
@@ -212,6 +214,12 @@ export default function FoldersColumn() {
 					label="Reply Later"
 					count={replyLaterCount}
 					attention={replyLaterDue}
+				/>
+				<FolderRow
+					to={`${mailboxPath(mailboxRef)}/set-aside`}
+					icon={<BookmarkSimpleIcon size={16} />}
+					label="Set Aside"
+					count={setAsideCount}
 				/>
 
 				<SectionLabel

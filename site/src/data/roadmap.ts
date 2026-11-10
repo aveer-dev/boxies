@@ -41,7 +41,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "swipes", group: "triage", name: "Swipe actions", status: "available", platforms: ["ios", "android"], note: "Up to three per edge.", src: "FC#4.4" },
 	{ id: "undo", group: "triage", name: "Undo for delete, archive and move", status: "available", platforms: ["ios", "android"], note: "About five seconds.", src: "FC#4.4; J (no undo on web)" },
 	{ id: "undo-send", group: "triage", name: "Undo send", status: "available", platforms: ["ios"], note: "A few seconds after you tap Send.", src: "RM#2 (iOS only)" },
-	{ id: "set-aside", group: "triage", name: "Set Aside", status: "planned", lineage: "HEY", platforms: [], note: "A second pile for mail you need to keep handy.", landing: true, src: "RM#1 (4)" },
+	{ id: "set-aside", group: "triage", name: "Set Aside", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "A second pile next to Reply Later, for mail you need to keep handy. Replying doesn’t take a thread out.", landing: true, src: "RM#1 (4); AVE-201 (workers/lib/piles.ts; web, iOS, Android)" },
 	{ id: "tags", group: "triage", name: "Tags and a VIP view", status: "exploring", platforms: [], note: "Today: folders and stars, and your own folders show as tags in every app, one per email.", src: "RM#1 (8); dev FoldersColumn.tsx (custom folders shown as #tags, one per email); AVE-158 0561af7 (Settings → Tags on iOS and Android); no VIP view" },
 
 	// ── AI ──
@@ -252,13 +252,6 @@ const allComingNext: (ComingNext & { hidden?: boolean })[] = [
 		body: "A short summary in the iPhone app: replies you probably owe, as to-dos you can tick off, and topics like purchases, travel and security to catch up on. It’s built, and not switched on yet.",
 		src: "FC#7; FSW#supporting-features (Inbox Brief: rules, not AI)",
 		ownerConfirm: "tease publicly",
-	},
-	{
-		id: "set-aside",
-		title: "Set Aside",
-		status: "planned",
-		body: "A second pile next to Reply Later, for mail you need to keep handy, like tickets or a document you’re waiting on.",
-		src: "RM#1 (4)",
 	},
 	{
 		id: "export",

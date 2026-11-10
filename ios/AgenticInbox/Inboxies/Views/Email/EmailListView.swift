@@ -46,6 +46,10 @@ struct EmailListView: View {
     /// "Reached the end · N skipped" line on the strip.
     var focusReplyResult: FocusReplyResult? = nil
     var onStartFocusReply: (() -> Void)? = nil
+    /// Empty-list copy; piles say what belongs there (AVE-201).
+    var emptyTitle: String = "No emails"
+    var emptySystemImage: String = "tray"
+    var emptyMessage: String = "This folder is empty."
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -120,9 +124,9 @@ struct EmailListView: View {
                     .padding(.top, 32)
                 } else {
                     ContentUnavailableView(
-                        "No emails",
-                        systemImage: "tray",
-                        description: Text("This folder is empty.")
+                        emptyTitle,
+                        systemImage: emptySystemImage,
+                        description: Text(emptyMessage)
                     )
                     .padding(.top, 48)
                 }
@@ -520,6 +524,15 @@ struct EmailListView: View {
             Label(email.replyLaterRemindDate == nil ? "Remind me…" : "Change reminder", systemImage: "alarm")
         }
 
+        Button {
+            Task { await app.toggleSetAside(on: email) }
+        } label: {
+            Label(
+                email.isSetAside ? "Remove from Set Aside" : "Set aside",
+                systemImage: email.isSetAside ? "bookmark.slash" : "bookmark"
+            )
+        }
+
         Divider()
 
         Button {
@@ -869,6 +882,11 @@ struct EmailRowView: View {
                         .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                         .accessibilityLabel("Reply later")
+                } else if email.isSetAside {
+                    Image(systemName: "bookmark.fill")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .accessibilityLabel("Set aside")
                 }
                 
                 if email.starred {
