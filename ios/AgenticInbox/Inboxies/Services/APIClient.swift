@@ -713,12 +713,18 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func setupDomainAliases(domain: String, aliases: [[String: String]]) async throws {
+    func setupDomainAliases(domain: String, aliases: [SetupAlias]) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/setup-aliases",
             method: "POST",
-            body: ["aliases": aliases]
+            body: Self.setupAliasesBody(aliases)
         )
+    }
+
+    /// Onboarding `setup-aliases` body. The Worker reads `aliasLocal` and `targetMailboxId`
+    /// and silently skips items without them (matches web `api.setupDomainAliases`).
+    static func setupAliasesBody(_ aliases: [SetupAlias]) -> [String: Any] {
+        ["aliases": aliases.map { ["aliasLocal": $0.aliasLocal, "targetMailboxId": $0.targetMailboxId] }]
     }
 
     func setupDomainUsers(domain: String, users: [[String: String]]) async throws {
@@ -1771,4 +1777,10 @@ private extension CharacterSet {
         set.remove(charactersIn: "/")
         return set
     }()
+}
+
+/// One onboarding alias: local part on the domain, and the mailbox id (full address) it delivers to.
+struct SetupAlias: Hashable {
+    let aliasLocal: String
+    let targetMailboxId: String
 }

@@ -86,6 +86,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -188,7 +189,23 @@ internal object AliasRequestBodies {
 
     /** Second precision (`2026-10-08T12:00:00Z`), which zod `datetime()` accepts. */
     fun isoUtc(instant: Instant): String = instant.truncatedTo(ChronoUnit.SECONDS).toString()
+
+    /**
+     * Onboarding `setup-aliases` body. The Worker reads `aliasLocal` and `targetMailboxId`
+     * and silently skips items without them (matches web `api.setupDomainAliases`).
+     */
+    fun setupAliases(aliases: List<SetupAlias>): JsonObject = buildJsonObject {
+        put("aliases", JsonArray(aliases.map { alias ->
+            buildJsonObject {
+                put("aliasLocal", alias.aliasLocal)
+                put("targetMailboxId", alias.targetMailboxId)
+            }
+        }))
+    }
 }
+
+/** One onboarding alias: local part on the domain, and the mailbox id (full address) it delivers to. */
+data class SetupAlias(val aliasLocal: String, val targetMailboxId: String)
 
 /** Thin OkHttp + kotlinx.serialization client mirroring iOS APIClient. */
 class ApiClient private constructor() {
@@ -806,17 +823,11 @@ class ApiClient private constructor() {
         return res.aliases
     }
 
-    suspend fun setupDomainAliases(domain: String, aliases: List<Map<String, String>>) {
+    suspend fun setupDomainAliases(domain: String, aliases: List<SetupAlias>) {
         request<EmptyResponse>(
             "/api/v1/admin/domains/${pathEncode(domain)}/setup-aliases",
             method = "POST",
-            body = buildJsonObject {
-                put("aliases", kotlinx.serialization.json.JsonArray(aliases.map { map ->
-                    buildJsonObject {
-                        map.forEach { (k, v) -> put(k, v) }
-                    }
-                }))
-            },
+            body = AliasRequestBodies.setupAliases(aliases),
         )
     }
 
