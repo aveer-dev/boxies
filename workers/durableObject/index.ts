@@ -49,7 +49,7 @@ import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
 import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
-import { decodeStoredInvite } from "../lib/calendar-invite";
+import { decodeStoredInvite, organizerMatchesSender } from "../lib/calendar-invite";
 import { mailCardsAllowed, type EmailInvite, type EmailOtp } from "../../shared/mail-cards";
 import {
 	blockTrackingPixels,
@@ -1045,20 +1045,33 @@ export class MailboxDO extends DurableObject<Env> {
 	/**
 	 * Reader cards (AVE-175, shared/mail-cards.ts): turn the stored
 	 * `otp_code` / `calendar_invite` columns into `otp` / `invite`, and drop
-	 * both while the message sits in Spam or its sender failed auth.
+	 * both while the message sits in Spam or its sender failed auth. The
+	 * invite says whether its ORGANIZER lines up with the From (AVE-220),
+	 * decided here so rows stored before the flag get it too.
 	 */
-	#withMailCards<T extends { otp_code?: unknown; calendar_invite?: unknown; folder_id?: unknown; auth_tier?: unknown }>(
+	#withMailCards<
+		T extends { otp_code?: unknown; calendar_invite?: unknown; folder_id?: unknown; auth_tier?: unknown; sender?: unknown },
+	>(
 		email: T,
 	): Omit<T, "otp_code" | "calendar_invite"> & { otp: EmailOtp | null; invite: EmailInvite | null } {
 		const { otp_code, calendar_invite, ...rest } = email;
+		const authTier = typeof email.auth_tier === "string" ? email.auth_tier : null;
 		const allowed = mailCardsAllowed({
 			folder_id: typeof email.folder_id === "string" ? email.folder_id : null,
-			auth_tier: typeof email.auth_tier === "string" ? email.auth_tier : null,
+			auth_tier: authTier,
 		});
+		const invite = allowed ? decodeStoredInvite(calendar_invite) : null;
 		return {
 			...rest,
 			otp: allowed && typeof otp_code === "string" && otp_code ? { code: otp_code } : null,
-			invite: allowed ? decodeStoredInvite(calendar_invite) : null,
+			invite: invite && {
+				...invite,
+				organizerMatchesSender: organizerMatchesSender(
+					invite.organizer,
+					typeof email.sender === "string" ? email.sender : null,
+					authTier,
+				),
+			},
 		};
 	}
 

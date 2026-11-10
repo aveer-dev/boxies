@@ -1432,7 +1432,7 @@ fun MailboxOnboardingView(
                                                 if (teamUsers.isNotEmpty()) {
                                                     try {
                                                         val domain = customDomain.trim().lowercase()
-                                                        val payload = teamUsers.map { mapOf("name" to it.name, "email" to it.email, "username" to it.username) }
+                                                        val payload = teamUsers.map { ApiClient.SetupUser(fullName = it.name, contactEmail = it.email, username = it.username) }
                                                         ApiClient.shared.setupDomainUsers(domain, payload)
                                                     } catch (_: Exception) {}
                                                 }
