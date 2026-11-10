@@ -186,6 +186,25 @@ import {
 } from "../lib/thread-notes";
 import type { ThreadNote } from "../../shared/thread-notes";
 import {
+	countTaggedEmails,
+	createTag,
+	deleteTag,
+	listTaggedEmails,
+	listTags,
+	renameTag,
+	setEmailTag,
+	setThreadTag,
+	tagExists,
+	tagsForEmails,
+	withTagFields,
+	type CreateTagResult,
+	type EmailTagResult,
+	type RenameTagResult,
+	type TaggedEmailsOptions,
+	type ThreadTagResult,
+} from "../lib/tags";
+import type { Tag } from "../../shared/tags";
+import {
 	decideOutboundSendClaim,
 	outboundSendClaimKey,
 	type OutboundSendClaim,
@@ -1165,13 +1184,17 @@ export class MailboxDO extends DurableObject<Env> {
 			.offset(offset)
 			.all();
 
-		return this.#withFileAttachmentFlag(
-			result.map((email) => this.#withDecodedAuth({
-				...email,
-				read: !!email.read,
-				starred: !!email.starred,
-				reply_later: !!email.reply_later,
-			})),
+		return withTagFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(
+				result.map((email) => this.#withDecodedAuth({
+					...email,
+					read: !!email.read,
+					starred: !!email.starred,
+					reply_later: !!email.reply_later,
+				})),
+			),
+			"email",
 		);
 	}
 
@@ -1426,20 +1449,24 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 
 			const rows = [...result];
-			return withThreadNoteFields(
+			return withTagFields(
 				this.ctx.storage.sql,
-				this.#withFileAttachmentFlag(
-					rows.map((row: any) => this.#withDecodedAuth({
-						...row,
-						read: !!row.read,
-						starred: !!row.starred,
-						reply_later: !!row.reply_later,
-						thread_count: row.thread_count || 1,
-						thread_unread_count: row.thread_unread_count || 0,
-						participants: row.participants || row.sender,
-					})),
+				withThreadNoteFields(
+					this.ctx.storage.sql,
+					this.#withFileAttachmentFlag(
+						rows.map((row: any) => this.#withDecodedAuth({
+							...row,
+							read: !!row.read,
+							starred: !!row.starred,
+							reply_later: !!row.reply_later,
+							thread_count: row.thread_count || 1,
+							thread_unread_count: row.thread_unread_count || 0,
+							participants: row.participants || row.sender,
+						})),
+					),
+					options.userId,
 				),
-				options.userId,
+				"thread",
 			);
 		}
 
@@ -1476,10 +1503,14 @@ export class MailboxDO extends DurableObject<Env> {
 			needs_reply: !!row.needs_reply,
 			has_draft: !!row.has_draft,
 		}));
-		return withThreadNoteFields(
+		return withTagFields(
 			this.ctx.storage.sql,
-			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
-			options.userId,
+			withThreadNoteFields(
+				this.ctx.storage.sql,
+				this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
+				options.userId,
+			),
+			"thread",
 		);
 	}
 
@@ -1606,6 +1637,7 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments.map(withAttachmentRisk),
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
+			tags: this.#emailTags([id]).get(id) ?? [],
 		})));
 	}
 
@@ -1671,6 +1703,7 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 
 		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
+		const tagsByEmail = this.#emailTags(emailIds);
 
 		return await Promise.all(
 			emailRows.map(async (email) => this.#withTrackersBlocked(this.#withMailCards(this.#withDecodedAuth({
@@ -1683,6 +1716,7 @@ export class MailboxDO extends DurableObject<Env> {
 				reply_later: !!email.reply_later,
 				attachments: (attachmentsByEmail.get(email.id) || []).map(withAttachmentRisk),
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
+				tags: tagsByEmail.get(email.id) ?? [],
 			})))),
 		);
 	}
@@ -1866,6 +1900,103 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async deleteThreadNote(noteId: string, userId: string): Promise<boolean> {
 		return deleteThreadNote(this.ctx.storage.sql, noteId, userId) !== null;
+	}
+
+	// ── Tags (AVE-240; see lib/tags and shared/tags) ───────────────
+	// Shared by the whole mailbox, so changes broadcast: `email_updated`
+	// { id, tags } per message whose tags changed, `tags_changed` after a
+	// tag is created, renamed or deleted.
+
+	/** Tags per email id; empty map when the lookup fails (payloads keep working). */
+	#emailTags(emailIds: string[]): Map<string, { id: string; name: string }[]> {
+		try {
+			return tagsForEmails(this.ctx.storage.sql, emailIds);
+		} catch (e) {
+			console.error("tag lookup failed:", (e as Error).message);
+			return new Map();
+		}
+	}
+
+	async listTags(): Promise<Tag[]> {
+		return listTags(this.ctx.storage.sql);
+	}
+
+	async createTag(name: unknown): Promise<CreateTagResult> {
+		await this.#assertMailboxWritable();
+		const result = createTag(this.ctx.storage.sql, name);
+		if (result.ok) this.broadcastEvent("tags_changed", {});
+		return result;
+	}
+
+	async renameTag(tagId: string, name: unknown): Promise<RenameTagResult> {
+		await this.#assertMailboxWritable();
+		const result = renameTag(this.ctx.storage.sql, tagId, name);
+		if (result.ok && result.changed) this.broadcastEvent("tags_changed", {});
+		return result;
+	}
+
+	/** Delete a tag and its links; emails stay. False when it doesn't exist. */
+	async deleteTag(tagId: string): Promise<boolean> {
+		const emailIds = this.ctx.storage.transactionSync(() => deleteTag(this.ctx.storage.sql, tagId));
+		if (emailIds === null) return false;
+		this.broadcastEvent("tags_changed", {});
+		return true;
+	}
+
+	async setEmailTag(emailId: string, tagId: string, on: boolean): Promise<EmailTagResult> {
+		await this.#assertMailboxWritable();
+		const result = setEmailTag(this.ctx.storage.sql, emailId, tagId, on);
+		if (result.ok && result.changed) {
+			this.broadcastEvent("email_updated", { id: result.id, tags: result.tags });
+		}
+		return result;
+	}
+
+	async setThreadTag(threadId: string, tagId: string, on: boolean): Promise<ThreadTagResult> {
+		await this.#assertMailboxWritable();
+		const result = this.ctx.storage.transactionSync(() =>
+			setThreadTag(this.ctx.storage.sql, threadId, tagId, on),
+		);
+		if (result.ok && result.emailIds.length > 0) {
+			const byEmail = this.#emailTags(result.emailIds);
+			for (const id of result.emailIds) {
+				this.broadcastEvent("email_updated", { id, tags: byEmail.get(id) ?? [] });
+			}
+		}
+		return result;
+	}
+
+	/** Mail with a tag (see shared/tags for the row shape); null when the tag doesn't exist. */
+	async getTaggedEmails(
+		tagId: string,
+		options: TaggedEmailsOptions & { userId?: string } = {},
+	): Promise<{ emails: unknown[]; totalCount: number } | null> {
+		const sql = this.ctx.storage.sql;
+		if (!tagExists(sql, tagId)) return null;
+		const threaded = !!options.threaded;
+		const mapped = listTaggedEmails(sql, tagId, options).map((row: any) => {
+			const base = {
+				...row,
+				read: !!row.read,
+				starred: !!row.starred,
+				reply_later: !!row.reply_later,
+			};
+			return this.#withDecodedAuth(
+				threaded
+					? {
+							...base,
+							thread_count: row.thread_count || 1,
+							thread_unread_count: row.thread_unread_count || 0,
+							participants: row.participants || row.sender,
+						}
+					: base,
+			);
+		});
+		const withFlags = this.#withFileAttachmentFlag(mapped);
+		const emails = threaded
+			? withTagFields(sql, withThreadNoteFields(sql, withFlags, options.userId), "thread")
+			: withTagFields(sql, withFlags, "email");
+		return { emails, totalCount: countTaggedEmails(sql, tagId, options) };
 	}
 
 	async updateEmail(
@@ -2339,6 +2470,9 @@ export class MailboxDO extends DurableObject<Env> {
 			...emailAttachments.map((att) => attachmentKey(id, att.id, att.filename)),
 		];
 		this.ctx.storage.transactionSync(() => {
+			// Tag links cascade with the row; deleted explicitly too so they
+			// never outlive it (AVE-240).
+			this.ctx.storage.sql.exec(`DELETE FROM email_tags WHERE email_id = ?1`, id);
 			this.db
 				.delete(schema.emails)
 				.where(eq(schema.emails.id, id))
@@ -3274,13 +3408,17 @@ export class MailboxDO extends DurableObject<Env> {
 		params.push(limit, offset);
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
-		return this.#withFileAttachmentFlag(
-			[...result].map((row: any) => this.#withDecodedAuth({
-				...row,
-				read: !!row.read,
-				starred: !!row.starred,
-				reply_later: !!row.reply_later,
-			})),
+		return withTagFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(
+				[...result].map((row: any) => this.#withDecodedAuth({
+					...row,
+					read: !!row.read,
+					starred: !!row.starred,
+					reply_later: !!row.reply_later,
+				})),
+			),
+			"email",
 		);
 	}
 
