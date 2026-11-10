@@ -57,6 +57,38 @@ final class MailCardsTests: XCTestCase {
         XCTAssertEqual(invite.description, "Agenda")
     }
 
+    // MARK: - Organizer vs. sender (AVE-220)
+
+    func testOrganizerShownWhenItMatchesTheSender() throws {
+        let ceo = EmailInviteOrganizer(email: "ceo@acme.com", name: "CEO")
+        // Older servers don't send the flag: unchanged.
+        XCTAssertEqual(EmailInvite(start: "2026-11-05", organizer: ceo).organizerLine, .organizer("CEO"))
+        XCTAssertEqual(EmailInvite(start: "2026-11-05", organizer: ceo, organizerMatchesSender: true).organizerLine, .organizer("CEO"))
+        XCTAssertEqual(EmailInvite(start: "2026-11-05").organizerLine, InviteOrganizerLine.none)
+    }
+
+    func testUnmatchedOrganizerIsOnlyAClaimBesideTheSender() throws {
+        let email = try decode(Email.self, """
+        {"id":"e9","folder_id":"inbox","subject":"Sync","sender":"mallory@stranger.example","sender_name":"Mallory",
+         "recipient":"me@acme.com","date":"2026-11-04T10:00:00Z","read":0,"starred":0,
+         "invite":{"cancelled":false,"start":"2026-11-05T15:00:00.000Z","allDay":false,
+           "organizer":{"email":"ceo@acme.com","name":"CEO"},"organizerMatchesSender":false}}
+        """)
+        XCTAssertEqual(email.invite?.organizerMatchesSender, false)
+        guard case .invite(let invite, _) = try XCTUnwrap(MailCards.card(for: [email])) else {
+            return XCTFail("expected an invite card")
+        }
+        XCTAssertEqual(
+            invite.organizerLine,
+            .claimed(sender: "Mallory <mallory@stranger.example>", claimed: "CEO <ceo@acme.com>")
+        )
+        let bare = EmailInvite(
+            start: "2026-11-05", organizer: EmailInviteOrganizer(email: "ceo@acme.com", name: nil),
+            organizerMatchesSender: false
+        )
+        XCTAssertEqual(bare.organizerLine, .claimed(sender: nil, claimed: "ceo@acme.com"))
+    }
+
     func testEmailDecodesNullAndMissingCards() throws {
         let nulls = try decode(Email.self, """
         {"id":"e2","subject":"Hi","sender":"a@x.com","recipient":"b@x.com","date":"2026-11-04T10:00:00Z",

@@ -1964,11 +1964,9 @@ struct MailboxOnboardingView: View {
     private func persistTeamUsers() async {
         if !teamUsers.isEmpty {
             let domain = customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let payload = teamUsers.map { [
-                "name": $0.name,
-                "email": $0.email,
-                "username": $0.username
-            ] }
+            let payload = teamUsers.map {
+                SetupUser(fullName: $0.name, contactEmail: $0.email, username: $0.username)
+            }
             _ = try? await APIClient.shared.setupDomainUsers(domain: domain, users: payload)
         }
         await MainActor.run {
