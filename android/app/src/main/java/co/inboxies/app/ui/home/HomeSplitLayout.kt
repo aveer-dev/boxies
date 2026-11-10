@@ -80,6 +80,10 @@ import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.models.MailTag
+import co.inboxies.app.services.MailTags
+import co.inboxies.app.ui.tags.CreateTagButton
+import co.inboxies.app.ui.tags.TagListRow
 
 /**
  * How the home shell arranges mail. Driven by the window width, not the device: an
@@ -264,6 +268,12 @@ fun HomeFolderColumn(
     onSelect: (HomeTab) -> Unit,
     onHide: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Tags group (AVE-242): every tag; tap opens its view. */
+    tags: List<MailTag> = emptyList(),
+    canEditTags: Boolean = false,
+    onCreateTag: () -> Unit = {},
+    onRenameTag: (MailTag) -> Unit = {},
+    onDeleteTag: (MailTag) -> Unit = {},
 ) {
     val colors = inboxiesColors()
     Column(
@@ -355,6 +365,47 @@ fun HomeFolderColumn(
             isSelected = selected == HomeTab.ReplyLater,
             onClick = { onSelect(HomeTab.ReplyLater) },
         )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp)
+                .padding(top = 20.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "TAGS",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.List.sectionHeader,
+                letterSpacing = 0.6.sp,
+                color = colors.muted,
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { heading() },
+            )
+            if (canEditTags) CreateTagButton(onClick = onCreateTag, size = 32.dp)
+        }
+        if (tags.isEmpty()) {
+            Text(
+                MailTags.LIST_EMPTY,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
+        tags.forEach { tag ->
+            TagListRow(
+                tag = tag,
+                isSelected = selected == HomeTab.Tag(tag.id),
+                canEdit = canEditTags,
+                onOpen = { onSelect(HomeTab.Tag(tag.id)) },
+                onRename = { onRenameTag(tag) },
+                onDelete = { onDeleteTag(tag) },
+                compact = true,
+            )
+        }
     }
 }
 

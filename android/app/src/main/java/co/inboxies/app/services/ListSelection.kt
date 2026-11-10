@@ -14,11 +14,14 @@ data class EmailListScope(
     val mailboxId: String,
     val folderId: String?,
     val replyLater: Boolean = false,
+    /** A tag view (AVE-242): `GET /tags/:id/emails`, not a folder. */
+    val tagId: String? = null,
 ) {
     companion object {
         fun of(mailboxId: String?, tab: HomeTab): EmailListScope? {
             if (mailboxId == null) return null
             if (tab is HomeTab.ReplyLater) return EmailListScope(mailboxId, folderId = null, replyLater = true)
+            if (tab is HomeTab.Tag) return EmailListScope(mailboxId, folderId = null, tagId = tab.id)
             val folderId = tab.syncFolderId ?: return null
             return EmailListScope(mailboxId, folderId)
         }

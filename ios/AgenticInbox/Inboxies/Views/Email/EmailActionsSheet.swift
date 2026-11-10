@@ -122,6 +122,15 @@ struct EmailActionsSheet: View {
                         }
                     }
 
+                    if availability.showsTags {
+                        NavigationLink {
+                            TagPickerView(email: source, onClose: dismissSheet)
+                        } label: {
+                            Label(MailTags.pickerTitle, systemImage: "tag")
+                        }
+                        .accessibilityIdentifier("emailActionTags")
+                    }
+
                     if showsSpamAction, availability.showsNotSpam {
                         actionRow("Not Spam", systemImage: "checkmark.shield") {
                             Task {

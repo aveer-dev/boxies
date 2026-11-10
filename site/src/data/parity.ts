@@ -22,7 +22,7 @@ const shown = (rows: Row[]): ParityRow[] => rows.filter((r) => !r.webOnly || fla
 
 export const gmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Categories and tabs", ours: "Inbox · Promotions · Updates · Spam", status: "partly", note: "Newsletters from people you’ve emailed are sorted for you; senders you accept go where you choose. No Social or Forums.", src: `${GMAIL}; dev 31c58c6 (classifier files allowed senders without a chosen destination; header rules, not AI)` },
-	{ competitor: "gmail", theirs: "Labels", ours: "Folders and stars", status: "partly", note: "One folder per email, and your own folders show as tags in every app. More than one per email is being explored.", src: `${GMAIL}; dev FoldersColumn.tsx; AVE-158 0561af7 (Settings → Tags on iOS and Android)` },
+	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "An email lives in one folder and can carry as many tags as you like. Each tag opens a view of everything with it.", src: `${GMAIL}; AVE-240 #275 (shared/tags.ts); AVE-241 #277 (web); AVE-242 (iOS, Android)` },
 	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives; no suggestions as you type." : "Drafts replies when you ask; no suggestions as you type.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49)` },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins; a one-mailbox export is planned.", src: GMAIL },
@@ -52,7 +52,7 @@ export const hey: ParityRow[] = shown([
 // note sits under "In Inboxies").
 export const landingGmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Inbox categories", ours: "Inbox · Promotions · Updates", status: "partly", note: "Sorted for you, or per sender.", landing: true, src: "RM#2; dev 31c58c6" },
-	{ competitor: "gmail", theirs: "Labels", ours: "Folders and stars", status: "partly", note: "One folder per email.", landing: true, src: "RM#2" },
+	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "Many tags per email.", landing: true, src: "RM#2; AVE-240..242 (tags on web, iOS, Android)" },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts when you ask; no suggestions as you type.", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins.", landing: true, src: "RM#2" },

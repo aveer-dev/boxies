@@ -12,6 +12,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.EmailListResponse
 import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.SpamVerdictToast
 import co.inboxies.app.models.ThreadNote
@@ -22,6 +23,8 @@ import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
+import co.inboxies.app.models.MailTag
+import co.inboxies.app.models.TagRef
 import co.inboxies.app.models.ScreenerSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -171,6 +174,18 @@ class AppModel {
     /** Mail the "Remind me" picker is open for (AVE-86); `null` when closed. */
     private val _reminderPickerEmail = MutableStateFlow<Email?>(null)
     val reminderPickerEmail: StateFlow<Email?> = _reminderPickerEmail.asStateFlow()
+
+    /** The mailbox's tags (AVE-242), sorted by name, with unread counts. */
+    private val _tags = MutableStateFlow<List<MailTag>>(emptyList())
+    val tags: StateFlow<List<MailTag>> = _tags.asStateFlow()
+
+    /** Conversation the tag picker is open for (reader, row menu, actions sheet). */
+    private val _tagPickerEmail = MutableStateFlow<Email?>(null)
+    val tagPickerEmail: StateFlow<Email?> = _tagPickerEmail.asStateFlow()
+
+    /** Phone home's Tags sheet (folders menu → Tags). */
+    private val _showsTagList = MutableStateFlow(false)
+    val showsTagList: StateFlow<Boolean> = _showsTagList.asStateFlow()
 
     private val _identities = MutableStateFlow<List<LinkedIdentity>?>(null)
     val identities: StateFlow<List<LinkedIdentity>?> = _identities.asStateFlow()
@@ -472,6 +487,188 @@ class AppModel {
         }
     }
 
+    // Tags (AVE-242): many per email, on top of its one folder. API: shared/tags.ts.
+
+    /** Fetches the mailbox's tags and counts; DEBUG previews keep their fixtures. */
+    suspend fun refreshTags() {
+        if (isDebugPreview) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        val fresh = runCatching { ApiClient.shared.listTags(mailboxId) }.getOrNull() ?: return
+        ifStillSelected(mailboxId) { _tags.value = MailTags.sorted(fresh) }
+    }
+
+    fun tag(id: String): MailTag? = _tags.value.firstOrNull { it.id == id }
+
+    /** The tag view's title: its name, or "Tag" while the list loads. */
+    fun tagTitle(id: String): String = tag(id)?.name ?: HomeTab.Tag(id).title
+
+    fun openTagPicker(email: Email) {
+        hideToast()
+        _tagPickerEmail.value = email
+    }
+
+    fun dismissTagPicker() {
+        _tagPickerEmail.value = null
+    }
+
+    /** DEBUG previews: fixture tags (no network). */
+    fun setTagsForPreview(tags: List<MailTag>) {
+        _tags.value = MailTags.sorted(tags)
+    }
+
+    fun setTagListVisible(visible: Boolean) {
+        _showsTagList.value = visible
+    }
+
+    /** A tag view asked for from outside home's tab state (reader chip); home opens it. */
+    private val _tagViewRequest = MutableStateFlow<String?>(null)
+    val tagViewRequest: StateFlow<String?> = _tagViewRequest.asStateFlow()
+
+    fun requestTagView(tagId: String) {
+        _tagViewRequest.value = tagId
+    }
+
+    fun consumeTagViewRequest() {
+        _tagViewRequest.value = null
+    }
+
+    /** Every tag on the open conversation (or [email]'s own row when another is open). */
+    fun conversationTags(email: Email): List<TagRef> {
+        val key = MailTags.threadKey(email)
+        val open = _selectedEmail.value
+        val messages = if (open != null && MailTags.threadKey(open) == key) {
+            _threadEmails.value + open
+        } else {
+            emptyList()
+        }
+        val rows = _emails.value.filter { MailTags.threadKey(it) == key }
+        return MailTags.unionTags(messages + rows + email)
+    }
+
+    /**
+     * Adds ([on]) or removes [tag] on the whole conversation of [email]. Optimistic: list
+     * rows, the open thread and the cache change first; a failure puts them back.
+     */
+    suspend fun setTag(email: Email, tag: TagRef, on: Boolean) {
+        if (blockIfReadOnly()) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        val threadKey = MailTags.threadKey(email)
+        val before = Snapshot(_emails.value, _selectedEmail.value, _threadEmails.value)
+        val cachedBefore = db.getThreadEmails(mailboxId, threadKey) +
+            listOfNotNull(db.getEmail(email.id))
+        val viewTagId = (_selectedTab.value as? HomeTab.Tag)?.id
+        val dropsRow = !on && viewTagId == tag.id
+
+        fun patch(list: List<Email>) = MailTags.patchThreadTag(list, threadKey, tag, on)
+        _emails.value = if (dropsRow) {
+            _emails.value.filterNot { MailTags.threadKey(it) == threadKey }
+        } else {
+            patch(_emails.value)
+        }
+        _selectedEmail.value = _selectedEmail.value?.let { patch(listOf(it)).first() }
+        _threadEmails.value = patch(_threadEmails.value)
+        db.updateThreadTags(mailboxId, threadKey) { MailTags.withTag(it, tag, on) }
+        _tags.update { list ->
+            list.map { t ->
+                if (t.id != tag.id) t else t.copy(emailCount = (t.emailCount + if (on) 1 else -1).coerceAtLeast(0))
+            }
+        }
+        if (dropsRow) showToast(MailTags.removedToast(tag.name))
+
+        if (isDebugPreview) return
+        try {
+            val response = ApiClient.shared.setThreadTag(mailboxId, threadKey, tag.id, on)
+            ifStillSelected(mailboxId) {
+                if (!dropsRow) _emails.value = MailTags.setThreadTags(_emails.value, threadKey, response.tags)
+            }
+            refreshTags()
+        } catch (e: Exception) {
+            ifStillSelected(mailboxId) {
+                _emails.value = before.emails
+                _selectedEmail.value = before.selected
+                _threadEmails.value = before.thread
+                db.upsertEmails(mailboxId, cachedBefore)
+                showToast(MailTags.UPDATE_FAILED, isError = true)
+            }
+            refreshTags()
+        }
+    }
+
+    private data class Snapshot(val emails: List<Email>, val selected: Email?, val thread: List<Email>)
+
+    /** Thrown with the sentence to show when a tag name is refused (client or server). */
+    class TagException(message: String) : Exception(message)
+
+    /** Creates a tag; names the Worker would refuse throw [TagException] before any request. */
+    suspend fun createTag(raw: String): MailTag {
+        MailTags.validate(raw, _tags.value)?.let { throw TagException(it) }
+        val name = (MailTags.normalizeName(raw) as MailTags.NameResult.Ok).name
+        val created = if (isDebugPreview) {
+            MailTag(id = "tag_" + UUID.randomUUID().toString().take(8), name = name)
+        } else {
+            val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+            try {
+                ApiClient.shared.createTag(mailboxId, name)
+            } catch (e: ApiException.Http) {
+                throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailTags.CREATE_FAILED)
+            }
+        }
+        _tags.update { list -> MailTags.sorted(list.filterNot { it.id == created.id } + created) }
+        return created
+    }
+
+    suspend fun renameTag(tag: MailTag, raw: String) {
+        MailTags.validate(raw, _tags.value, ignoringId = tag.id)?.let { throw TagException(it) }
+        val name = (MailTags.normalizeName(raw) as MailTags.NameResult.Ok).name
+        if (name == tag.name) return
+        val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+        val renamed = if (isDebugPreview) {
+            tag.copy(name = name)
+        } else {
+            try {
+                ApiClient.shared.renameTag(mailboxId, tag.id, name)
+            } catch (e: ApiException.Http) {
+                throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailTags.RENAME_FAILED)
+            }
+        }
+        ifStillSelected(mailboxId) {
+            _tags.update { list -> MailTags.sorted(list.map { if (it.id == tag.id) renamed else it }) }
+            renameTagOnScreen(mailboxId, tag.id, renamed.name)
+        }
+    }
+
+    /** Deletes a tag (its emails stay put); if its view is open, the list goes back to Inbox. */
+    suspend fun deleteTag(tag: MailTag) {
+        val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+        if (!isDebugPreview) {
+            try {
+                ApiClient.shared.deleteTag(mailboxId, tag.id)
+            } catch (e: ApiException.Http) {
+                // Already gone elsewhere: treat as deleted.
+                if (e.code != 404) throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailTags.DELETE_FAILED)
+            }
+        }
+        ifStillSelected(mailboxId) {
+            _tags.update { list -> list.filterNot { it.id == tag.id } }
+            renameTagOnScreen(mailboxId, tag.id, null)
+            if (_selectedTab.value == HomeTab.Tag(tag.id)) selectTab(HomeTab.Folder(FolderIds.INBOX))
+        }
+    }
+
+    /** Rows, the open thread and the cache follow a renamed (or deleted: `name` null) tag. */
+    private fun renameTagOnScreen(mailboxId: String, tagId: String, name: String?) {
+        fun Email.follow(): Email {
+            val tags = tags ?: return this
+            if (tags.none { it.id == tagId }) return this
+            val next = tags.mapNotNull { t -> if (t.id != tagId) t else name?.let { t.copy(name = it) } }
+            return copy(tags = next.sortedWith(MailTags.order))
+        }
+        _emails.update { list -> list.map { it.follow() } }
+        _selectedEmail.update { it?.follow() }
+        _threadEmails.update { list -> list.map { it.follow() } }
+        db.updateTagEverywhere(mailboxId, tagId, name)
+    }
+
     /**
      * Optimistic unread change, in conversations (AVE-228). The Inbox's count is also the New
      * total, so "Show N more new" and the widget move with it (read, archive, delete, move).
@@ -769,6 +966,10 @@ class AppModel {
             _emailListError.value = null
             _isLoading.value = true
             _aiUsage.value = null
+            // Tags belong to a mailbox: a tag view can't follow into the next one.
+            _tags.value = emptyList()
+            _tagPickerEmail.value = null
+            if (_selectedTab.value is HomeTab.Tag) _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
         }
         _selectedMailboxId.value = id
         selectionIsProvisional = false
@@ -829,6 +1030,7 @@ class AppModel {
                 val foldersDeferred = async { MailboxSyncService.syncMailbox(id) }
                 val conversationsDeferred = async { runCatching { ApiClient.shared.listConversations(id) }.getOrNull() }
                 val replyLaterDeferred = async { refreshReplyLaterCount() }
+                val tagsDeferred = async { refreshTags() }
                 val folders = foldersDeferred.await()
                 applyServerFolders(id, folders)
                 conversationsDeferred.await()?.let { server ->
@@ -844,6 +1046,7 @@ class AppModel {
                     loadInboxDigest(showLoading = _inboxDigest.value == null)
                 }
                 replyLaterDeferred.await()
+                tagsDeferred.await()
             }
         } catch (e: Exception) {
             // Transport failures (no HTTP status) never drop the mailbox; show the list error.
@@ -1029,7 +1232,12 @@ class AppModel {
         _paging.value = _paging.value.cleared()
         _emailListError.value = null
 
-        if (tab is HomeTab.ReplyLater) {
+        if (tab is HomeTab.Tag) {
+            // Cached rows that carry the tag show at once; the server list replaces them.
+            val cached = _selectedMailboxId.value?.let { db.getTaggedEmails(it, tab.id) }.orEmpty()
+            _emails.value = cached
+            _isLoading.value = cached.isEmpty()
+        } else if (tab is HomeTab.ReplyLater) {
             _selectedMailboxId.value?.let { mailboxId ->
                 val cached = db.getReplyLaterEmails(mailboxId)
                 if (cached.isNotEmpty()) {
@@ -1096,13 +1304,13 @@ class AppModel {
         // Whether deeper pages survive is decided once the response is in (paging may have
         // moved on meanwhile): Reply Later merges, folders pick the prune mode in syncFolder.
 
-        if (listScope.replyLater) {
+        if (listScope.replyLater || listScope.tagId != null) {
             if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
             _isSyncing.value = true
             try {
-                val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
+                val response = serverListPage(listScope, page = 1)
                 db.upsertEmails(mailboxId, response.emails)
-                ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
+                if (listScope.replyLater) ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
                 ifStillShowing(listScope) {
                     _emailListError.value = null
                     if (!resetPaging && _paging.value.keepsLoadedPages(listScope)) {
@@ -1195,8 +1403,8 @@ class AppModel {
         // Fixture: no network; leave the bottom skeleton row visible for the emulator preview.
         if (isDebugPreview) return
         try {
-            if (listScope.replyLater) {
-                val response = ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
+            if (listScope.replyLater || listScope.tagId != null) {
+                val response = serverListPage(listScope, page = page)
                 db.upsertEmails(listScope.mailboxId, response.emails)
                 if (ifStillShowing(listScope) { _paging.value.accepts(listScope, generation) } == true) {
                     val known = _emails.value.map { it.id }.toSet()
@@ -1331,7 +1539,7 @@ class AppModel {
     /** Pull-to-refresh: start the list over at page 1. */
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
-            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater -> {
+            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater, is HomeTab.Tag -> {
                 loadEmailsForCurrentTab(showLoading = false, resetPaging = true)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
@@ -1375,8 +1583,21 @@ class AppModel {
             }
             if (isSelected(mailboxId) && folderId == FolderIds.INBOX) refreshScreenerQueue()
         }
+        // Tag views and tag counts: `email_updated {tags}` and `tags_changed` land here too.
+        if (listScope?.tagId != null) loadEmailsForCurrentTab(showLoading = false)
+        if (isSelected(mailboxId)) refreshTags()
         if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
         scheduleFolderCountsRefresh()
+    }
+
+    /** Page [page] of a list the server builds (Reply Later, a tag view). */
+    private suspend fun serverListPage(listScope: EmailListScope, page: Int): EmailListResponse {
+        val tagId = listScope.tagId
+        return if (tagId != null) {
+            ApiClient.shared.listTaggedEmails(listScope.mailboxId, tagId, page = page)
+        } else {
+            ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
+        }
     }
 
     /** Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh. */
@@ -2111,6 +2332,9 @@ class AppModel {
         _toast.value = null
         _replyLaterDueCount.value = 0
         _reminderPickerEmail.value = null
+        _tags.value = emptyList()
+        _tagPickerEmail.value = null
+        _showsTagList.value = false
         // Sign-out forgets the last mailbox; the next account starts on its own first one.
         if (!isDebugPreview) LastMailboxPreference.clear()
         selectionIsProvisional = false
@@ -2139,9 +2363,13 @@ class AppModel {
         errorMessage: String? = null,
         administeredDomains: List<String> = emptyList(),
         domainServices: Map<String, DomainService> = emptyMap(),
+        tags: List<MailTag> = emptyList(),
     ) {
         streamClient.stop()
         isDebugPreview = true
+        _tags.value = MailTags.sorted(tags)
+        _tagPickerEmail.value = null
+        _showsTagList.value = false
         val generation = _paging.value.generation + 1
         _paging.value = EmailListScope.of(selectedMailboxId, selectedTab)
             ?.let { EmailPagingState(scope = it, page = 1, hasMore = hasMorePages, generation = generation) }

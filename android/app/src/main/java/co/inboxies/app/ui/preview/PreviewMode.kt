@@ -51,12 +51,18 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Suppressions("suppressions", "previewSuppressions"),
     /** Settings → Outgoing mail → Signature on a web-formatted fixture (iOS `-previewSignature`, AVE-204). */
     Signature("signature", "previewSignature"),
-    /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
+    /** Settings → Folders with fixture custom folders (iOS `-previewTags`, AVE-158; titled Tags until AVE-242). */
     Tags("tags", "previewTags"),
-    /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
+    /** Settings → Folders with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
     TagsRename("tagsRename", "previewTagsRename"),
-    /** Settings → Tags with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
+    /** Settings → Folders with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
     TagsDelete("tagsDelete", "previewTagsDelete"),
+    /** Tag view "Clients": everything with the tag, rows carrying other tags too (iOS `-previewTagView`, AVE-242). */
+    TagView("tagView", "previewTagView"),
+    /** Reader on a tagged thread with the tag picker open (iOS `-previewTagPicker`, AVE-242). */
+    TagPicker("tagPicker", "previewTagPicker"),
+    /** Phone home with the Tags sheet open from the folders menu (iOS `-previewTagList`, AVE-242). */
+    TagList("tagList", "previewTagList"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */

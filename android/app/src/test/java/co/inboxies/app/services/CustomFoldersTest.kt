@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlinx.serialization.json.Json
 
-/** Tag (custom folder) rules match the Worker and the iOS twin (AVE-158). */
+/** Custom folder rules match the Worker and the iOS twin (AVE-158). */
 class CustomFoldersTest {
     @Test
     fun renameResponseDecodesWithoutUnreadCount() {
@@ -66,10 +66,10 @@ class CustomFoldersTest {
     }
 
     @Test
-    fun tagCopy() {
-        val tag = Folder("receipts", "#Receipts", 0)
-        assertEquals("#Receipts", CustomFolders.displayName(tag))
+    fun folderCopy() {
+        val tag = Folder("receipts", "#Receipts", 0) // an older "#" name
+        assertEquals("Receipts", CustomFolders.displayName(tag))
         assertEquals("Receipts", CustomFolders.normalizedName("  #Receipts "))
-        assertEquals("Delete #Receipts?", CustomFolders.deleteConfirmTitle(tag))
+        assertEquals("Delete Receipts?", CustomFolders.deleteConfirmTitle(tag))
     }
 }

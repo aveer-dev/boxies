@@ -822,6 +822,9 @@ struct Email: Identifiable, Codable, Hashable {
     var invite: EmailInvite? = nil
     /// Tracking pixels the server removed from `body` (reader payloads only; AVE-195).
     var blockedTrackers: BlockedTrackers? = nil
+    /// Tags (AVE-240): this message's, or on threaded list rows every tag in the
+    /// conversation. Sorted by name; nil from older Workers (shown as none).
+    var tags: [TagRef]? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -855,7 +858,7 @@ struct Email: Identifiable, Codable, Hashable {
         case classificationReason = "classification_reason"
         case matchedRuleId = "matched_rule_id"
         case oneClickUnsubscribe = "one_click_unsubscribe"
-        case otp, invite
+        case otp, invite, tags
         case blockedTrackers = "blocked_trackers"
     }
 
@@ -1246,6 +1249,8 @@ extension Email {
         otp = try? c.decodeIfPresent(EmailOtp.self, forKey: .otp)
         invite = try? c.decodeIfPresent(EmailInvite.self, forKey: .invite)
         blockedTrackers = try? c.decodeIfPresent(BlockedTrackers.self, forKey: .blockedTrackers)
+        // A malformed tag list never fails the email (missing = untagged).
+        tags = try? c.decodeIfPresent([TagRef].self, forKey: .tags)
     }
 }
 

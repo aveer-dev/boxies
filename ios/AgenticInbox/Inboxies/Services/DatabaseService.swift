@@ -230,6 +230,12 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;")
             setVersion(9)
         }
+
+        // Tags (AVE-242): the row's `tags` as JSON (`[TagRef]`); NULL = never sent.
+        if (getVersion() < 10) {
+            exec("ALTER TABLE emails ADD COLUMN tags_json TEXT;")
+            setVersion(10)
+        }
     }
 
     private func getVersion() -> Int {
@@ -457,7 +463,7 @@ final class DatabaseService: @unchecked Sendable {
                 updated_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, tags_json
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
@@ -466,7 +472,7 @@ final class DatabaseService: @unchecked Sendable {
                 ?, ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?,
-                ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -514,7 +520,9 @@ final class DatabaseService: @unchecked Sendable {
                 alias_active = COALESCE(excluded.alias_active, emails.alias_active),
                 auth_tier = COALESCE(excluded.auth_tier, emails.auth_tier),
                 classification_reason = COALESCE(excluded.classification_reason, emails.classification_reason),
-                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id);
+                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id),
+                -- Payloads from older Workers carry no tags: keep the cached ones.
+                tags_json = COALESCE(excluded.tags_json, emails.tags_json);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -573,6 +581,7 @@ final class DatabaseService: @unchecked Sendable {
                     bindOptionalString(stmt, 42, e.matchedRuleId)
                     bindOptionalString(stmt, 43, e.replyLaterRemindAt)
                     bindOptionalString(stmt, 44, e.replyLaterRemindedAt)
+                    bindOptionalString(stmt, 45, encodeTags(e.tags))
 
                     sqlite3_step(stmt)
                 }
@@ -605,7 +614,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
             ORDER BY MAX(date, COALESCE(reply_later_reminded_at, date)) DESC
@@ -651,7 +660,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -751,7 +760,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, tags_json
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -783,7 +792,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -1118,7 +1127,7 @@ final class DatabaseService: @unchecked Sendable {
                 e.reply_later, e.reply_later_at, e.alias_id, e.alias_email,
                 e.has_sticky_note, e.sticky_note_text, e.inline_note_count,
                 e.alias_active, e.auth_tier, e.classification_reason, e.matched_rule_id,
-                e.reply_later_remind_at, e.reply_later_reminded_at
+                e.reply_later_remind_at, e.reply_later_reminded_at, e.tags_json
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1288,8 +1297,36 @@ final class DatabaseService: @unchecked Sendable {
             inlineNoteCount: columnOptionalInt(stmt, 35),
             authTier: columnOptionalString(stmt, 37),
             classificationReason: columnOptionalString(stmt, 38),
-            matchedRuleId: columnOptionalString(stmt, 39)
+            matchedRuleId: columnOptionalString(stmt, 39),
+            tags: decodeTags(columnOptionalString(stmt, 42))
         )
+    }
+
+    private func encodeTags(_ tags: [TagRef]?) -> String? {
+        guard let tags, let data = try? JSONEncoder().encode(tags) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeTags(_ raw: String?) -> [TagRef]? {
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([TagRef].self, from: data)
+    }
+
+    /// Sets the cached `tags` of each email in `ids` (a tag change, AVE-242).
+    func updateEmailTags(_ tagsById: [String: [TagRef]]) {
+        guard !tagsById.isEmpty else { return }
+        queue.sync {
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE emails SET tags_json = ? WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK {
+                for (id, tags) in tagsById {
+                    sqlite3_reset(stmt)
+                    bindOptionalString(stmt, 1, encodeTags(tags))
+                    bindString(stmt, 2, id)
+                    sqlite3_step(stmt)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
     }
 
     private func encodeAuth(_ auth: EmailAuth?) -> String? {
