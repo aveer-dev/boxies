@@ -1977,10 +1977,9 @@ struct MailboxOnboardingView: View {
     private func persistAliases() async {
         if !domainAliases.isEmpty {
             let domain = customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let payload = domainAliases.map { [
-                "alias": $0.alias,
-                "target": $0.target
-            ] }
+            let payload = domainAliases.map {
+                SetupAlias(aliasLocal: $0.alias, targetMailboxId: $0.target)
+            }
             _ = try? await APIClient.shared.setupDomainAliases(domain: domain, aliases: payload)
         }
         await MainActor.run {

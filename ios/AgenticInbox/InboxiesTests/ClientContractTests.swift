@@ -652,4 +652,22 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(SecurityActivity.detail(item("sign_in", location: "Nigeria")), "Nigeria")
         XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: " ")), "")
     }
+
+    // MARK: - Onboarding setup-aliases (AVE-238)
+
+    /// The Worker reads `aliasLocal` + `targetMailboxId` and silently skips anything else.
+    func testSetupAliasesBodyUsesWorkerKeys() throws {
+        let body = APIClient.setupAliasesBody([
+            SetupAlias(aliasLocal: "support", targetMailboxId: "alice@startup.dev"),
+            SetupAlias(aliasLocal: "billing", targetMailboxId: "bob@startup.dev")
+        ])
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["aliases"])
+        let items = try XCTUnwrap(json["aliases"] as? [[String: String]])
+        XCTAssertEqual(items, [
+            ["aliasLocal": "support", "targetMailboxId": "alice@startup.dev"],
+            ["aliasLocal": "billing", "targetMailboxId": "bob@startup.dev"]
+        ])
+    }
 }
