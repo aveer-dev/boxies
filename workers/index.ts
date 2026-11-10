@@ -95,6 +95,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
 import { blockSuppressedSend, registerSuppressionRoutes } from "./routes/suppressions";
+import { registerTagRoutes } from "./routes/tags";
 import {
 	applyInboundDsn,
 	parseDeliveryStatusReport,
@@ -305,6 +306,7 @@ registerBillingRoutes(app);
 registerExportAndOffboardingRoutes(app);
 registerAliasRoutes(app);
 registerSuppressionRoutes(app);
+registerTagRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 

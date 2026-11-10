@@ -7,7 +7,7 @@
  * (you owe a reply; replying clears it) and Set Aside (keep it handy until
  * you take it out) are built in; custom piles (AVE-194) add rows to `piles`.
  *
- * Storage (migration 48_piles): `piles` holds definitions, `emails.pile_id`
+ * Storage (migration 49_piles): `piles` holds definitions, `emails.pile_id`
  * / `pile_at` hold membership. A message is in at most one pile, and a
  * thread too: putting one message in a pile takes the rest of its thread
  * out of any other pile. Reply Later also keeps its legacy `reply_later`

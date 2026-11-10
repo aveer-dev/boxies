@@ -268,17 +268,18 @@ enum PreviewSupport {
     /// `-previewDetail -previewInvite` (AVE-176): calendar invite with a join link and a
     /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant,
     /// `-previewInviteAddress` for an in-person invite (address only, Directions),
-    /// `-previewInviteExpanded` to open the details. Add `-previewInviteFreeBusy
+    /// `-previewInviteExpanded` to open the details, `-previewInviteClaimed` for a
+    /// stranger naming someone else as organizer (AVE-220). Add `-previewInviteFreeBusy
     /// free|conflict|added|ask` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
     /// "You're free", "Conflicts with Team sync +1 more", the "Added to Work · Undo"
     /// toast, or the "Check availability" link before access.
-    static func inviteEmail(cancelled: Bool, inPerson: Bool = false) -> Email {
+    static func inviteEmail(cancelled: Bool, inPerson: Bool = false, claimed: Bool = false) -> Email {
         Email(
             id: "preview-invite",
             folderId: "inbox",
             subject: cancelled ? "Canceled: Design review" : "Invitation: Design review @ Thu Nov 12",
-            sender: "pat@studio.example",
-            senderName: "Pat Lee",
+            sender: claimed ? "mallory@stranger.example" : "pat@studio.example",
+            senderName: claimed ? "Mallory" : "Pat Lee",
             recipient: "you@inboxies.email",
             date: "2026-11-06T13:30:00.000Z",
             read: false,
@@ -288,7 +289,7 @@ enum PreviewSupport {
                 : "<p>Pat Lee has invited you to <b>Design review</b>.</p><p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" + (inPerson ? "<p>We’ll meet in Room 4B, 200 Market St.</p>" : "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"),
             snippet: cancelled ? "This event has been cancelled." : "Pat Lee has invited you to Design review.",
             hasAttachment: true,
-            authTier: "verified",
+            authTier: claimed ? "unverified" : "verified",
             invite: EmailInvite(
                 method: cancelled ? "CANCEL" : "REQUEST",
                 cancelled: cancelled,
@@ -299,7 +300,10 @@ enum PreviewSupport {
                 end: "2026-11-12T16:00:00.000Z",
                 timezone: "America/New_York",
                 location: "Room 4B, 200 Market St",
-                organizer: EmailInviteOrganizer(email: "pat@studio.example", name: "Pat Lee"),
+                organizer: claimed
+                    ? EmailInviteOrganizer(email: "ceo@studio.example", name: "CEO")
+                    : EmailInviteOrganizer(email: "pat@studio.example", name: "Pat Lee"),
+                organizerMatchesSender: !claimed,
                 meetingUrl: inPerson ? nil : "https://meet.google.com/abc-defg-hij",
                 recurrence: "FREQ=WEEKLY;BYDAY=TH"
             )
@@ -576,7 +580,8 @@ enum PreviewSupport {
                 ? codeEmail
                 : inviteEmail(
                     cancelled: args.contains("-previewInviteCancelled"),
-                    inPerson: args.contains("-previewInviteAddress")
+                    inPerson: args.contains("-previewInviteAddress"),
+                    claimed: args.contains("-previewInviteClaimed")
                 )
             app.emails.insert(email, at: 0)
             app.selectedEmail = email

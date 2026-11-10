@@ -52,7 +52,7 @@ const row = (sql, id) =>
 {
 	const db = new DatabaseSync(":memory:");
 	const sql = sqlStorage(db);
-	const before = mailboxMigrations.filter((m) => m.name !== "48_piles");
+	const before = mailboxMigrations.filter((m) => m.name !== "49_piles");
 	applyMigrations(sql, before);
 	insert(sql, "old-rl", { replyLater: 1, replyLaterAt: "2026-10-01T09:00:00.000Z", remindAt: "2026-12-01T09:00:00.000Z" });
 	insert(sql, "old-plain");

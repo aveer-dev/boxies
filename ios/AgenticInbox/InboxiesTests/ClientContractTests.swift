@@ -704,6 +704,24 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
     }
 
+    // MARK: - Onboarding setup-users (AVE-243)
+
+    /// The Worker reads `fullName`, `contactEmail` and `username`; anything else is dropped.
+    func testSetupUsersBodyUsesWorkerKeys() throws {
+        let body = APIClient.setupUsersBody([
+            SetupUser(fullName: "Alice Doe", contactEmail: "alice@example.com", username: "alice"),
+            SetupUser(fullName: "", contactEmail: "", username: "bob")
+        ])
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["users"])
+        let items = try XCTUnwrap(json["users"] as? [[String: String]])
+        XCTAssertEqual(items, [
+            ["fullName": "Alice Doe", "contactEmail": "alice@example.com", "username": "alice"],
+            ["fullName": "", "contactEmail": "", "username": "bob"]
+        ])
+    }
+
     // MARK: - Recent security activity (AVE-151)
 
     func testSecurityActivityDecodesWorkerShape() throws {

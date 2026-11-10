@@ -78,6 +78,15 @@ export interface EmailInvite {
 	location: string | null;
 	organizer: EmailInviteOrganizer | null;
 	/**
+	 * Whether `organizer` can be shown as who sent the invite (AVE-220): its
+	 * address is the message's From, or the From passed authentication and the
+	 * organizer is on the same domain. ORGANIZER is free text in the .ics, so
+	 * when this is false clients show the real sender and label the organizer
+	 * "Claims organizer". Set by the Worker on reader payloads; absent from
+	 * older servers, where clients show the organizer as before.
+	 */
+	organizerMatchesSender?: boolean;
+	/**
 	 * https link to join online (Google Meet, Zoom, Microsoft Teams, Webex, …),
 	 * taken from the conference properties, URL, LOCATION or DESCRIPTION.
 	 */
