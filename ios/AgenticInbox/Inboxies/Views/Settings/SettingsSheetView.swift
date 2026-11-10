@@ -6,6 +6,7 @@ enum SettingsDestination: Hashable {
     case agentPrompt
     case forwarding
     case autoReply
+    case signature
     case filters
     case tags
     case senders
@@ -27,7 +28,6 @@ struct SettingsSheetView: View {
 
     @State private var editNameDraft = ""
     @State private var showEditName = false
-    @State private var signatureEnabled = false
     @State private var screenerEnabled = true
     @State private var navigationPath: [SettingsDestination] = []
     @State private var loadingDestination: SettingsDestination?
@@ -99,8 +99,6 @@ struct SettingsSheetView: View {
                     }
 
                     notificationsToggle
-                    signatureToggle
-                        .lockedWhenReadOnly(app.isReadOnly)
                     screenerToggle
                         .lockedWhenReadOnly(app.isReadOnly)
                         .id("screenerToggle")
@@ -113,8 +111,10 @@ struct SettingsSheetView: View {
                 }
                 .listRowSeparator(.hidden)
 
-                // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+                // Web: Settings → Outgoing mail → Signature (AVE-204), Bounced addresses (AVE-157).
                 Section {
+                    settingsNavRow("Signature", systemImage: "signature", destination: .signature)
+                        .lockedWhenReadOnly(app.isReadOnly)
                     settingsNavRow(
                         BounceSuppression.pageTitle,
                         systemImage: "nosign",
@@ -219,6 +219,8 @@ struct SettingsSheetView: View {
                     ForwardingSettingsView()
                 case .autoReply:
                     AutoReplySettingsView()
+                case .signature:
+                    SignatureSettingsView()
                 case .filters:
                     FiltersSettingsView()
                 case .tags:
@@ -279,14 +281,12 @@ struct SettingsSheetView: View {
                 Text("This name appears when you send email.")
             }
             .onAppear {
-                signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
                 screenerEnabled = app.isScreenerEnabled
             }
             .task(id: app.selectedMailboxId) {
                 aiUsage = await app.loadAIUsage()
             }
             .onChange(of: app.selectedMailboxId) { _, _ in
-                signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
                 screenerEnabled = app.isScreenerEnabled
             }
         }
@@ -379,16 +379,6 @@ struct SettingsSheetView: View {
         .padding(.top, 8)
     }
 
-    private var signatureBinding: Binding<Bool> {
-        Binding(
-            get: { signatureEnabled },
-            set: { newValue in
-                signatureEnabled = newValue
-                Task { await saveSignatureEnabled(newValue) }
-            }
-        )
-    }
-
     private var notificationsToggle: some View {
         Toggle(isOn: $notificationsEnabled) {
             Label {
@@ -413,24 +403,6 @@ struct SettingsSheetView: View {
                 PushNotificationManager.shared.unregisterToken(mailboxIds: mailboxIds)
             }
         }
-    }
-
-    private var signatureToggle: some View {
-        Toggle(isOn: signatureBinding) {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Default signature")
-                        .foregroundStyle(AppTheme.ink)
-                    Text("Show 'Sent with Inboxies Email' in emails")
-                        .font(.inter(size: 12))
-                        .foregroundStyle(AppTheme.muted)
-                }
-            } icon: {
-                Image(systemName: "pencil")
-                    .foregroundStyle(AppTheme.ink)
-            }
-        }
-        .tint(AppTheme.accent)
     }
 
     private var screenerBinding: Binding<Bool> {
@@ -570,20 +542,6 @@ struct SettingsSheetView: View {
         let trimmed = editNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         _ = await app.updateMailboxSettings { settings in
             settings.fromName = trimmed
-        }
-    }
-
-    private func saveSignatureEnabled(_ enabled: Bool) async {
-        let success = await app.updateMailboxSettings { settings in
-            var signature = settings.signature ?? SignatureSettings()
-            signature.enabled = enabled
-            if signature.text == nil, signature.html == nil, enabled {
-                signature.text = "Sent with Inboxies Email"
-            }
-            settings.signature = signature
-        }
-        if !success {
-            signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
         }
     }
 

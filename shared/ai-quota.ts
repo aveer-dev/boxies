@@ -6,7 +6,8 @@
  * The typed "AI quota reached" error the EmailAgent sends to chat clients
  * (AVE-45). It travels as the `errorText` of a UI-message-stream `error`
  * chunk, JSON-encoded, so web, iOS and Android can tell it apart from other
- * stream errors and still show `message` as-is.
+ * stream errors and still show `message` as-is. AI summary routes (AVE-215)
+ * send the same fields as a 429 JSON body, with `error` set to `message`.
  */
 
 export type AiQuotaBucket = "chat" | "inbound";
@@ -27,7 +28,8 @@ export function aiQuotaExceededError(
 	limit: number,
 	resetsAt: string,
 ): AiQuotaExceededError {
-	const what = bucket === "chat" ? "AI chat messages" : "inbound AI checks";
+	// AI summaries count against the chat bucket too (AVE-215).
+	const what = bucket === "chat" ? "AI chat messages and summaries" : "inbound AI checks";
 	return {
 		type: "ai_quota_exceeded",
 		bucket,
@@ -41,12 +43,21 @@ export function aiQuotaExceededError(
 export function parseAiQuotaError(text: string | null | undefined): AiQuotaExceededError | null {
 	if (!text || text[0] !== "{") return null;
 	try {
-		const value = JSON.parse(text) as Partial<AiQuotaExceededError>;
-		if (value?.type !== "ai_quota_exceeded" || typeof value.message !== "string") return null;
-		return value as AiQuotaExceededError;
+		return asAiQuotaError(JSON.parse(text));
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * An HTTP error body (or any parsed value) as an AI quota error, or null.
+ * Summary routes answer 429 with the AiQuotaExceededError fields (AVE-215).
+ */
+export function asAiQuotaError(value: unknown): AiQuotaExceededError | null {
+	const candidate = value as Partial<AiQuotaExceededError> | null;
+	if (!candidate || typeof candidate !== "object") return null;
+	if (candidate.type !== "ai_quota_exceeded" || typeof candidate.message !== "string") return null;
+	return candidate as AiQuotaExceededError;
 }
 
 /**

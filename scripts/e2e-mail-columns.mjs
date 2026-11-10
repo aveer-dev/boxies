@@ -30,6 +30,13 @@ const columns = () =>
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 // Compose columns are `column-compose-<id>`, one per open draft.
 const COMPOSE = "[id^='column-compose']";
+// After `networkidle` the client still rewrites the address in the URL to the
+// mailbox index (`/mailbox/<n>/…`) and only then renders the columns.
+async function gotoMailbox(path) {
+	await page.goto(`${BASE}${MB}${path}`, { waitUntil: "networkidle" });
+	await page.waitForURL(/\/mailbox\/\d+\//);
+	await page.waitForSelector("section[data-column-id='list']", { state: "attached" });
+}
 
 async function seed() {
 	await signIn(page, `columns-${RUN}@example.com`);
@@ -74,7 +81,7 @@ try {
 	await seed();
 
 	// Columns render; first-time senders wait in the Screener.
-	await page.goto(`${BASE}${MB}/emails/screener`, { waitUntil: "networkidle" });
+	await gotoMailbox("/emails/screener");
 	assert.deepEqual(await columns(), ["accounts", "folders", "list"]);
 	for (const folder of ["Inbox", "Screener", "Promotions", "Updates", "Sent", "Drafts", "Archive", "Spam", "Screened out", "Trash", "Reply Later"]) {
 		assert.ok(await page.locator("#column-folders").getByText(folder, { exact: true }).count(), `folder ${folder}`);
@@ -114,11 +121,14 @@ try {
 	await page.waitForFunction(() => !document.querySelector("#column-reader"));
 	step("inline cid: image renders in the sandboxed reader");
 
-	// Screener triage closes the reader and files the thread into Inbox.
+	// Screener Accept files the thread into Inbox. The reader stays open
+	// (AVE-182); the triage bar goes away once the message refetches.
 	await page.locator("#column-list [data-email-id]", { hasText: "Design tokens" }).first().click();
-	await page.getByRole("button", { name: "Accept" }).click();
-	await page.waitForFunction(() => !document.querySelector("#column-reader"));
-	await page.goto(`${BASE}${MB}/emails/inbox`, { waitUntil: "networkidle" });
+	await page.waitForSelector("#column-reader");
+	const accept = page.locator("#column-reader").getByRole("button", { name: "Accept" });
+	await accept.click();
+	await accept.waitFor({ state: "detached" });
+	await gotoMailbox("/emails/inbox");
 	await page.locator("#column-list [data-email-id]", { hasText: "Design tokens" }).first().click();
 	await page.waitForSelector("#column-reader");
 	step("Screener Accept → Inbox");
@@ -184,13 +194,13 @@ try {
 	await page.waitForFunction(() => !document.querySelector("#column-settings"));
 	assert.deepEqual(await columns(), ["accounts", "folders", "list"]);
 	// Old settings links still open the panel.
-	await page.goto(`${BASE}${MB}/settings/filters`, { waitUntil: "networkidle" });
+	await gotoMailbox("/settings/filters");
 	await page.waitForURL(/\/emails\/inbox$/);
 	await page.waitForSelector("#column-settings-page");
 	step("settings + sub-page panels beside the list");
 
 	// Reply Later: Focus & Reply opens reader + reply compose.
-	await page.goto(`${BASE}${MB}/emails/inbox`, { waitUntil: "networkidle" });
+	await gotoMailbox("/emails/inbox");
 	const target = await page.locator("#column-list [data-email-id]").first().getAttribute("data-email-id");
 	await page.evaluate(
 		([mb, id]) =>
@@ -201,7 +211,7 @@ try {
 			}),
 		[MAILBOX, target],
 	);
-	await page.goto(`${BASE}${MB}/reply-later`, { waitUntil: "networkidle" });
+	await gotoMailbox("/reply-later");
 	await page.getByRole("button", { name: "Focus & Reply" }).click();
 	await page.waitForSelector(COMPOSE);
 	assert.ok(await page.getByRole("button", { name: "Skip" }).isVisible());
@@ -209,9 +219,9 @@ try {
 
 	// Phone: one column per screen, snapped to the deepest.
 	await page.setViewportSize({ width: 375, height: 812 });
-	await page.goto(`${BASE}${MB}/emails/inbox`, { waitUntil: "networkidle" });
+	await gotoMailbox("/emails/inbox");
 	await page.waitForFunction(
-		() => document.querySelector("[aria-label='Mail columns']").scrollLeft >= 700,
+		() => (document.querySelector("[aria-label='Mail columns']")?.scrollLeft ?? 0) >= 700,
 		null,
 		{ timeout: 5000 },
 	);

@@ -6,6 +6,7 @@ import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "~/components/IconButton";
 import { SummaryIcon } from "~/components/icons/SummaryIcon";
+import { summaryQuotaError, summaryQuotaText } from "~/lib/summary-quota";
 import { useRegenerateThreadSummary, useThreadSummary } from "~/queries/summaries";
 import type { AiSummary } from "~/types";
 
@@ -82,6 +83,7 @@ export function SummaryBlock({
 	onRegenerate,
 	regenerating,
 	regenerateFailed,
+	regenerateErrorText,
 	onClose,
 	className = "",
 }: {
@@ -94,6 +96,8 @@ export function SummaryBlock({
 	onRegenerate?: () => void;
 	regenerating?: boolean;
 	regenerateFailed?: boolean;
+	/** Replaces the default "Couldn't regenerate" note (e.g. the daily AI limit). */
+	regenerateErrorText?: string;
 	onClose?: () => void;
 	className?: string;
 }) {
@@ -109,7 +113,7 @@ export function SummaryBlock({
 						<SummaryText summary={summary} />
 						{regenerateFailed && (
 							<p className="text-xs" role="status">
-								Couldn’t regenerate. The previous summary is shown.
+								{regenerateErrorText ?? "Couldn’t regenerate."} The previous summary is shown.
 							</p>
 						)}
 					</>
@@ -159,8 +163,11 @@ export default function AISummaryCard({
 	/** False for folders that never get summaries; skips the request. */
 	enabled: boolean;
 }) {
-	const { data, isPending, isError, refetch, isFetching } = useThreadSummary(mailboxId, threadId, enabled);
+	const { data, error, isPending, isError, refetch, isFetching } = useThreadSummary(mailboxId, threadId, enabled);
 	const regenerate = useRegenerateThreadSummary();
+	// Daily AI limit (AVE-215): a calm note, and no retry until it resets.
+	const quota = summaryQuotaError(error);
+	const regenerateQuota = summaryQuotaError(regenerate.error);
 
 	if (!enabled || !mailboxId || !threadId) return null;
 	if (data && data.status !== "ready") return null;
@@ -173,11 +180,12 @@ export default function AISummaryCard({
 			className="mx-4 mb-3 shrink-0 md:mx-6 animate-reveal"
 			summary={data?.status === "ready" ? data.summary : undefined}
 			loading={isFetching && !data}
-			errorText={isError && !data ? "Couldn’t summarize this email." : undefined}
-			onRetry={() => refetch()}
+			errorText={isError && !data ? (quota ? summaryQuotaText(quota) : "Couldn’t summarize this email.") : undefined}
+			onRetry={quota ? undefined : () => refetch()}
 			onRegenerate={() => regenerate.mutate({ mailboxId, threadId })}
 			regenerating={regenerate.isPending}
 			regenerateFailed={regenerate.isError}
+			regenerateErrorText={regenerateQuota ? summaryQuotaText(regenerateQuota) : undefined}
 		/>
 	);
 }

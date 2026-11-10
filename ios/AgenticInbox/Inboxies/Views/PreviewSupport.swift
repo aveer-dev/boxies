@@ -279,6 +279,7 @@ enum PreviewSupport {
     /// `-previewDetail -previewNewsletter` (AVE-89): a long marketing mail with a fixed 640px card,
     /// a long unbroken URL and a rigid 900px table, for the fit-to-width / sideways-scroll body.
     /// Android twin: `PreviewSupport.newsletterEmail` (`run-debug-preview.sh newsletter`).
+    /// Carries the "Blocked tracking from Mailchimp" note above the body (AVE-195).
     static let newsletterEmail = Email(
         id: "preview-newsletter",
         folderId: "inbox",
@@ -290,7 +291,8 @@ enum PreviewSupport {
         read: true,
         starred: false,
         body: newsletterHTML,
-        snippet: "Good morning. This issue is built like most marketing mail."
+        snippet: "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers: BlockedTrackers(count: 1, services: ["Mailchimp"])
     )
 
     /// `-previewMailbox -previewReplyQuote` (AVE-133): reply to a promo mail whose HTML carries a
@@ -485,6 +487,24 @@ enum PreviewSupport {
         return app
     }
 
+    /// Settings → Signature (AVE-204) on a signature formatted on the web: bold
+    /// name and a link, shown here as words with the link's address.
+    @MainActor
+    static func signaturePreviewModel() -> AppModel {
+        let app = appModel()
+        if var mailbox = app.mailboxes.first {
+            var settings = mailbox.settings ?? MailboxSettings()
+            settings.signature = SignatureSettings(
+                enabled: true,
+                text: "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                html: "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>"
+            )
+            mailbox.settings = settings
+            app.mailboxes = [mailbox]
+        }
+        return app
+    }
+
     @MainActor
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
@@ -508,6 +528,12 @@ enum PreviewSupport {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)
             app.replyLaterCount = app.emails.count
+            if args.contains("-previewFocusReplyDone") {
+                // AVE-193: a Focus & Reply run just emptied the pile.
+                app.emails = []
+                app.replyLaterCount = 0
+                app.focusReplyResult = FocusReplyResult(replied: 3, skipped: 0)
+            }
         } else if args.contains("-previewDetail"),
                   args.contains("-previewCode") || args.contains("-previewInvite") {
             // AVE-176: reader with the Code card / Invite card pinned at the bottom.
@@ -576,7 +602,19 @@ enum PreviewSupport {
         if let service = previewDomainService(args: args) {
             applyPreviewService(service, to: app)
         }
+        matchInboxUnreadToNew(app)
         return app
+    }
+
+    /// The Inbox's unread count is its New conversations (AVE-228): keep the fixture's header
+    /// and New section on one number.
+    @MainActor
+    private static func matchInboxUnreadToNew(_ app: AppModel) {
+        let inboxRows = app.emails.filter { ($0.folderId ?? "inbox") == "inbox" }
+        guard !inboxRows.isEmpty,
+              let index = app.folders.firstIndex(where: { $0.id == "inbox" }) else { return }
+        let newCount = inboxRows.filter(\.isUnread).count
+        app.folders[index] = Folder(id: "inbox", name: app.folders[index].name, unreadCount: newCount)
     }
 
     @MainActor
@@ -1110,6 +1148,13 @@ struct PreviewAdminAuthRoot: View {
                     SuppressionsSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSignature") {
+                // Settings → Outgoing mail → Signature on a web-formatted fixture, no API
+                // (AVE-204; Android: `signature`).
+                NavigationStack {
+                    SignatureSettingsView()
+                }
+                .environment(PreviewSupport.signaturePreviewModel())
             } else if args.contains("-previewTags") {
                 // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
                 // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.

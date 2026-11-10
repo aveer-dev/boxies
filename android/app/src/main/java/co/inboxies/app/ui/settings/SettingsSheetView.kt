@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Contrast
+import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
@@ -77,7 +78,6 @@ import co.inboxies.app.services.CustomFolders
 import androidx.compose.material.icons.outlined.Tag
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
-import co.inboxies.app.models.SignatureSettings
 import co.inboxies.app.services.BounceSuppression
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AppThemeDims
@@ -100,6 +100,7 @@ private sealed class SettingsPage {
     data object AgentPrompt : SettingsPage()
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
+    data object Signature : SettingsPage()
     data object Filters : SettingsPage()
     data object Tags : SettingsPage()
     data object Senders : SettingsPage()
@@ -246,6 +247,7 @@ fun SettingsSheetView(
                     onOpenTags = { page = SettingsPage.Tags },
                     onOpenSenders = { page = SettingsPage.Senders },
                     onOpenSuppressions = { page = SettingsPage.Suppressions },
+                    onOpenSignature = { page = SettingsPage.Signature },
                     onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
@@ -288,6 +290,9 @@ fun SettingsSheetView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Suppressions -> SuppressionsSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Signature -> SignatureSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Aliases -> AliasesSettingsView(
@@ -333,6 +338,7 @@ private fun SettingsRootPage(
     onOpenTags: () -> Unit,
     onOpenSenders: () -> Unit,
     onOpenSuppressions: () -> Unit,
+    onOpenSignature: () -> Unit,
     onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
@@ -361,18 +367,6 @@ private fun SettingsRootPage(
     val auth = LocalAuthStore.current
     var loadingSignInMethods by remember { mutableStateOf(false) }
     var loadingDomainAdmin by remember { mutableStateOf(false) }
-
-    val signature = mailbox?.settings?.signature
-    val signatureConfigured = !signature?.text.isNullOrBlank() || !signature?.html.isNullOrBlank()
-    var signatureEnabled by remember(mailbox?.id, signature?.enabled, signatureConfigured) {
-        mutableStateOf(
-            when {
-                signature == null -> true
-                signature.enabled == false && !signatureConfigured -> true
-                else -> signature.enabled != false
-            },
-        )
-    }
 
     // Per-mailbox Screener switch (AVE-104). Absent means on.
     val savedScreenerEnabled = mailbox?.settings?.screener?.enabled != false
@@ -580,35 +574,7 @@ private fun SettingsRootPage(
                     "The subscription for ${mailbox?.domain.orEmpty()} ended, so this mailbox's " +
                         "settings, sharing and private emails can't be changed until it's renewed.",
                 )
-            } else SettingsToggleRow(
-                title = "Default signature",
-                subtitle = "Show 'Sent with Inboxies Email' in emails",
-                icon = Icons.Outlined.Edit,
-                checked = signatureEnabled,
-                onCheckedChange = { enabled ->
-                    signatureEnabled = enabled
-                    scope.launch {
-                        val ok = app.updateMailboxSettings { settings ->
-                            val currentSig = settings.signature ?: SignatureSettings()
-                            val nextText = if (
-                                enabled &&
-                                currentSig.text.isNullOrBlank() &&
-                                currentSig.html.isNullOrBlank()
-                            ) {
-                                "Sent with Inboxies Email"
-                            } else {
-                                currentSig.text
-                            }
-                            settings.copy(
-                                signature = currentSig.copy(enabled = enabled, text = nextText),
-                            )
-                        }
-                        if (!ok) {
-                            signatureEnabled = mailbox?.settings?.signature?.enabled != false
-                        }
-                    }
-                },
-            )
+            }
             if (!readOnly) {
                 SettingsToggleRow(
                     title = "Screener",
@@ -634,8 +600,15 @@ private fun SettingsRootPage(
                 )
             }
 
-            // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+            // Web: Settings → Outgoing mail → Signature (AVE-204), Bounced addresses (AVE-157).
             SettingsSectionHeader("Outgoing mail")
+            if (!readOnly) {
+                SettingsNavRow(
+                    title = "Signature",
+                    icon = Icons.Outlined.Draw,
+                    onClick = onOpenSignature,
+                )
+            }
             SettingsNavRow(
                 title = BounceSuppression.PAGE_TITLE,
                 icon = Icons.Outlined.Block,

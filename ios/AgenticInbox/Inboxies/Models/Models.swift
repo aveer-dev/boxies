@@ -501,7 +501,36 @@ struct AutoReplySettings: Codable, Hashable {
 struct Folder: Identifiable, Codable, Hashable {
     let id: String
     let name: String
+    /// Unread conversations, the unit every threaded list shows (AVE-228). The Worker's
+    /// `unreadThreadCount` when sent (for the Inbox it is the New total); older Workers only
+    /// send `unreadCount`, which counts messages.
     let unreadCount: Int
+
+    init(id: String, name: String, unreadCount: Int) {
+        self.id = id
+        self.name = name
+        self.unreadCount = unreadCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, unreadCount, unreadThreadCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        let threads = try c.decodeIfPresent(Int.self, forKey: .unreadThreadCount)
+        let messages = try c.decodeIfPresent(Int.self, forKey: .unreadCount)
+        unreadCount = threads ?? messages ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(unreadCount, forKey: .unreadCount)
+    }
 }
 
 struct Attachment: Identifiable, Codable, Hashable {
@@ -791,6 +820,8 @@ struct Email: Identifiable, Codable, Hashable {
     var otp: EmailOtp? = nil
     /// Calendar invite for the reader's Invite card (reader payloads only; AVE-175/176).
     var invite: EmailInvite? = nil
+    /// Tracking pixels the server removed from `body` (reader payloads only; AVE-195).
+    var blockedTrackers: BlockedTrackers? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -825,6 +856,7 @@ struct Email: Identifiable, Codable, Hashable {
         case matchedRuleId = "matched_rule_id"
         case oneClickUnsubscribe = "one_click_unsubscribe"
         case otp, invite
+        case blockedTrackers = "blocked_trackers"
     }
 
     /// Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
@@ -1213,6 +1245,35 @@ extension Email {
         // Reader cards (AVE-176): a malformed card must never fail the whole email.
         otp = try? c.decodeIfPresent(EmailOtp.self, forKey: .otp)
         invite = try? c.decodeIfPresent(EmailInvite.self, forKey: .invite)
+        blockedTrackers = try? c.decodeIfPresent(BlockedTrackers.self, forKey: .blockedTrackers)
+    }
+}
+
+// MARK: - Tracking pixels (AVE-195)
+
+/// Tracking pixels the Worker stripped from a message body before serving it
+/// (`shared/tracking-pixels.ts`), in every folder but Drafts. The list of
+/// trackers lives only on the server; the reader just shows `TrackerNote`.
+struct BlockedTrackers: Codable, Hashable {
+    var count: Int
+    /// Services named from the server's known list, first seen first. May be empty.
+    var services: [String]
+}
+
+/// The reader's small "Blocked tracking from …" line. Same strings as web
+/// `trackerNote` and Android `TrackerNote.text`, checked against
+/// `shared/tracker-note.fixtures.json`.
+enum TrackerNote {
+    static func text(_ blocked: BlockedTrackers?) -> String? {
+        guard let blocked, blocked.count >= 1 else { return nil }
+        let services = blocked.services.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if !services.isEmpty { return "Blocked tracking from \(joined(services))" }
+        return blocked.count == 1 ? "Blocked a tracking pixel" : "Blocked \(blocked.count) tracking pixels"
+    }
+
+    private static func joined(_ names: [String]) -> String {
+        guard names.count > 1, let last = names.last else { return names.first ?? "" }
+        return "\(names.dropLast().joined(separator: ", ")) and \(last)"
     }
 }
 

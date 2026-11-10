@@ -10,7 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { Folders } from "shared/folders";
 import api from "~/services/api";
-import type { Folder } from "~/types";
+import { type Folder, folderUnread } from "~/types";
 import { queryKeys } from "./keys";
 
 export function useFolders(mailboxId: string | undefined) {
@@ -34,7 +34,7 @@ export function useInboxUnreadCounts(mailboxIds: string[]) {
 	const counts: Record<string, number> = {};
 	mailboxIds.forEach((mailboxId, i) => {
 		const inbox = results[i]?.data?.find((f) => f.id === Folders.INBOX);
-		counts[mailboxId] = inbox?.unreadCount ?? 0;
+		counts[mailboxId] = folderUnread(inbox);
 	});
 	return counts;
 }

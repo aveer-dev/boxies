@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 enum OutboundLimits {
     static let maxMessageBytes = 5 * 1024 * 1024
     static let sizeError = "Message exceeds the 5 MiB outbound limit"
-    static let videoReject = "Videos aren't supported (5 MiB send limit)"
+    /// How the 5 MiB cap reads in user-facing copy (twin of shared `OUTBOUND_LIMIT_LABEL`).
+    static let limitLabel = "5 MB"
     static let maxImageEdge: CGFloat = 1600
     static let jpegQualities: [CGFloat] = [0.72, 0.55, 0.4]
 
@@ -19,6 +20,31 @@ enum OutboundLimits {
 
     static func remainingBudget(html: String, text: String, attachmentBytes: [Int]) -> Int {
         max(0, maxMessageBytes - estimateMessageBytes(html: html, text: text, attachmentBytes: attachmentBytes))
+    }
+
+    /// Twin of shared `formatByteSize`: binary units, "12 MB" / "3.4 MB" / "512 B".
+    static func formatByteSize(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 {
+            let kb = Double(bytes) / 1024
+            return kb >= 10 ? "\(Int(kb.rounded())) KB" : String(format: "%.1f KB", kb)
+        }
+        let mb = Double(bytes) / (1024 * 1024)
+        return mb >= 10 ? "\(Int(mb.rounded())) MB" : String(format: "%.1f MB", mb)
+    }
+
+    /// Twin of shared `attachmentTooLargeMessage`: names the file's size and the 5 MB limit,
+    /// or how much room is left when other attachments already use part of the message.
+    static func tooLargeMessage(byteLength: Int, budget: Int, isVideo: Bool) -> String {
+        let subject = isVideo ? "This video" : "This file"
+        let size = formatByteSize(byteLength)
+        if byteLength > maxMessageBytes || budget >= maxMessageBytes {
+            return "\(subject) is \(size). Messages can be up to \(limitLabel), attachments included."
+        }
+        if budget <= 0 {
+            return "\(subject) is \(size), and this message is already at the \(limitLabel) limit."
+        }
+        return "\(subject) is \(size), but only \(formatByteSize(budget)) is left of the \(limitLabel) message limit."
     }
 }
 
@@ -48,14 +74,17 @@ struct ComposePendingAttachment: Identifiable, Equatable {
 }
 
 enum OutboundAttachmentError: LocalizedError {
-    case video
+    /// A photo that still didn't fit after downscaling.
     case tooLarge
+    /// A file sent as-is (video, PDF, ...) that is bigger than the remaining budget.
+    case fileTooLarge(byteLength: Int, budget: Int, isVideo: Bool)
     case unreadable
 
     var errorDescription: String? {
         switch self {
-        case .video: return OutboundLimits.videoReject
         case .tooLarge: return OutboundLimits.sizeError
+        case let .fileTooLarge(byteLength, budget, isVideo):
+            return OutboundLimits.tooLargeMessage(byteLength: byteLength, budget: budget, isVideo: isVideo)
         case .unreadable: return "Couldn't read that file."
         }
     }
@@ -69,17 +98,20 @@ enum OutboundImageCompressor {
         budget: Int
     ) throws -> ComposePendingAttachment {
         let mime = mimeType.isEmpty ? Self.mime(for: filename) : mimeType
-        if Self.isVideo(mime: mime, filename: filename) {
-            throw OutboundAttachmentError.video
-        }
         if Self.shouldReencodeAsJpeg(mime: mime, filename: filename, byteLength: data.count, budget: budget) {
             if let jpeg = compressImage(data, filename: filename, budget: budget) {
                 return jpeg
             }
             throw OutboundAttachmentError.tooLarge
         }
-        guard data.count > 0, data.count <= budget else {
-            throw OutboundAttachmentError.tooLarge
+        // Videos, PDFs and other files go as they are when they fit the budget.
+        guard data.count > 0 else { throw OutboundAttachmentError.unreadable }
+        guard data.count <= budget else {
+            throw OutboundAttachmentError.fileTooLarge(
+                byteLength: data.count,
+                budget: budget,
+                isVideo: isVideo(mime: mime, filename: filename)
+            )
         }
         return ComposePendingAttachment(
             filename: filename.isEmpty ? "untitled" : filename,

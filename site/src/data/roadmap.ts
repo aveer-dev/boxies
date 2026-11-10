@@ -35,7 +35,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "sender-destinations", group: "triage", name: "Sender destinations", status: "available", platforms: ["ios", "android", "web"], note: "Settings → Senders.", src: "FSW#sender-destinations" },
 	{ id: "reply-later", group: "triage", name: "Reply Later", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Leaves the pile when you reply. Add a reminder to bring a thread back at a set time.", landing: true, src: "RM#3; AVE-86 409d1b4" },
 	{ id: "private-notes", group: "triage", name: "Private notes", status: "available", platforms: ["ios", "android", "web"], note: "Sticky notes on a thread, or a note on one message. Only you see them.", src: "AVE-59..62 (ec2c8ca, 49f8ef3, bfcd7a9, 92c381e); shared/thread-notes.ts" },
-	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["web"], note: "Web only.", landing: true, src: "RM#3 (web only)" },
+	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Your Reply Later pile one thread at a time, with the reply open.", landing: true, src: "RM#3; AVE-193 (iOS, Android)" },
 	{ id: "filters", group: "triage", name: "Filters", status: "available", platforms: ["ios", "android", "web"], note: "Up to 50 per mailbox.", src: "FSW#filters" },
 	{ id: "unsubscribe", group: "triage", name: "Unsubscribe from lists", status: "available", platforms: ["ios", "android", "web"], note: "When you report list mail as spam, if the list allows one-click unsubscribe.", src: "AVE-99 78814bc: workers/lib/list-unsubscribe.ts (https List-Unsubscribe + One-Click only); EmailPanel.tsx, EmailActionsSheet.swift/.kt (Report spam confirmation)" },
 	{ id: "swipes", group: "triage", name: "Swipe actions", status: "available", platforms: ["ios", "android"], note: "Up to three per edge.", src: "FC#4.4" },
@@ -75,7 +75,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "web-workspace", group: "search-compose", name: "Columns on the web", status: "available", platforms: ["web"], note: "Mailboxes, folders, list and message side by side, with ⌘K search and a quick-reply box.", landing: true, src: "RM#1 (5); dev 87720b1/#53 (routes.ts nested column routes; mailbox.tsx columns; FloatingDock.tsx ⌘K focuses search; QuickReplyBar.tsx), on dev via 6ebc554 11 Oct" },
 	{ id: "web-shortcuts", group: "search-compose", name: "Keyboard shortcuts on the web", status: "available", platforms: ["web"], note: "Single keys to write, reply, forward, archive, star and more; ? lists them all.", src: "AVE-28 1e535a7: app/lib/shortcuts.ts SHORTCUTS, ShortcutSheet.tsx" },
 	{ id: "shortcuts", group: "search-compose", name: "More keyboard shortcuts on the web", status: "available", platforms: ["web"], note: "j and k to move up and down through mail.", landing: true, src: "RM#1 (6); AVE-202: app/lib/shortcuts.ts nextThread/prevThread (J K), app/hooks/useListShortcuts.ts; no / handler" },
-	{ id: "signature-web", group: "search-compose", name: "Signature editor on the web", status: "exploring", platforms: ["web"], note: "The apps can add a fixed “Sent with Inboxies Email” line; custom signatures can’t be written yet.", src: "RM#1 (10); FSW#caveats (7); SettingsSheetView.swift / .kt (Default signature toggle only); no web signature setting" },
+	{ id: "signature-web", group: "search-compose", name: "Your own signature", status: "available", platforms: ["ios", "android", "web"], note: "One per mailbox, written in web Settings with formatting and links. The apps can edit its words.", src: "AVE-204: app/components/settings/SignatureSettings.tsx; shared/signature.ts (sanitised on save and render); SignatureSettingsView.swift / .kt; ComposeFormModel (new, reply, forward)" },
 	{ id: "scheduled-send", group: "search-compose", name: "Scheduled send", status: "exploring", platforms: [], note: "Write now, send later.", landing: true, src: "RM#1 (9)" },
 
 	// ── Domains and teams ──
@@ -133,7 +133,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	},
 	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", platforms: ["ios", "android", "web"], note: "Mail pretending to be from someone else is flagged.", src: "FSW#spoofing-protection" },
 	{ id: "safe-html", group: "privacy", name: "Safe to open", status: "available", platforms: ["ios", "android", "web"], note: "Code hidden in an email never runs.", src: "FSW#supporting-features" },
-	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
+	{ id: "tracking-pixels", group: "privacy", name: "Tracking pixels blocked", status: "available", platforms: ["ios", "android", "web"], note: "Known tracking pixels are removed in every folder, and the message says who tried. Other images load; in Spam, remote images stay hidden until you choose Load images.", src: "dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
 	{
 		id: "delete-account",
 		group: "privacy",
@@ -173,8 +173,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 
 /**
  * Every visible row, in group order (48 with the default flags). A shipped
- * row whose platforms are all hidden (the web app and Focus & Reply while the
- * web app isn't public) drops out rather than show no platform.
+ * row whose platforms are all hidden (the web app while it isn't public) drops out rather than show no platform.
  */
 export const rows: RoadmapRow[] = all
 	.filter((r) => !r.hidden && (r.status !== "available" || onSomePublicPlatform(r.platforms)))

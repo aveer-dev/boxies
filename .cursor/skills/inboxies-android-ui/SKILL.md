@@ -212,6 +212,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
+| Signature | `previewSignature` | `signature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API. Peer of iOS `-previewSignature` (AVE-204) |
 | Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
@@ -223,6 +224,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | Screener reader after Accept | `previewScreenerReaderAccept` | `screenerReaderAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`). AVE-182 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Focus & Reply | `previewFocusReply` · `previewFocusReplyDone` | `focusReply` · `focusReplyDone` | Reply Later with the first thread's reply open under "Focus & Reply · 1 of N · Skip" · the pile after a run emptied it ("All done"). Peer of iOS `-previewReplyLater -previewFocusReply` / `-previewFocusReplyDone` (AVE-193) |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | Code card | `previewCode` | `code` | Sign-in mail in the reader with the Code card pinned above the bottom bar: 22.sp monospaced code + Copy (sensitive clip). Peer of iOS `-previewDetail -previewCode` (AVE-177) |

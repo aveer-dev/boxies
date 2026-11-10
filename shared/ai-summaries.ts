@@ -13,7 +13,10 @@
  * - POST /emails/:emailId/summary/generate      quick summary; body `{ regenerate?: boolean }`
  *
  * `threadId` is the thread key clients already use: `email.thread_id || email.id`.
- * A missing thread or email is a 404; a model failure is a 502.
+ * A missing thread or email is a 404; a model failure is a 502. Every model
+ * run counts against the mailbox's daily AI quota (the chat bucket); over it
+ * the route answers 429 with an AiQuotaExceededError body (shared/ai-quota.ts)
+ * and the model is not called. Cached reads are free.
  */
 
 import { Folders } from "./folders";

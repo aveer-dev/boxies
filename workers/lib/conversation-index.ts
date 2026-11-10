@@ -72,6 +72,15 @@ export const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
 export const INBOX_FOLDER_ID_SQL = folderIdSql(Folders.INBOX);
 
 /**
+ * One thread participant's label: the display name, else the address.
+ * Thread lists join the distinct labels with U+001F (`char(31)`,
+ * shared/sender.ts PARTICIPANT_SEPARATOR) so a name like "Hale, Jordan"
+ * stays one participant (AVE-224). `GROUP_CONCAT(DISTINCT …)` can't take a
+ * separator, so callers pick distinct labels in a subquery first.
+ */
+export const PARTICIPANT_LABEL_SQL = "COALESCE(NULLIF(TRIM(sender_name), ''), sender)";
+
+/**
  * needs_reply (AVE-173), for the conversation's newest message that is not a
  * draft (`m`): it sits in Inbox and is direct mail (`emails.direct_mail`, see
  * lib/direct-mail.ts directMailFlag: a person writing to this mailbox, not a
@@ -335,8 +344,8 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 				WHERE m.folder_id IS NOT ${DRAFT_FOLDER_ID_SQL} ORDER BY m.date DESC LIMIT 1) AS needs_reply,
 			stats.thread_count, stats.thread_unread_count, stats.has_draft,
 			stats.resurfaced_at,
-			(SELECT GROUP_CONCAT(DISTINCT p) FROM (
-				SELECT COALESCE(NULLIF(TRIM(sender_name), ''), sender) AS p FROM ce ORDER BY rid
+			(SELECT GROUP_CONCAT(p, char(31)) FROM (
+				SELECT ${PARTICIPANT_LABEL_SQL} AS p FROM ce GROUP BY p ORDER BY MIN(rid)
 			)) AS participants
 		FROM stats`,
 		folderId,
@@ -514,6 +523,7 @@ export function readThreadedListByScan(
 			all_emails_with_conversation AS (
 				SELECT
 					e.*,
+					e.rowid AS rid,
 					COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
 				FROM emails e
 				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
@@ -524,13 +534,23 @@ export function readThreadedListByScan(
 					conversation_id,
 					COUNT(*) as thread_count,
 					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
-					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
 					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft,
 					MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) as resurfaced_at
 				FROM all_emails_with_conversation
 				WHERE conversation_id IN (
 					SELECT DISTINCT conversation_id FROM all_emails_with_conversation
 					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
+				)
+				GROUP BY conversation_id
+			),
+			conversation_participants AS (
+				SELECT conversation_id, GROUP_CONCAT(p, char(31)) AS participants
+				FROM (
+					SELECT conversation_id, ${PARTICIPANT_LABEL_SQL} AS p
+					FROM all_emails_with_conversation
+					WHERE conversation_id IN (SELECT conversation_id FROM conversation_stats)
+					GROUP BY conversation_id, p
+					ORDER BY conversation_id, MIN(rid)
 				)
 				GROUP BY conversation_id
 			),
@@ -563,7 +583,7 @@ export function readThreadedListByScan(
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
 				lif.auth, lif.auth_tier, lif.classification_reason, lif.matched_rule_id,
-				cs.thread_count, cs.thread_unread_count, cs.participants,
+				cs.thread_count, cs.thread_unread_count, cp.participants,
 				COALESCE(${needsReplySql("lmc")}, 0) as needs_reply,
 				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
 				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
@@ -575,6 +595,7 @@ export function readThreadedListByScan(
 				) as section_rank
 			FROM latest_in_folder lif
 			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
+			JOIN conversation_participants cp ON cp.conversation_id = cs.conversation_id
 			LEFT JOIN latest_message_per_conversation lmc
 				ON lmc.conversation_id = lif.conversation_id AND lmc.rn = 1
 			WHERE lif.rn = 1
@@ -618,6 +639,23 @@ export function countThreadedByScan(sql: Sql, folder: string): number {
 		folder,
 	);
 	return Number(row?.total ?? 0);
+}
+
+/**
+ * Unread conversations per folder from the index (AVE-228): a folder's
+ * conversations that still hold unread non-draft mail, i.e. the bold rows of
+ * its threaded list. For the Inbox this is exactly the New section total
+ * (`countConversationsFromIndex(...).newCount`). Folders with none are absent.
+ */
+export function countUnreadConversationsByFolder(sql: Sql): Map<string, number> {
+	const out = new Map<string, number>();
+	for (const row of rows(
+		sql,
+		`SELECT folder_id, COUNT(*) AS unread FROM conversations WHERE is_new = 1 GROUP BY folder_id`,
+	)) {
+		out.set(String(row.folder_id), Number(row.unread ?? 0));
+	}
+	return out;
 }
 
 /** The original Inbox New / Seen counts (scan). */

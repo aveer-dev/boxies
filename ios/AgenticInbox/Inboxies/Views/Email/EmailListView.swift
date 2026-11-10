@@ -39,6 +39,13 @@ struct EmailListView: View {
     /// One email per waiting sender, newest first; the row stacks their avatars.
     var screeningRoomSenders: [Email] = []
     var onOpenScreeningRoom: (() -> Void)? = nil
+    /// Reply Later: pile size for the "N waiting · Focus & Reply" strip (AVE-193). The
+    /// strip shows when `onStartFocusReply` is set and the pile isn't empty.
+    var focusReplyCount: Int = 0
+    /// How the last Focus & Reply run ended: "All done" when the pile is empty, or a
+    /// "Reached the end · N skipped" line on the strip.
+    var focusReplyResult: FocusReplyResult? = nil
+    var onStartFocusReply: (() -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -84,7 +91,10 @@ struct EmailListView: View {
                     filterChipsBar
                 }
 
-                if let loadError, !isFiltered {
+                if focusReplyResult != nil, onStartFocusReply != nil, loadError == nil {
+                    FocusReplyDoneView()
+                        .padding(.top, 48)
+                } else if let loadError, !isFiltered {
                     LoadFailedContent(
                         title: "Couldn’t load emails",
                         message: loadError,
@@ -132,6 +142,14 @@ struct EmailListView: View {
             if showsScreeningRoomRow {
                 screeningRoomRow
                     .mailRowChrome()
+            }
+
+            if showsFocusReplyStrip, let onStartFocusReply {
+                FocusReplyStrip(
+                    label: focusReplyResult.map(\.summary) ?? FocusReplyStrip.waitingLabel(count: max(focusReplyCount, visibleEmails.count)),
+                    onStart: onStartFocusReply
+                )
+                .mailRowChrome()
             }
 
             if let filterChipsBar {
@@ -274,6 +292,10 @@ struct EmailListView: View {
                 }
             }
         }
+    }
+
+    private var showsFocusReplyStrip: Bool {
+        onStartFocusReply != nil && !isSelectMode && !visibleEmails.isEmpty && !app.isReadOnly
     }
 
     private var showsScreeningRoomRow: Bool {
@@ -1137,5 +1159,101 @@ struct ReplyLaterReminderChip: View {
         .foregroundStyle(tint)
         .fixedSize()
         .accessibilityElement(children: .ignore)
+    }
+}
+
+/// Reply Later's "N waiting · Focus & Reply" strip, pinned above the pile (AVE-193).
+/// Web twin: the bar in `app/routes/reply-later.tsx`. Android twin: `FocusReplyStrip`.
+struct FocusReplyStrip: View {
+    let label: String
+    let onStart: () -> Void
+
+    static func waitingLabel(count: Int) -> String { "\(count) waiting" }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(label)
+                    .font(.inter(size: AppTheme.List.subject, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Button(action: onStart) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrowshape.turn.up.left.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Focus & Reply")
+                            .font(.inter(size: AppTheme.List.subject, weight: .semibold))
+                    }
+                    .foregroundStyle(AppTheme.background)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.ink, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens each thread in the pile with a reply ready")
+                .accessibilityIdentifier("focusReplyButton")
+            }
+            .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
+            .padding(.vertical, 10)
+
+            Rectangle()
+                .fill(AppTheme.List.separatorColor)
+                .frame(height: AppTheme.List.separatorHeight)
+                .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
+                .accessibilityHidden(true)
+        }
+        .background(AppTheme.background)
+    }
+}
+
+/// Reply Later after a Focus & Reply run emptied the pile (AVE-193).
+struct FocusReplyDoneView: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("All done", systemImage: "checkmark.circle")
+        } description: {
+            Text("You’ve replied to everything in Reply Later.")
+        }
+        .accessibilityIdentifier("focusReplyDone")
+    }
+}
+
+/// Top of the compose sheet during Focus & Reply: where you are in the pile, and Skip.
+struct FocusReplyComposeBar: View {
+    let progress: String
+    let onSkip: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Focus & Reply")
+                .font(.inter(size: AppTheme.List.subject, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+            Text("· \(progress)")
+                .font(.inter(size: AppTheme.List.subject, weight: .regular))
+                .foregroundStyle(AppTheme.muted)
+                .monospacedDigit()
+            Spacer(minLength: 8)
+            Button(action: onSkip) {
+                HStack(spacing: 4) {
+                    Text("Skip")
+                        .font(.inter(size: AppTheme.List.subject, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(AppTheme.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(AppTheme.pillFill, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Leaves this thread in the pile and opens the next")
+            .accessibilityIdentifier("focusReplySkip")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
     }
 }

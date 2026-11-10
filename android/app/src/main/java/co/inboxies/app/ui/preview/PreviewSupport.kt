@@ -5,6 +5,7 @@ import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
+import co.inboxies.app.models.BlockedTrackers
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.EmailInvite
 import co.inboxies.app.models.EmailInviteOrganizer
@@ -15,6 +16,7 @@ import co.inboxies.app.services.ThreadNoteSummary
 import co.inboxies.app.services.InviteCalendar
 import co.inboxies.app.services.ReauthChallenge
 import co.inboxies.app.services.ReauthMethod
+import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.ReplyLaterReminderPresets
 import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.ToastAction
@@ -120,7 +122,16 @@ object PreviewSupport {
             name = "Alex Rivera",
             settings = MailboxSettings(
                 fromName = "Alex Rivera",
-                signature = SignatureSettings(enabled = true, text = "Alex"),
+                signature = if (mode == PreviewMode.Signature) {
+                    // Formatted on the web: bold name and a link (AVE-204).
+                    SignatureSettings(
+                        enabled = true,
+                        text = "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                        html = "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>",
+                    )
+                } else {
+                    SignatureSettings(enabled = true, text = "Alex")
+                },
                 screener = if (mode == PreviewMode.SettingsScreenerOff) ScreenerSettings(enabled = false) else null,
             ),
             readOnly = service?.isEnded,
@@ -322,8 +333,9 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.ReplyLater -> {
-                val queued = allEmails.filter { it.replyLater }
+            PreviewMode.ReplyLater, PreviewMode.FocusReply, PreviewMode.FocusReplyDone -> {
+                // FocusReplyDone: a Focus & Reply run just emptied the pile (AVE-193).
+                val queued = if (mode == PreviewMode.FocusReplyDone) emptyList() else allEmails.filter { it.replyLater }
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
@@ -429,6 +441,9 @@ object PreviewSupport {
             app.setScreenerQueueForPreview(app.emails.value)
             val destination = if (mode == PreviewMode.ScreenerUndo) null else "promotions"
             app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
+        }
+        if (mode == PreviewMode.FocusReplyDone) {
+            app.applyFocusReplyResultForPreview(FocusReplyResult(replied = 3, skipped = 0))
         }
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
@@ -877,7 +892,8 @@ object PreviewSupport {
     /**
      * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
      * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
-     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`).
+     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
+     * "Blocked tracking from Mailchimp" note above the body (AVE-195).
      */
     fun newsletterEmail(you: String = addr("you")): Email = Email(
         id = "preview-newsletter",
@@ -891,6 +907,7 @@ object PreviewSupport {
         starred = false,
         body = NEWSLETTER_HTML,
         snippet = "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers = BlockedTrackers(count = 1, services = listOf("Mailchimp")),
     )
 
     private val NEWSLETTER_HTML = """

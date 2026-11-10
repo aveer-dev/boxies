@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { EmailInvite, EmailOtp } from "shared/mail-cards";
+import type { BlockedTrackers } from "shared/tracking-pixels";
 
 export interface SignatureSettings {
 	enabled: boolean;
@@ -483,6 +484,11 @@ export interface Email {
 	 * Detail/thread payloads only; same gating as `otp`.
 	 */
 	invite?: EmailInvite | null;
+	/**
+	 * Tracking pixels the server removed from `body` (AVE-195). Detail/thread
+	 * payloads only; null when none were found, and always in Drafts.
+	 */
+	blocked_trackers?: BlockedTrackers | null;
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)
 	thread_count?: number;
@@ -514,7 +520,19 @@ export interface Attachment {
 export interface Folder {
 	id: string;
 	name: string;
+	/** Unread messages. Older Workers send only this. */
 	unreadCount: number;
+	/**
+	 * Unread conversations, the unit the threaded lists show (AVE-228). For the
+	 * Inbox it equals the New section total. Read through `folderUnread`.
+	 */
+	unreadThreadCount?: number;
+}
+
+/** A folder's unread badge: conversations when the Worker sends them (AVE-228). */
+export function folderUnread(folder: Pick<Folder, "unreadCount" | "unreadThreadCount"> | undefined): number {
+	if (!folder) return 0;
+	return folder.unreadThreadCount ?? folder.unreadCount;
 }
 
 /** People I've emailed — compose autocomplete suggestion. */

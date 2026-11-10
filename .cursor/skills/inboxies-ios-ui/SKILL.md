@@ -206,6 +206,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewSessions -previewSecurityActivity [empty\|error]` | Devices & sessions scrolled to Recent security activity: fixture events, or the empty / couldn't-load state, no API (AVE-151) |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
+| `-previewSignature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API (AVE-204; Android: `signature`) |
 | `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
@@ -214,6 +215,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
+| `-previewReplyLater -previewFocusReply` / `-previewReplyLater -previewFocusReplyDone` | Focus & Reply: the "N waiting · Focus & Reply" strip opens the first thread's reply with the "Focus & Reply · 1 of N · Skip" bar · the pile after a run emptied it ("All done") (AVE-193) |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewCode` / `-previewDetail -previewInvite` | Reader with the Code card / Invite card pinned above the bottom bar (add `-previewInviteCancelled` for the cancelled invite, `-previewInviteAddress` for an in-person invite with Directions, `-previewInviteExpanded` to open the details) (AVE-176) |
 | `-previewDetail -previewInvite -previewInviteFreeBusy free\|conflict\|added\|ask` | Invite card on fixture calendars (`PreviewInviteCalendar`, no EventKit): "You're free" + calendar picker · "Conflicts with Team sync +1 more" · added in one tap with a pinned "Added to Work · Undo" toast · "Check availability" before access (AVE-206) |

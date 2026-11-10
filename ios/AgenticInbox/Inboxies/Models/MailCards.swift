@@ -123,11 +123,9 @@ struct EmailInvite: Codable, Hashable {
         return trimmed.isEmpty ? "Untitled event" : trimmed
     }
 
-    /// The https join link, when there is one.
+    /// The `meetingUrl` when it is https on a known meeting host (AVE-216).
     var meetingLink: URL? {
-        guard let meetingUrl, let url = URL(string: meetingUrl),
-              url.scheme?.lowercased() == "https", url.host != nil else { return nil }
-        return url
+        meetingUrl.flatMap(MeetingLinks.knownURL)
     }
 
     /// Location, unless it is only the meeting link again.
@@ -146,9 +144,11 @@ struct EmailInvite: Codable, Hashable {
         return .none
     }
 
-    /// The https `meetingUrl`, else an https link in the location ("Zoom: https://…").
+    /// The `meetingUrl`, else a link in the location ("Zoom: https://…"), only
+    /// when it is https on a known meeting host (AVE-216). A stranger's link to
+    /// any other site stays location text: no Join, not the calendar event's URL.
     var joinLink: URL? {
-        meetingLink ?? location.flatMap(InviteVenue.httpsLink(in:))
+        meetingLink ?? location.flatMap(MeetingLinks.firstKnownURL(in:))
     }
 
     /// The location when it is a place you can get directions to: not a link and
@@ -197,6 +197,54 @@ enum InviteVenue: Equatable {
 
     private static func isHTTPS(_ url: URL) -> Bool {
         url.scheme?.lowercased() == "https" && !(url.host ?? "").isEmpty
+    }
+}
+
+/// Known video-meeting links (AVE-216): the only links the Invite card offers
+/// Join for. Mirrors `shared/meeting-links.ts` (the Worker's list) and is checked
+/// against `shared/meeting-links.fixtures.json`. Android twin: `MeetingLinks`.
+enum MeetingLinks {
+    /// Only this exact host.
+    static let exactHosts: [String] = [
+        "meet.google.com", "teams.microsoft.com", "teams.live.com", "meet.jit.si",
+        "whereby.com", "facetime.apple.com", "chime.aws", "meet.goto.com", "app.slack.com",
+    ]
+    /// This host or any subdomain of it ("us02web.zoom.us").
+    static let subdomainHosts: [String] = ["zoom.us", "zoomgov.com", "webex.com", "gotomeeting.com"]
+
+    static func isMeetingHost(_ host: String) -> Bool {
+        let host = host.lowercased()
+        return exactHosts.contains(host) || subdomainHosts.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    /// `value` as a URL when it is https on a known meeting host with no user
+    /// info ("https://zoom.us@evil.test" is a link to evil.test); else nil.
+    static func knownURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\\"))) == nil,
+              let components = URLComponents(string: trimmed),
+              components.scheme?.lowercased() == "https",
+              components.user == nil, components.password == nil,
+              let host = components.host, isMeetingHost(host),
+              let url = components.url else { return nil }
+        return url
+    }
+
+    /// The first known meeting link in free text ("Zoom: https://…"), skipping
+    /// links to other sites.
+    static func firstKnownURL(in text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = knownURL(trimmed) { return url }
+        guard let regex = try? NSRegularExpression(pattern: #"https://[^\s<>"'\\)\]]+"#, options: .caseInsensitive) else { return nil }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        for match in regex.matches(in: trimmed, range: range) {
+            guard let matched = Range(match.range, in: trimmed) else { continue }
+            let candidate = String(trimmed[matched]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?"))
+            if let url = knownURL(candidate) { return url }
+        }
+        return nil
     }
 }
 
@@ -521,7 +569,7 @@ extension EmailInvite {
         guard let span = InviteTime.span(for: self, timeZone: timeZone) else { return nil }
         let event = EKEvent(eventStore: store)
         event.title = displayTitle
-        event.location = displayLocation ?? meetingUrl
+        event.location = displayLocation ?? meetingLink?.absoluteString
         event.url = meetingLink
         event.notes = description
         if span.allDay {

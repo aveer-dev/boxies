@@ -219,6 +219,17 @@ class ApiClient private constructor() {
             if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
 
         /**
+         * Body for `POST .../quick-reply`. `quote_time_zone` makes the quoted "On <date>"
+         * line use the device's zone instead of the Worker's UTC default (AVE-225; iOS twin
+         * sends `TimeZone.current.identifier`).
+         */
+        fun quickReplyBody(text: String, timeZoneId: String = java.util.TimeZone.getDefault().id): JsonObject =
+            buildJsonObject {
+                put("text", text)
+                put("quote_time_zone", timeZoneId)
+            }
+
+        /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
          * expired mobile session token". Per-mailbox ACL denials are also 403
          * but carry other text, so they keep their local handling.
@@ -987,8 +998,11 @@ class ApiClient private constructor() {
         )
     }
 
+    /** Folder unread counts are conversations when the Worker sends them (AVE-228). */
     suspend fun listFolders(mailboxId: String): List<Folder> =
-        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
+        request<List<Folder>>("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders").map { folder ->
+            folder.copy(unreadCount = folder.unreadThreadCount ?: folder.unreadCount, unreadThreadCount = null)
+        }
 
     /**
      * Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
@@ -1467,7 +1481,7 @@ class ApiClient private constructor() {
     ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/quick-reply",
         method = "POST",
-        body = buildJsonObject { put("text", text) },
+        body = quickReplyBody(text),
         headers = idempotencyHeaders(idempotencyKey),
     )
 

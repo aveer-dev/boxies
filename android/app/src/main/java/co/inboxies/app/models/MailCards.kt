@@ -110,9 +110,9 @@ data class EmailInvite(
     val displayTitle: String
         get() = title?.trim()?.takeIf { it.isNotEmpty() } ?: "Untitled event"
 
-    /** The https join link, when there is one. */
+    /** The [meetingUrl] when it is https on a known meeting host (AVE-216). */
     val meetingLink: String?
-        get() = meetingUrl?.trim()?.takeIf { InviteVenue.isHttps(it) }
+        get() = meetingUrl?.let { MeetingLinks.knownUrl(it) }
 
     /** Location, unless it is only the meeting link again. */
     val displayLocation: String?
@@ -122,9 +122,13 @@ data class EmailInvite(
             return trimmed
         }
 
-    /** The https [meetingUrl], else an https link in the location ("Zoom: https://…"). */
+    /**
+     * The [meetingUrl], else a link in the location ("Zoom: https://…"), only when it
+     * is https on a known meeting host (AVE-216). A stranger's link to any other site
+     * stays location text: no Join, and not the calendar entry's link.
+     */
     val joinLink: String?
-        get() = meetingLink ?: location?.let { InviteVenue.httpsLink(it) }
+        get() = meetingLink ?: location?.let { MeetingLinks.firstKnownUrl(it) }
 
     /**
      * The location when it is a place you can get directions to: not a link and
@@ -149,6 +153,54 @@ data class EmailInvite(
             address?.let { return InviteVenue.Address(it) }
             return InviteVenue.None
         }
+}
+
+/**
+ * Known video-meeting links (AVE-216): the only links the Invite card offers Join
+ * for. Mirrors `shared/meeting-links.ts` (the Worker's list) and is checked against
+ * `shared/meeting-links.fixtures.json`. iOS twin: `MeetingLinks`.
+ */
+object MeetingLinks {
+    /** Only this exact host. */
+    val exactHosts = listOf(
+        "meet.google.com", "teams.microsoft.com", "teams.live.com", "meet.jit.si",
+        "whereby.com", "facetime.apple.com", "chime.aws", "meet.goto.com", "app.slack.com",
+    )
+
+    /** This host or any subdomain of it ("us02web.zoom.us"). */
+    val subdomainHosts = listOf("zoom.us", "zoomgov.com", "webex.com", "gotomeeting.com")
+
+    private val linkPattern = Regex("""https://[^\s<>"'\\)\]]+""", RegexOption.IGNORE_CASE)
+    private val trailingPunctuation = charArrayOf('.', ',', ';', ':', '!', '?')
+
+    fun isMeetingHost(host: String): Boolean {
+        val h = host.lowercase(Locale.ROOT)
+        return h in exactHosts || subdomainHosts.any { h == it || h.endsWith(".$it") }
+    }
+
+    /**
+     * [value] when it is https on a known meeting host with no user info
+     * ("https://zoom.us@evil.test" is a link to evil.test); else null.
+     */
+    fun knownUrl(value: String): String? {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() || it == '\\' }) return null
+        val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("https", ignoreCase = true) || uri.rawUserInfo != null) return null
+        val host = uri.host ?: return null
+        return if (isMeetingHost(host)) trimmed else null
+    }
+
+    /** The first known meeting link in free text ("Zoom: https://…"), skipping other sites. */
+    fun firstKnownUrl(text: String): String? {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return null
+        knownUrl(trimmed)?.let { return it }
+        for (match in linkPattern.findAll(trimmed)) {
+            knownUrl(match.value.trimEnd(*trailingPunctuation))?.let { return it }
+        }
+        return null
+    }
 }
 
 /** Classification of an invite's location (AVE-176 review). */
@@ -495,7 +547,7 @@ data class CalendarInsert(
                 beginMillis = begin,
                 endMillis = end,
                 allDay = span.allDay,
-                location = invite.displayLocation ?: invite.meetingUrl,
+                location = invite.displayLocation ?: invite.meetingLink,
                 description = description,
                 rrule = InviteRecurrence.parse(invite.recurrence)?.rrule,
             )

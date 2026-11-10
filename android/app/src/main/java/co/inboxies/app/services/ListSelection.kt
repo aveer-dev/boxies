@@ -121,8 +121,10 @@ object EmailPaging {
     data class InboxNewPreview(val shown: List<Email>, val hiddenCount: Int)
 
     /**
-     * Inbox New preview: the newest [limit] New rows, and how many more there are
-     * ([serverNewCount] when known — page 1 only holds a few).
+     * Inbox New preview: the newest [limit] New rows, and how many more there are. When the
+     * server total is known it is the whole story (AVE-228): shown + hidden always equals it,
+     * even when the cache still holds New rows read, moved or deleted elsewhere (counting
+     * those made the section and the widget drift).
      */
     fun inboxNewPreview(
         newRows: List<Email>,
@@ -130,8 +132,8 @@ object EmailPaging {
         limit: Int = INBOX_NEW_PREVIEW_LIMIT,
     ): InboxNewPreview {
         val sorted = newRows.sortedByDescending { it.inboxSortDate }
-        val shown = sorted.take(limit)
-        val total = maxOf(serverNewCount ?: 0, sorted.size)
+        val total = maxOf(0, serverNewCount ?: sorted.size)
+        val shown = sorted.take(minOf(limit, total))
         return InboxNewPreview(shown, maxOf(0, total - shown.size))
     }
 

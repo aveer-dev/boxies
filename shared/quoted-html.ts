@@ -100,18 +100,28 @@ function safeStyle(raw: string): string | null {
 	return value;
 }
 
-function cleanAttributes(tag: string, source: string): string {
+/** What a sanitiser keeps: tags, attributes, and which URLs survive. */
+export interface HtmlAllowlist {
+	tags: ReadonlySet<string>;
+	attrs: ReadonlySet<string>;
+	/** A URL attribute's cleaned value, or null to drop the attribute. */
+	url(raw: string, attr: string, tag: string): string | null;
+}
+
+const QUOTE_ALLOWLIST: HtmlAllowlist = { tags: ALLOWED_TAGS, attrs: ALLOWED_ATTRS, url: safeUrl };
+
+function cleanAttributes(tag: string, source: string, policy: HtmlAllowlist): string {
 	let out = "";
 	let hasHref = false;
 	const seen = new Set<string>();
 	ATTR.lastIndex = 0;
 	for (let match = ATTR.exec(source); match; match = ATTR.exec(source)) {
 		const name = match[1].toLowerCase();
-		if (!ALLOWED_ATTRS.has(name) || seen.has(name)) continue;
+		if (!policy.attrs.has(name) || seen.has(name)) continue;
 		seen.add(name);
 		const raw = match[2] ?? match[3] ?? match[4] ?? "";
 		let value: string | null;
-		if (URL_ATTRS.has(name)) value = safeUrl(raw, name, tag);
+		if (URL_ATTRS.has(name)) value = policy.url(raw, name, tag);
 		else if (name === "style") value = safeStyle(raw);
 		else value = decodeEntities(raw);
 		if (value === null) continue;
@@ -135,6 +145,18 @@ function indexAfterClose(html: string, name: string, from: number): number {
  * string work (no DOM), so the Worker, Node tests and browsers agree.
  */
 export function sanitizeQuotedHtml(html: string | null | undefined): string {
+	return sanitizeHtmlWithAllowlist(html, QUOTE_ALLOWLIST);
+}
+
+/**
+ * The sanitiser behind `sanitizeQuotedHtml`, with a caller's allowlist (the
+ * mailbox signature uses a stricter one). Dropped and raw-text elements, comments
+ * and tag re-balancing are the same for every allowlist.
+ */
+export function sanitizeHtmlWithAllowlist(
+	html: string | null | undefined,
+	policy: HtmlAllowlist,
+): string {
 	if (!html) return "";
 	let out = "";
 	const open: string[] = [];
@@ -180,7 +202,7 @@ export function sanitizeQuotedHtml(html: string | null | undefined): string {
 			else if (RAW_TEXT.has(name)) i = n;
 			continue;
 		}
-		if (!ALLOWED_TAGS.has(name)) continue; // unwrap: keep the content only
+		if (!policy.tags.has(name)) continue; // unwrap: keep the content only
 
 		if (closing) {
 			const at = open.lastIndexOf(name);
@@ -188,7 +210,7 @@ export function sanitizeQuotedHtml(html: string | null | undefined): string {
 			while (open.length > at) out += `</${open.pop()}>`;
 			continue;
 		}
-		out += `<${name}${cleanAttributes(name, attrs)}>`;
+		out += `<${name}${cleanAttributes(name, attrs, policy)}>`;
 		if (!VOID_TAGS.has(name)) open.push(name);
 	}
 	while (open.length) out += `</${open.pop()}>`;

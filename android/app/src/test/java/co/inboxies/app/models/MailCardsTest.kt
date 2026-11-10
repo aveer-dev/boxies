@@ -1,12 +1,18 @@
 package co.inboxies.app.models
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -214,6 +220,53 @@ class MailCardsTest {
         assertEquals(InviteVenue.None, invite(location = "Online").venue)
         assertEquals(InviteVenue.None, invite(meetingUrl = "http://insecure.example/join").venue)
         assertEquals(InviteVenue.None, invite(meetingUrl = "zoommtg://zoom.us/join").venue)
+    }
+
+    /** AVE-216: same fixtures as web (`workers/test/meeting-links.test.mjs`) and iOS. */
+    @Test
+    fun joinOnlyForKnownMeetingLinksMatchesSharedFixtures() {
+        // Gradle runs unit tests from the module directory (android/app).
+        val fixtures = Json.parseToJsonElement(File("../../shared/meeting-links.fixtures.json").readText()).jsonObject
+        val hosts = fixtures.getValue("hosts").jsonObject
+        assertEquals(hosts.getValue("exact").jsonArray.map { it.jsonPrimitive.content }, MeetingLinks.exactHosts)
+        assertEquals(hosts.getValue("withSubdomains").jsonArray.map { it.jsonPrimitive.content }, MeetingLinks.subdomainHosts)
+        val urls = fixtures.getValue("urls").jsonArray
+        assertTrue(urls.size >= 15)
+        for (element in urls) {
+            val case = element.jsonObject
+            val url = case.getValue("url").jsonPrimitive.content
+            val join = case["join"]?.takeIf { it != JsonNull }?.jsonPrimitive?.contentOrNull
+            val label = "$url ${case["note"]?.jsonPrimitive?.content ?: ""}"
+            assertEquals(label, join, MeetingLinks.knownUrl(url))
+            // Even the Worker's meetingUrl is checked again.
+            assertEquals("meetingUrl $label", join, invite(meetingUrl = url).joinLink)
+        }
+        for (element in fixtures.getValue("locations").jsonArray) {
+            val case = element.jsonObject
+            val location = case.getValue("location").jsonPrimitive.content
+            val join = case["join"]?.takeIf { it != JsonNull }?.jsonPrimitive?.contentOrNull
+            val inv = invite(location = location)
+            assertEquals(location, join, inv.joinLink)
+            if (join != null) {
+                assertEquals(location, InviteVenue.Link(join), inv.venue)
+            } else {
+                assertFalse(location, inv.venue is InviteVenue.Link)
+            }
+        }
+    }
+
+    @Test
+    fun unknownLocationLinkIsTextNotJoinOrCalendarLink() {
+        val evil = "https://zoom-us.evil.test/j/123?login=1"
+        val stranger = invite(location = evil)
+        assertEquals(InviteVenue.None, stranger.venue)
+        val insert = CalendarInsert.of(stranger, newYork)!!
+        assertEquals(evil, insert.location)
+        assertNull(insert.description)
+        // Even as the Worker's meetingUrl, it never becomes the calendar entry's link.
+        val claimed = CalendarInsert.of(invite(meetingUrl = evil), newYork)!!
+        assertNull(claimed.location)
+        assertNull(claimed.description)
     }
 
     @Test

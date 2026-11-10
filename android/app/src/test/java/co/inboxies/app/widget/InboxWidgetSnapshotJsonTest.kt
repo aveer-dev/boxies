@@ -1,6 +1,7 @@
 package co.inboxies.app.widget
 
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.EmailListResponse
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.ui.widget.InboxWidgetSnapshot
 import org.junit.Assert.assertEquals
@@ -106,7 +107,7 @@ class InboxWidgetSnapshotJsonTest {
                 listSection = "new",
             )
         } + Email(id = "seen", subject = "Old", sender = "old@example.com", date = "2026-10-28T09:59:00Z", listSection = "seen")
-        val snapshot = InboxWidgetSnapshot.make(mailbox, rows, serverNewCount = 12, replyLaterCount = -1, now = now)
+        val snapshot = InboxWidgetSnapshot.make(mailbox, rows, newCount = 12, replyLaterCount = -1, now = now)
         assertEquals("mb-1", snapshot.mailboxId)
         assertEquals(12, snapshot.newCount)
         assertEquals(0, snapshot.replyLaterCount)
@@ -117,12 +118,36 @@ class InboxWidgetSnapshotJsonTest {
     }
 
     @Test
-    fun makeCountsRowsWhenTheServerTotalIsUnknown() {
+    fun makeUsesTheServerTotalNotTheCache() {
+        // AVE-228: the cache held 8 New rows (some read elsewhere) while the server said 5.
         val mailbox = Mailbox(id = "mb-1", email = "you@inboxies.email", name = "You")
-        val rows = listOf(Email(id = "e1", sender = "a@b.c", date = "2026-10-28T09:00:00Z", listSection = "new"))
-        val snapshot = InboxWidgetSnapshot.make(mailbox, rows, serverNewCount = null, replyLaterCount = 3, now = now)
-        assertEquals(1, snapshot.newCount)
-        assertEquals(3, snapshot.replyLaterCount)
-        assertTrue(InboxWidgetSnapshot.make(mailbox, emptyList(), serverNewCount = 0, replyLaterCount = 0, now = now).isInboxZero)
+        val rows = (1..8).map { minute ->
+            Email(id = "e$minute", sender = "a@b.c", date = "2026-10-28T09:%02d:00Z".format(minute), listSection = "new")
+        }
+        val five = InboxWidgetSnapshot.make(mailbox, rows, newCount = 5, replyLaterCount = 3, now = now)
+        assertEquals(5, five.newCount)
+        assertEquals(5, five.threads.size)
+        assertEquals(3, five.replyLaterCount)
+        // A capped page (3 cached New rows) still reports the full total.
+        val capped = InboxWidgetSnapshot.make(mailbox, rows.takeLast(3), newCount = 5, replyLaterCount = 0, now = now)
+        assertEquals(5, capped.newCount)
+        assertEquals(3, capped.threads.size)
+        // Fewer New on the server than in the cache: never more cards than the count.
+        val two = InboxWidgetSnapshot.make(mailbox, rows, newCount = 2, replyLaterCount = 0, now = now)
+        assertEquals(2, two.newCount)
+        assertEquals(2, two.threads.size)
+        assertTrue(InboxWidgetSnapshot.make(mailbox, rows, newCount = 0, replyLaterCount = 0, now = now).isInboxZero)
+    }
+
+    @Test
+    fun makeFromTheServerNewPage() {
+        val rows = (1..3).map { minute ->
+            Email(id = "e$minute", sender = "a@b.c", date = "2026-10-28T09:%02d:00Z".format(minute), read = false)
+        }
+        val page = EmailListResponse(emails = rows, totalCount = 7, newCount = 7, seenCount = 2)
+        val snapshot = InboxWidgetSnapshot.make("mb-1", "you@inboxies.email", page, replyLaterCount = 1, now = now)
+        assertEquals(7, snapshot.newCount)
+        assertEquals(listOf("e3", "e2", "e1"), snapshot.threads.map { it.id })
+        assertEquals(1, snapshot.replyLaterCount)
     }
 }

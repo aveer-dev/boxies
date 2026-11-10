@@ -55,6 +55,7 @@
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh signature           # Settings → Outgoing mail → Signature (AVE-204)
 #   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
 #   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
 #   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
@@ -104,6 +105,7 @@ case "$mode" in
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  signature|Signature|previewSignature) extra=previewSignature; label=signature ;;
   tags|Tags|previewTags) extra=previewTags; label=tags ;;
   tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
   tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
@@ -127,6 +129,8 @@ case "$mode" in
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
+  focusReply|FocusReply|focus-reply|previewFocusReply) extra=previewFocusReply; label=focusReply ;;
+  focusReplyDone|FocusReplyDone|previewFocusReplyDone) extra=previewFocusReplyDone; label=focusReplyDone ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   code|Code|previewCode) extra=previewCode; label=code ;;
@@ -163,7 +167,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac
