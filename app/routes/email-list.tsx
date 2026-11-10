@@ -55,7 +55,7 @@ import { useEmails } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import type { Email } from "~/types";
+import { type Email, folderUnread } from "~/types";
 
 const PAGE_SIZE = 25;
 
@@ -127,9 +127,10 @@ const FOLDER_EMPTY_STATES: Record<
 };
 
 /**
- * Column 3 for `/emails/:folder` (built-in folders) and `/tags/:tagRef` (a tag
- * by its index, never its name: AVE-126, shared/tag-url.ts), plus the reader
- * for `:emailId`.
+ * Column 3 for `/emails/:folder` (built-in folders) and `/tags/:tagRef` (a
+ * custom folder by its index, never its name: AVE-126, shared/tag-url.ts),
+ * plus the reader for `:emailId`. Real tags have their own view
+ * (routes/tag-view.tsx).
  */
 export default function EmailListRoute() {
 	const folder = useResolvedListFolder(useMailboxId());
@@ -202,13 +203,13 @@ function FolderList({ folder }: { folder: string }) {
 	}, [emails, showNewSeen, emailData?.newCount, emailData?.seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);
-	const isTag = !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folder);
+	const isCustomFolder = !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folder);
 	const folderName = useMemo(() => {
 		const found = folders.find((f) => f.id === folder);
-		if (found) return isTag ? `#${found.name.replace(/^#/, "")}` : found.name;
+		if (found) return isCustomFolder ? found.name.replace(/^#/, "") : found.name;
 		return getFolderDisplayName(folder);
-	}, [folders, folder, isTag]);
-	const unreadCount = folders.find((f) => f.id === folder)?.unreadCount;
+	}, [folders, folder, isCustomFolder]);
+	const unreadCount = folderUnread(folders.find((f) => f.id === folder));
 
 	// New folder (or mailbox) → back to page 1.
 	const prevFolderRef = useRef<string | undefined>(undefined);
@@ -224,7 +225,7 @@ function FolderList({ folder }: { folder: string }) {
 	};
 
 	const openMenu = useEmailMenu(mailboxId, actions);
-	useListShortcuts(emails, actions);
+	useListShortcuts(emails, actions, { selectedId: emailId, open: handleOpen });
 
 	const [emptyingTrash, setEmptyingTrash] = useState(false);
 	const handleEmptyTrash = async () => {
@@ -255,8 +256,8 @@ function FolderList({ folder }: { folder: string }) {
 
 	const emptyState = FOLDER_EMPTY_STATES[folder] ?? {
 		icon: <EnvelopeSimpleIcon size={40} weight="thin" className="text-kumo-subtle" />,
-		title: isTag ? "Nothing tagged yet" : "No emails",
-		description: isTag
+		title: isCustomFolder ? "Nothing here yet" : "No emails",
+		description: isCustomFolder
 			? "Move a message here from the reader’s Move to menu."
 			: "This folder is empty.",
 	};

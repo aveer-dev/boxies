@@ -32,6 +32,45 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(email.aliasId, "al_1")
     }
 
+    // MARK: - Tracking pixels (AVE-195)
+
+    func testEmailDecodesBlockedTrackers() throws {
+        let email = try decode(Email.self, """
+        {"id":"e3","folder_id":"inbox","subject":"News","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-09T10:00:00Z","read":true,"starred":false,"body":"<p>Hi</p>",
+         "blocked_trackers":{"count":2,"services":["Mailchimp"]}}
+        """)
+        XCTAssertEqual(email.blockedTrackers, BlockedTrackers(count: 2, services: ["Mailchimp"]))
+        XCTAssertEqual(TrackerNote.text(email.blockedTrackers), "Blocked tracking from Mailchimp")
+
+        let none = try decode(Email.self, """
+        {"id":"e4","folder_id":"inbox","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-09T10:00:00Z","read":true,"starred":false,"blocked_trackers":null}
+        """)
+        XCTAssertNil(none.blockedTrackers)
+        XCTAssertNil(TrackerNote.text(none.blockedTrackers))
+    }
+
+    /// Same strings as web `trackerNote` and Android `TrackerNote.text`.
+    func testTrackerNoteMatchesSharedFixtures() throws {
+        struct Fixture: Decodable {
+            let name: String
+            let blocked: BlockedTrackers?
+            let note: String?
+        }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // InboxiesTests
+            .deletingLastPathComponent() // AgenticInbox
+            .deletingLastPathComponent() // ios
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("shared/tracker-note.fixtures.json")
+        let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
+        XCTAssertGreaterThanOrEqual(fixtures.count, 8)
+        for fixture in fixtures {
+            XCTAssertEqual(TrackerNote.text(fixture.blocked), fixture.note, fixture.name)
+        }
+    }
+
     // AVE-111: these fields were declared and keyed but never read by `init(from:)`.
 
     /// Threaded list row: `LIST_EMAIL_COLUMNS` (workers/lib/conversation-index.ts)
@@ -545,6 +584,24 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
     }
 
+    // MARK: - Onboarding setup-users (AVE-243)
+
+    /// The Worker reads `fullName`, `contactEmail` and `username`; anything else is dropped.
+    func testSetupUsersBodyUsesWorkerKeys() throws {
+        let body = APIClient.setupUsersBody([
+            SetupUser(fullName: "Alice Doe", contactEmail: "alice@example.com", username: "alice"),
+            SetupUser(fullName: "", contactEmail: "", username: "bob")
+        ])
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["users"])
+        let items = try XCTUnwrap(json["users"] as? [[String: String]])
+        XCTAssertEqual(items, [
+            ["fullName": "Alice Doe", "contactEmail": "alice@example.com", "username": "alice"],
+            ["fullName": "", "contactEmail": "", "username": "bob"]
+        ])
+    }
+
     // MARK: - Recent security activity (AVE-151)
 
     func testSecurityActivityDecodesWorkerShape() throws {
@@ -594,5 +651,23 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: "Chrome on macOS", location: "Lagos, Nigeria")), "Chrome on macOS · Lagos, Nigeria")
         XCTAssertEqual(SecurityActivity.detail(item("sign_in", location: "Nigeria")), "Nigeria")
         XCTAssertEqual(SecurityActivity.detail(item("sign_in", device: " ")), "")
+    }
+
+    // MARK: - Onboarding setup-aliases (AVE-238)
+
+    /// The Worker reads `aliasLocal` + `targetMailboxId` and silently skips anything else.
+    func testSetupAliasesBodyUsesWorkerKeys() throws {
+        let body = APIClient.setupAliasesBody([
+            SetupAlias(aliasLocal: "support", targetMailboxId: "alice@startup.dev"),
+            SetupAlias(aliasLocal: "billing", targetMailboxId: "bob@startup.dev")
+        ])
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["aliases"])
+        let items = try XCTUnwrap(json["aliases"] as? [[String: String]])
+        XCTAssertEqual(items, [
+            ["aliasLocal": "support", "targetMailboxId": "alice@startup.dev"],
+            ["aliasLocal": "billing", "targetMailboxId": "bob@startup.dev"]
+        ])
     }
 }

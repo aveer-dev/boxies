@@ -57,6 +57,14 @@ enum APIError: LocalizedError {
     }
 }
 
+/// One teammate added during domain onboarding. `contactEmail` (optional, may be empty) is where
+/// their mailbox invite goes; the Worker falls back to `username` when `fullName` is empty.
+struct SetupUser: Hashable {
+    let fullName: String
+    let contactEmail: String
+    let username: String
+}
+
 /// Thin fetch wrapper — think `app/services/api.ts`.
 final class APIClient: @unchecked Sendable {
     static let shared = APIClient()
@@ -713,20 +721,34 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func setupDomainAliases(domain: String, aliases: [[String: String]]) async throws {
+    func setupDomainAliases(domain: String, aliases: [SetupAlias]) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/setup-aliases",
             method: "POST",
-            body: ["aliases": aliases]
+            body: Self.setupAliasesBody(aliases)
         )
     }
 
-    func setupDomainUsers(domain: String, users: [[String: String]]) async throws {
+    /// Onboarding `setup-aliases` body. The Worker reads `aliasLocal` and `targetMailboxId`
+    /// and silently skips items without them (matches web `api.setupDomainAliases`).
+    static func setupAliasesBody(_ aliases: [SetupAlias]) -> [String: Any] {
+        ["aliases": aliases.map { ["aliasLocal": $0.aliasLocal, "targetMailboxId": $0.targetMailboxId] }]
+    }
+
+    func setupDomainUsers(domain: String, users: [SetupUser]) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/setup-users",
             method: "POST",
-            body: ["users": users]
+            body: Self.setupUsersBody(users)
         )
+    }
+
+    /// Onboarding `setup-users` body. The Worker reads `fullName`, `contactEmail` and `username`
+    /// (matches web `api.setupDomainUsers`).
+    static func setupUsersBody(_ users: [SetupUser]) -> [String: Any] {
+        ["users": users.map {
+            ["fullName": $0.fullName, "contactEmail": $0.contactEmail, "username": $0.username]
+        }]
     }
 
     // MARK: - Admin DNS Suite
@@ -1771,4 +1793,10 @@ private extension CharacterSet {
         set.remove(charactersIn: "/")
         return set
     }()
+}
+
+/// One onboarding alias: local part on the domain, and the mailbox id (full address) it delivers to.
+struct SetupAlias: Hashable {
+    let aliasLocal: String
+    let targetMailboxId: String
 }

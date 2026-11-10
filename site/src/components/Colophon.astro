@@ -1,7 +1,7 @@
 ---
 // The in-flow site map at the end of every page. The fixed footer keeps the
-// portfolio's two rows, so source, X and the rest live here.
-// src: FSW#per-mailbox-isolation; PS#7; RM#4 (forked from cloudflare/agentic-inbox)
+// portfolio's two rows, so X and the rest live here. The Developers row is the
+// one place every page mentions the code (data-claim="dev").
 import { GITHUB_URL, SIGN_UP_URL, SUPPORT_EMAIL, X_URL, flags } from "../config";
 ---
 
@@ -26,28 +26,29 @@ import { GITHUB_URL, SIGN_UP_URL, SUPPORT_EMAIL, X_URL, flags } from "../config"
 				<a href="/support">Support</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/support#contact">Contact</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/request">Send a request</a><span aria-hidden="true" class="dot">·</span><wbr /><a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
 			</dd>
 		</div>
+		<div data-claim="dev">
+			<dt>Developers</dt>
+			<dd>
+				<a href={GITHUB_URL}>Source&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/support#mcp">MCP</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/support#self-host">Self-hosting</a>
+			</dd>
+		</div>
 		<div>
 			<dt>Legal</dt>
 			<dd>
 				<a href="/legal#privacy">Privacy</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/legal#terms">Terms</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/legal#acceptable-use">Acceptable use</a>
 			</dd>
 		</div>
-		<div>
-			<dt>Elsewhere</dt>
-			<dd>
-				<a href={GITHUB_URL}>Source&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>{
-					X_URL && (
-						<>
-							<span aria-hidden="true" class="dot">·</span><wbr /><a href={X_URL}>@inboxies_app&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>
-						</>
-					)
-				}
-			</dd>
-		</div>
+		{
+			X_URL && (
+				<div>
+					<dt>Elsewhere</dt>
+					<dd>
+						<a href={X_URL}>@inboxies_app&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>
+					</dd>
+				</div>
+			)
+		}
 	</dl>
-	<p class="colophon-note">
-		Made with Cloudflare Workers, Durable Objects, R2 and Workers AI. Inboxies began as a fork of Cloudflare’s open-source agentic-inbox (Apache-2.0).
-	</p>
 </nav>
 
 <style>
@@ -101,13 +102,5 @@ import { GITHUB_URL, SIGN_UP_URL, SUPPORT_EMAIL, X_URL, flags } from "../config"
 	.dot {
 		margin: 0 6px;
 		color: var(--text-subtle);
-	}
-
-	.colophon-note {
-		margin-top: 16px;
-		max-width: 46ch;
-		font-size: 0.6875rem;
-		line-height: 1.125rem;
-		color: var(--text-muted);
 	}
 </style>

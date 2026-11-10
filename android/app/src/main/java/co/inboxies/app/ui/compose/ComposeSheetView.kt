@@ -3,6 +3,7 @@ package co.inboxies.app.ui.compose
 import co.inboxies.app.theme.ToastMetrics
 import co.inboxies.app.ui.components.toastIcon
 import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.email.FocusReplyComposeBar
 import co.inboxies.app.ui.components.AnimatedToast
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
@@ -158,6 +159,7 @@ fun ComposeSheetView(
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val mailboxes by app.mailboxes.collectAsState()
+    val focusReply by app.focusReply.collectAsState()
     val density = LocalDensity.current
     val context = LocalContext.current
     val view = LocalView.current
@@ -243,6 +245,10 @@ fun ComposeSheetView(
             "heic" in type || "heif" in type -> "heic"
             type.startsWith("image/") -> "jpg"
             "pdf" in type -> "pdf"
+            "quicktime" in type -> "mov"
+            "webm" in type -> "webm"
+            "3gpp" in type -> "3gp"
+            type.startsWith("video/") -> "mp4"
             else -> "bin"
         }
     }
@@ -268,6 +274,17 @@ fun ComposeSheetView(
         return fallback
     }
 
+    /** Provider-reported byte size, or null when the provider doesn't know. */
+    fun uriSize(uri: Uri): Long? {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+            }
+        }
+        return null
+    }
+
     suspend fun ingestUri(uri: Uri, fallbackStem: String) {
         persist()
         val budget = form.remainingAttachmentBudget()
@@ -281,16 +298,22 @@ fun ComposeSheetView(
                     "$fallbackStem.${extensionForMime(mime)}"
                 }
                 val name = uriDisplayName(uri, fallback)
-                if (OutboundImageCompressor.isVideo(mime, name)) {
-                    throw OutboundAttachmentException(OutboundLimits.VIDEO_REJECT)
+                val isImage = OutboundImageCompressor.isImage(mime, name)
+                // Videos, PDFs and other files go as they are, so the remaining
+                // budget is their cap; say how big an oversized one is.
+                val tooLarge = { total: Long ->
+                    OutboundLimits.tooLargeMessage(total, budget, OutboundImageCompressor.isVideo(mime, name))
                 }
-                val cap = if (OutboundImageCompressor.isImage(mime, name)) {
-                    OutboundLimits.MAX_IMAGE_SOURCE_BYTES
-                } else {
-                    budget
+                if (!isImage) {
+                    val size = uriSize(uri)
+                    if (size != null && size > budget) throw OutboundAttachmentException(tooLarge(size))
                 }
                 val bytes = context.contentResolver.openInputStream(uri)?.use {
-                    OutboundLimits.readCapped(it, cap)
+                    if (isImage) {
+                        OutboundLimits.readCapped(it, OutboundLimits.MAX_IMAGE_SOURCE_BYTES)
+                    } else {
+                        OutboundLimits.readCapped(it, budget, tooLarge)
+                    }
                 } ?: throw OutboundAttachmentException("Couldn't read file")
                 OutboundImageCompressor.prepare(
                     bytes = bytes,
@@ -576,6 +599,20 @@ fun ComposeSheetView(
                     .padding(horizontal = 16.dp)
                     .padding(top = 12.dp, bottom = 8.dp),
             )
+
+            focusReply?.let { run ->
+                // Focus & Reply (AVE-193): where you are in the pile, and Skip.
+                FocusReplyComposeBar(
+                    progress = run.progressLabel,
+                    onSkip = {
+                        if (sending || form.isSending) return@FocusReplyComposeBar
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        commitTokens()
+                        persist()
+                        app.skipFocusReply()
+                    },
+                )
+            }
             }
 
             // Single page scroll: header + growing body. EditText must wrap content
@@ -835,7 +872,7 @@ fun ComposeSheetView(
                         onClick = {
                             showAttachMenu = false
                             photoLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                             )
                         },
                     )

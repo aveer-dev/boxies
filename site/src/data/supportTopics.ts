@@ -61,11 +61,11 @@ export const topics: SupportTopic[] = [
 		src: "CT#2.3 (support topics)",
 	},
 	{
-		id: "topic-self-host",
-		title: "Self-hosting",
-		href: "#self-host-topic",
-		group: "self-host-topic",
-		description: "Running Inboxies on your own Cloudflare account.",
+		id: "topic-developers",
+		title: "For developers",
+		href: "#developers-topic",
+		group: "developers-topic",
+		description: "The source code, connecting AI tools and running your own copy.",
 		src: "CT#2.3 (support topics); PS#7",
 	},
 	{

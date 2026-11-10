@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.Mailbox
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.ui.widget.InboxWidgetSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +49,26 @@ object InboxWidgetPublisher {
     fun publishMailboxes(mailboxes: List<Mailbox>) = enqueue { ctx ->
         val refs = mailboxes.map { InboxWidgetStore.MailboxRef(it.id, it.email) }
         if (InboxWidgetStore.from(ctx).writeMailboxes(refs)) redrawAll(ctx)
+    }
+
+    /**
+     * A push while the app may not be open (AVE-228): ask the server for the Inbox's New
+     * page and write it, so the widget keeps the same New total the app shows. Only
+     * mailboxes the app already published are refreshed.
+     */
+    fun refreshFromServer(mailboxId: String) = enqueue { ctx ->
+        val store = InboxWidgetStore.from(ctx)
+        val previous = store.snapshot(mailboxId) ?: return@enqueue
+        val page = runCatching {
+            ApiClient.shared.listEmails(mailboxId, folder = FolderIds.INBOX, page = 1, section = "new")
+        }.getOrNull() ?: return@enqueue
+        val snapshot = InboxWidgetSnapshot.make(
+            mailboxId = mailboxId,
+            mailboxAddress = previous.mailboxAddress,
+            newPage = page,
+            replyLaterCount = previous.replyLaterCount,
+        )
+        if (store.write(snapshot)) redrawAll(ctx)
     }
 
     /** Sign-out: the widget goes back to "Open Inboxies". */

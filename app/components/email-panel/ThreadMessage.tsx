@@ -13,6 +13,7 @@ import EmailAttachmentList from '~/components/EmailAttachmentList';
 import { IconButton } from '~/components/IconButton';
 import MessageBody from '~/components/email-panel/MessageBody';
 import { formatDetailDate, formatShortDate, hasFileAttachment, stripHtml } from '~/lib/utils';
+import { summaryQuotaError, summaryQuotaText } from '~/lib/summary-quota';
 import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
 import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
@@ -45,8 +46,11 @@ interface ThreadMessageProps {
 
 /** Inline AI summary of one thread message, fetched once the user asks for it. */
 function QuickSummary({ mailboxId, emailId, onClose }: { mailboxId: string; emailId: string; onClose: () => void }) {
-    const { data, isFetching, isError, refetch } = useEmailQuickSummary(mailboxId, emailId, true);
+    const { data, error, isFetching, isError, refetch } = useEmailQuickSummary(mailboxId, emailId, true);
     const regenerate = useRegenerateEmailSummary();
+    // Daily AI limit (AVE-215): a calm note, and no retry until it resets.
+    const quota = summaryQuotaError(error);
+    const regenerateQuota = summaryQuotaError(regenerate.error);
 
     if (data && data.status === 'not_eligible') {
         return (
@@ -61,11 +65,12 @@ function QuickSummary({ mailboxId, emailId, onClose }: { mailboxId: string; emai
             className="mb-3 md:ml-10.5 animate-reveal"
             summary={data?.status === 'ready' ? data.summary : undefined}
             loading={isFetching && !data}
-            errorText={isError && !data ? 'Couldn’t summarize this message.' : undefined}
-            onRetry={() => refetch()}
+            errorText={isError && !data ? (quota ? summaryQuotaText(quota) : 'Couldn’t summarize this message.') : undefined}
+            onRetry={quota ? undefined : () => refetch()}
             onRegenerate={() => regenerate.mutate({ mailboxId, emailId })}
             regenerating={regenerate.isPending}
             regenerateFailed={regenerate.isError}
+            regenerateErrorText={regenerateQuota ? summaryQuotaText(regenerateQuota) : undefined}
             onClose={onClose}
         />
     );

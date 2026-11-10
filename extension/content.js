@@ -12,6 +12,41 @@
 	const PAIR = "inboxies:extension-pair";
 	const PAIRED = "inboxies:extension-paired";
 
+	// The pill lives inside the email field, flush with its inner right edge.
+	const PILL_HEIGHT = 24;
+	const PILL_MIN_HEIGHT = 18; // below this the field is too short to carry it
+	const PILL_MIN_INSET = 3; // gap to the field's border, in every state (a 2px focus ring fits)
+	const PILL_MAX_INSET = 8;
+	// The label only shows while the resting pill takes at most this share of the field, so there's room to type.
+	const PILL_MAX_SHARE = 0.6;
+
+	/**
+	 * Where the pill sits in a field, in the field's own coordinates (border box).
+	 * `field` is the field's size and border widths; `restWidth` is how wide the pill is with its resting
+	 * label ("Private email") and `labelWidth` with the label it shows now. The pill is anchored by its
+	 * right edge, so a label change grows or shrinks it leftward and never past the field. It collapses
+	 * to the icon (a circle) when the resting label would crowd the field, and, for a moment, when a
+	 * longer status ("Couldn't create one") wouldn't fit inside it. When even the icon doesn't fit, it
+	 * isn't shown (null).
+	 * @returns {{ top: number, right: number, height: number, compact: boolean } | null}
+	 */
+	function pillLayout(field, restWidth, labelWidth = restWidth) {
+		const innerWidth = field.width - field.borderLeft - field.borderRight;
+		const innerHeight = field.height - field.borderTop - field.borderBottom;
+		const height = Math.min(PILL_HEIGHT, Math.floor(innerHeight - 2 * PILL_MIN_INSET));
+		if (height < PILL_MIN_HEIGHT) return null;
+		const inset = Math.min(PILL_MAX_INSET, Math.max(PILL_MIN_INSET, Math.floor((innerHeight - height) / 2)));
+		const room = innerWidth - 2 * inset;
+		if (height > room) return null;
+		return {
+			top: field.borderTop + (innerHeight - height) / 2,
+			right: field.width - field.borderRight - inset,
+			height,
+			compact: restWidth > room * PILL_MAX_SHARE || labelWidth > room,
+		};
+	}
+	if (globalThis.__inboxiesTest) globalThis.__inboxiesTest.pillLayout = pillLayout;
+
 	if (window.top !== window) return;
 
 	if (location.pathname.startsWith("/extension/connect")) {
@@ -102,9 +137,81 @@
 		input.dispatchEvent(new Event("change", { bubbles: true }));
 	}
 
+	const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+	// The native apps' chrome spring (iOS response 0.32 / damping 0.86), sampled for CSS: no visible overshoot.
+	const SPRING =
+		"linear(0, 0.062, 0.197, 0.355, 0.506, 0.638, 0.745, 0.828, 0.889, 0.933, 0.962, 0.981, 0.993, 1, 1.003, 1.005, 1.005, 1.005, 1.004, 1.003, 1.002, 1.002, 1)";
+	const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	/** Parses a computed rgb()/rgba() color; null when it's transparent or unreadable. */
+	function opaqueRgb(color) {
+		const [r, g, b, a = 1] = (String(color).match(/[\d.]+/g) || []).map(Number);
+		return b === undefined || a < 0.5 ? null : [r, g, b];
+	}
+
+	/** Whether the field sits on a dark surface, so its sweep should be light instead of dark. */
+	function onDarkSurface(input) {
+		for (let el = input; el && el.nodeType === 1; el = el.parentElement) {
+			const rgb = opaqueRgb(getComputedStyle(el).backgroundColor);
+			if (rgb) return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] < 128;
+		}
+		return false;
+	}
+
+	/**
+	 * The page's field just received a private email: a soft band of light passes across it
+	 * once and a faint ring lets go, so the eye lands on what changed. Drawn in its own
+	 * overlay (the page's styles are never touched); it never takes pointer events and
+	 * removes itself. Reduced motion keeps only the ring's fade.
+	 */
+	function sweepField(input) {
+		const rect = input.getBoundingClientRect();
+		if (!rect.width || !rect.height || typeof Element.prototype.animate !== "function") return;
+		const dark = onDarkSurface(input);
+		const ink = dark ? "255, 255, 255" : "23, 23, 23";
+		const radius = getComputedStyle(input).borderRadius || "0px";
+		const bandWidth = Math.round(Math.min(160, Math.max(48, rect.width * 0.4)));
+		const fx = document.createElement("div");
+		fx.style.cssText = `position:absolute;z-index:2147483646;pointer-events:none;top:${window.scrollY + rect.top}px;left:${
+			window.scrollX + rect.left
+		}px;width:${rect.width}px;height:${rect.height}px;`;
+		const root = fx.attachShadow({ mode: "closed" });
+		root.innerHTML = `
+			<style>
+				:host { all: initial; }
+				.ring, .clip { position: absolute; inset: 0; border-radius: ${radius}; }
+				.ring { box-shadow: 0 0 0 1px rgba(${ink}, 0.28), 0 0 0 4px rgba(${ink}, 0.06); opacity: 0; }
+				.clip { overflow: hidden; }
+				.band {
+					position: absolute; top: 0; bottom: 0; left: 0; width: ${bandWidth}px; transform: translateX(-100%);
+					background: linear-gradient(100deg, transparent, rgba(${ink}, ${dark ? 0.16 : 0.08}) 50%, transparent);
+				}
+			</style>
+			<div class="ring"></div>
+			<div class="clip"><div class="band"></div></div>
+		`;
+		document.documentElement.appendChild(fx);
+		const ring = root.querySelector(".ring");
+		const band = root.querySelector(".band");
+		const animations = [
+			ring.animate([{ opacity: 0 }, { opacity: 1, offset: 0.25 }, { opacity: 0 }], { duration: 1100, easing: EASE_OUT }),
+		];
+		if (!reducedMotion()) {
+			// An on-screen move, so ease-in-out; one pass, left to right, like ink settling into the field.
+			animations.push(
+				band.animate([{ transform: "translateX(-100%)" }, { transform: `translateX(${rect.width}px)` }], {
+					duration: 720,
+					easing: "cubic-bezier(0.65, 0, 0.35, 1)",
+				}),
+			);
+		}
+		Promise.allSettled(animations.map((a) => a.finished)).then(() => fx.remove());
+	}
+
 	function attachPill(input) {
 		const host = document.createElement("div");
-		host.style.cssText = "position:absolute;z-index:2147483647;display:none;";
+		// Anchored at the pill's right edge (translateX(-100%)): label changes grow it leftward, into the field.
+		host.style.cssText = "position:absolute;z-index:2147483647;display:none;transform:translateX(-100%);";
 		document.documentElement.appendChild(host);
 
 		const shadow = host.attachShadow({ mode: "closed" });
@@ -118,6 +225,7 @@
 					--shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
 					--shadow-menu: 0px .8px 2.925px 0px #00000005, 0px 2.025px 7.847px 0px #00000007, 0px 4px 18px 0px #0000000a, 0 0 0 1px rgba(0, 0, 0, 0.06);
 					--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+					--spring: ${SPRING};
 					--font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 				}
 				@media (prefers-color-scheme: dark) {
@@ -129,40 +237,64 @@
 					}
 				}
 				.pill {
-					display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 4px;
+					display: inline-flex; align-items: center; gap: 6px; height: var(--h, 24px); padding: 0 10px 0 4px; box-sizing: border-box;
 					border-radius: 9999px; border: 1px solid var(--border); background: var(--control); color: var(--text);
 					font: 500 12px/1 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 					box-shadow: var(--shadow); cursor: pointer; white-space: nowrap;
-					transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+					outline: 2px solid transparent; outline-offset: 3px;
+					transition: background-color 150ms var(--ease-out), opacity 200ms var(--ease-out), transform 150ms var(--ease-out),
+						outline-color 160ms var(--ease-out), outline-offset 220ms var(--spring);
+					/* Fades in each time it's shown beside a field (restarts when the host un-hides). */
+					transform-origin: right center; animation: pill-in 180ms var(--ease-out) backwards;
 				}
 				.pill:hover { background: var(--hover); }
-				.pill:active { transform: scale(0.97); }
-				.pill:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-				.pill[aria-busy="true"] { cursor: progress; opacity: 0.7; }
-				.icon { width: 16px; height: 16px; flex-shrink: 0; }
+				.pill:active { transform: scale(0.97); transition-duration: 0ms; }
+				/* The focus ring draws in, tightening onto the pill (it stays within the field's inset). */
+				.pill:focus-visible { outline-color: var(--focus); outline-offset: 0px; }
+				/* Too narrow a field for the label: the icon alone, in a circle. The label leaves the flow
+				   but stays measurable, so the pill knows when it fits again. */
+				.pill.compact { width: var(--h, 24px); padding: 0; justify-content: center; }
+				.pill.compact .label, .pill.compact .chevron, .measure { position: absolute; visibility: hidden; }
+				/* Waiting on the server: the label breathes like the native skeleton pulse, only while busy. */
+				.pill[aria-busy="true"] { cursor: progress; }
+				.pill[aria-busy="true"] .label { animation: breathe 950ms ease-in-out infinite alternate; }
+				.icon, .done { width: 16px; height: 16px; flex-shrink: 0; }
+				/* Filled: the mark gives way to a check that settles in and draws its stroke. */
+				.done { display: none; color: var(--text); }
+				.pill.filled .icon { display: none; }
+				.pill.filled .done { display: block; animation: settle 280ms var(--spring) backwards; }
+				.done path { stroke: var(--control); }
+				.pill.filled .done path { stroke-dasharray: 1; animation: draw 260ms var(--ease-out) 90ms backwards; }
 				.chevron { display: none; width: 10px; height: 10px; margin-left: -2px; color: var(--muted); }
 				.pill[aria-haspopup] .chevron { display: block; }
 				[hidden] { display: none !important; }
 				.menu {
-					position: absolute; top: 30px; right: 0; min-width: 240px; max-width: 320px; padding: 4px;
+					position: absolute; top: calc(100% + 6px); right: 0; min-width: 240px; max-width: 320px; padding: 4px;
 					border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: var(--shadow-menu);
 					font: 400 13px/1.4 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 					transform-origin: top right; animation: menu-in 160ms var(--ease-out) backwards;
 				}
-				.menu.up { top: auto; bottom: 30px; transform-origin: bottom right; }
+				.menu.up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
 				.menu.left { right: auto; left: 0; }
 				.heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 500; color: var(--muted); }
 				.item {
 					display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
 					background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
 				}
+				.item { transition: background-color 120ms var(--ease-out), opacity 150ms var(--ease-out); }
 				.item:hover, .item:focus-visible { background: var(--hover); outline: none; }
+				/* Press lands instantly, matching the native rows' 0.55 press; release eases back. */
+				.item:active { opacity: 0.55; transition-duration: 0ms; }
 				.item.create { font-weight: 500; }
 				.item.create svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
 				.sep { height: 1px; margin: 4px 0; background: var(--line); }
 				@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+				@keyframes pill-in { from { opacity: 0; transform: scale(0.96); } }
+				@keyframes breathe { from { opacity: 1; } to { opacity: 0.45; } }
+				@keyframes settle { from { opacity: 0; transform: scale(0.85); } }
+				@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 				@media (prefers-reduced-motion: reduce) {
-					.pill, .menu { transition: none; animation: none; }
+					.pill, .menu, .item, .label, .done, .done path { transition: none; animation: none !important; }
 				}
 			</style>
 			<button type="button" class="pill" aria-label="Create a private email for this site">
@@ -175,7 +307,12 @@
 						<path d="M 108,36 L 108,198 C 136,188 170,162 170,122 L 170,60 C 154,56 120,46 108,36 Z" fill="#111111" stroke="#111111" stroke-width="16" stroke-linejoin="round" />
 					</g>
 				</svg>
+				<svg class="done" aria-hidden="true" viewBox="0 0 16 16">
+					<circle cx="8" cy="8" r="8" fill="currentColor" />
+					<path pathLength="1" d="M4.75 8.25 7 10.5l4.25-4.75" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
 				<span class="label">Private email</span>
+				<span class="measure" aria-hidden="true">Private email</span>
 				<svg class="chevron" aria-hidden="true" viewBox="0 0 10 10">
 					<path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
@@ -192,12 +329,23 @@
 		`;
 		const btn = shadow.querySelector(".pill");
 		const label = shadow.querySelector(".label");
+		const measure = shadow.querySelector(".measure");
 		const menu = shadow.querySelector(".menu");
 		const menuHeading = shadow.querySelector(".heading");
 		const menuItems = shadow.querySelector(".items");
 		const createItem = shadow.querySelector(".create");
 		let hideTimer = null;
 		let busy = false;
+		let closing = null;
+		const menuOpen = () => !menu.hidden && !closing;
+
+		/** Swap the pill's label with a short fade so "Creating…" → "Filled" reads as a state change. */
+		function setLabel(text) {
+			if (label.textContent === text) return;
+			label.textContent = text;
+			reposition();
+			if (!reducedMotion() && label.animate) label.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
+		}
 
 		function position() {
 			const rect = input.getBoundingClientRect();
@@ -206,9 +354,41 @@
 				return;
 			}
 			host.style.display = "block";
-			const pillWidth = btn.offsetWidth || 110;
-			host.style.top = `${window.scrollY + rect.top + (rect.height - 24) / 2}px`;
-			host.style.left = `${window.scrollX + Math.max(rect.left, rect.right - pillWidth - 6)}px`;
+			const style = getComputedStyle(input);
+			const px = (value) => parseFloat(value) || 0;
+			const layout = pillLayout(
+				{
+					width: rect.width,
+					height: rect.height,
+					borderTop: px(style.borderTopWidth),
+					borderRight: px(style.borderRightWidth),
+					borderBottom: px(style.borderBottomWidth),
+					borderLeft: px(style.borderLeftWidth),
+				},
+				pillWidth(measure),
+				pillWidth(label),
+			);
+			if (!layout) {
+				host.style.display = "none";
+				return;
+			}
+			host.style.setProperty("--h", `${layout.height}px`);
+			btn.classList.toggle("compact", layout.compact);
+			// Compact, the label isn't drawn, so it's offered as a tooltip instead.
+			if (layout.compact) btn.title = label.textContent;
+			else btn.removeAttribute("title");
+			host.style.top = `${window.scrollY + rect.top + layout.top}px`;
+			host.style.left = `${window.scrollX + rect.left + layout.right}px`;
+		}
+		/**
+		 * The pill's width with a label showing, whether or not it is showing right now. Measured off the
+		 * text so a compact pill knows when it fits again; the resting label decides compactness, so a
+		 * narrow field keeps the icon through Creating… and Filled instead of flipping to a label.
+		 */
+		function pillWidth(text) {
+			// Border 2 + padding 14 + icon 16 + gap 6, and the chevron (gap 6 + 10 - 2) when there's a menu.
+			const chevron = btn.hasAttribute("aria-haspopup") ? 14 : 0;
+			return text.offsetWidth + 38 + chevron;
 		}
 		function show() {
 			clearTimeout(hideTimer);
@@ -221,7 +401,7 @@
 			clearTimeout(hideTimer);
 			hideTimer = setTimeout(() => {
 				if (busy || focusInside()) return;
-				closeMenu();
+				closeMenu(true);
 				host.style.display = "none";
 			}, 300);
 		}
@@ -241,9 +421,17 @@
 			}
 			reposition();
 		}
+		/** The address landed in the field: the pill shows a check, the field gets its sweep. */
+		function markFilled() {
+			btn.removeAttribute("aria-busy");
+			btn.classList.add("filled");
+			setLabel("Filled");
+			sweepField(input);
+		}
 		function resetLabel(delay) {
 			setTimeout(() => {
-				label.textContent = "Private email";
+				btn.classList.remove("filled");
+				setLabel("Private email");
 				btn.removeAttribute("aria-busy");
 				busy = false;
 				scheduleHide();
@@ -254,6 +442,10 @@
 			if (!event.composedPath().includes(host)) closeMenu();
 		}
 		function openMenu(aliases, site, focusFirst) {
+			// Reopening mid-exit: stop fading out and show it as-is.
+			closing?.cancel();
+			closing = null;
+			menu.inert = false;
 			menuHeading.textContent = site ? `Used on ${site}` : "Used on this site";
 			menuItems.replaceChildren(
 				...aliases.map((alias) => {
@@ -266,7 +458,7 @@
 						if (!event.isTrusted) return;
 						closeMenu();
 						setInputValue(input, alias.email);
-						label.textContent = "Filled";
+						markFilled();
 						busy = true;
 						resetLabel(1200);
 					});
@@ -284,14 +476,34 @@
 			document.addEventListener("pointerdown", onOutsidePointer, true);
 			if (focusFirst) shadow.querySelector(".item")?.focus();
 		}
-		function closeMenu() {
+		/** Exits the way it entered (shorter, softer); `immediate` when the pill itself is going away. */
+		function closeMenu(immediate) {
 			if (menu.hidden) return;
-			menu.hidden = true;
+			if (closing && !immediate) return;
 			btn.setAttribute("aria-expanded", "false");
 			document.removeEventListener("pointerdown", onOutsidePointer, true);
+			closing?.cancel();
+			closing = null;
+			if (immediate || reducedMotion() || !menu.animate) {
+				menu.hidden = true;
+				return;
+			}
+			const exit = menu.animate(
+				[{ opacity: 1 }, { opacity: 0, transform: "translateY(-2px) scale(0.98)" }],
+				{ duration: 120, easing: EASE_OUT, fill: "forwards" },
+			);
+			closing = exit;
+			// A fading menu no longer takes clicks or focus.
+			menu.inert = true;
+			exit.onfinish = () => {
+				if (closing !== exit) return;
+				closing = null;
+				menu.hidden = true;
+				exit.cancel();
+			};
 		}
 		function onMenuKeydown(event) {
-			if (menu.hidden) return;
+			if (!menuOpen()) return;
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
@@ -310,7 +522,7 @@
 		async function createAndFill() {
 			busy = true;
 			btn.setAttribute("aria-busy", "true");
-			label.textContent = "Creating…";
+			setLabel("Creating…");
 			let res;
 			try {
 				res = await chrome.runtime.sendMessage({ action: "CREATE_ALIAS", host: location.hostname });
@@ -320,13 +532,15 @@
 			if (res?.ok && res.email) {
 				siteAliasesRequest = null;
 				setInputValue(input, res.email);
-				label.textContent = "Filled";
+				markFilled();
 				resetLabel(1200);
 			} else {
-				label.textContent =
+				btn.removeAttribute("aria-busy");
+				setLabel(
 					res?.error === "not_connected" || res?.error === "session_expired"
 						? "Connect the extension first"
-						: "Couldn't create one";
+						: "Couldn't create one",
+				);
 				resetLabel(2400);
 			}
 		}
@@ -336,7 +550,7 @@
 			if (!event.isTrusted || busy) return;
 			event.preventDefault();
 			event.stopPropagation();
-			if (!menu.hidden) {
+			if (menuOpen()) {
 				closeMenu();
 				return;
 			}
@@ -367,7 +581,7 @@
 
 		return function cleanup() {
 			clearTimeout(hideTimer);
-			closeMenu();
+			closeMenu(true);
 			input.removeEventListener("focus", show);
 			input.removeEventListener("mouseenter", show);
 			input.removeEventListener("mouseleave", scheduleHide);

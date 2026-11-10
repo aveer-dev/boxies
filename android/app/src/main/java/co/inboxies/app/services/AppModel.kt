@@ -101,17 +101,60 @@ class AppModel {
     fun inboxNewCountFor(total: InboxNewTotal?): Int? =
         total?.takeIf { it.scope == currentListScope && it.scope.folderId == FolderIds.INBOX }?.count
 
+    /**
+     * Inbox page 1 landed. Its `newCount` is also the Inbox's unread count (the same Worker
+     * count, AVE-228), so the header and the folder list move with it.
+     */
     private fun rememberInboxNewCount(scope: EmailListScope, count: Int?) {
         if (scope.folderId != FolderIds.INBOX) return
         _inboxNewTotal.value = count?.let { InboxNewTotal(scope, it) }
+        if (count != null && scope.mailboxId == _selectedMailboxId.value) setInboxUnread(count)
     }
 
-    /** Optimistic read / unread on the inbox keeps "Show N more new" honest until the next sync. */
-    private fun adjustInboxNewCount(wasUnread: Boolean, isUnread: Boolean) {
-        if (wasUnread == isUnread) return
-        val current = _inboxNewTotal.value ?: return
-        if (current.scope != currentListScope) return
-        _inboxNewTotal.value = current.copy(count = maxOf(0, current.count + if (isUnread) 1 else -1))
+    /** Sets the Inbox folder's unread count without touching [_inboxNewTotal]. */
+    private fun setInboxUnread(count: Int) {
+        val current = _folders.value.firstOrNull { it.id == FolderIds.INBOX } ?: return
+        if (current.unreadCount == count) return
+        val delta = count - current.unreadCount
+        _folders.update { list -> list.map { if (it.id == FolderIds.INBOX) it.copy(unreadCount = count) else it } }
+        val mailboxId = _selectedMailboxId.value ?: return
+        scope.launch { db.updateFolderUnread(mailboxId, FolderIds.INBOX, delta) }
+    }
+
+    /** Mailbox whose [folders] came from the server this session; the widget trusts only those. */
+    @Volatile
+    private var foldersSyncedMailboxId: String? = null
+
+    /** Server folder list for [mailboxId]: counts are authoritative, the Inbox's is New. */
+    private fun applyServerFolders(mailboxId: String, fresh: List<Folder>) {
+        ifStillSelected(mailboxId) {
+            _folders.value = fresh
+            foldersSyncedMailboxId = mailboxId
+            val inbox = fresh.firstOrNull { it.id == FolderIds.INBOX }
+            val total = _inboxNewTotal.value
+            if (inbox != null && total != null && total.scope.mailboxId == mailboxId) {
+                _inboxNewTotal.value = total.copy(count = inbox.unreadCount)
+            }
+        }
+    }
+
+    private var folderCountsJob: Job? = null
+
+    /**
+     * Live mail / a sync nudge / back to the foreground: re-read folder counts shortly. A new
+     * message in an unread conversation doesn't add an unread conversation, so counting
+     * locally would drift (AVE-228).
+     */
+    fun scheduleFolderCountsRefresh() {
+        if (isDebugPreview || bootstrappedToken == null) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        folderCountsJob?.cancel()
+        folderCountsJob = scope.launch {
+            delay(FOLDER_COUNTS_DEBOUNCE_MS)
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
+                applyServerFolders(mailboxId, fresh)
+            }
+        }
     }
 
     private val _replyLaterCount = MutableStateFlow(0)
@@ -221,6 +264,17 @@ class AppModel {
 
     private val _composeSession = MutableStateFlow<ComposeSession?>(null)
     val composeSession: StateFlow<ComposeSession?> = _composeSession.asStateFlow()
+
+    /** Focus & Reply run through the Reply Later pile (AVE-193); null when not focusing. */
+    private val _focusReply = MutableStateFlow<FocusReplyRun?>(null)
+    val focusReply: StateFlow<FocusReplyRun?> = _focusReply.asStateFlow()
+
+    /** How the last run ended; Reply Later shows "All done" from it until you leave the pile. */
+    private val _focusReplyResult = MutableStateFlow<FocusReplyResult?>(null)
+    val focusReplyResult: StateFlow<FocusReplyResult?> = _focusReplyResult.asStateFlow()
+
+    /** Full copies of the next thread in the run, fetched while you write the current reply. */
+    private val focusReplyPrefetch = mutableMapOf<String, Email>()
 
     private val _toast = MutableStateFlow<AppToast?>(null)
     val toast: StateFlow<AppToast?> = _toast.asStateFlow()
@@ -413,17 +467,26 @@ class AppModel {
         if (!isDebugPreview && mailboxId != null) {
             // Settle counts with the server (the moved mail lands in Inbox).
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
-                ifStillSelected(mailboxId) { _folders.value = fresh }
+                applyServerFolders(mailboxId, fresh)
             }
         }
     }
 
+    /**
+     * Optimistic unread change, in conversations (AVE-228). The Inbox's count is also the New
+     * total, so "Show N more new" and the widget move with it (read, archive, delete, move).
+     */
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
         _folders.update { list ->
             list.map {
                 if (it.id != folderId) it
                 else it.copy(unreadCount = maxOf(0, it.unreadCount + delta))
+            }
+        }
+        if (folderId == FolderIds.INBOX) {
+            _inboxNewTotal.value?.takeIf { it.scope.mailboxId == _selectedMailboxId.value }?.let { total ->
+                _inboxNewTotal.value = total.copy(count = maxOf(0, total.count + delta))
             }
         }
         val mailboxId = _selectedMailboxId.value ?: return
@@ -434,7 +497,6 @@ class AppModel {
         if (wasUnread == isUnread) return
         val folderId = email.folderId ?: _selectedTab.value.syncFolderId ?: return
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
-        if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
 
     /**
@@ -529,6 +591,8 @@ class AppModel {
         scope.launch {
             if (isSelected(mailboxId)) refreshCurrentTabSilently()
         }
+        // Mail read or filed elsewhere while away: settle the counts (AVE-228).
+        scheduleFolderCountsRefresh()
     }
 
     /** ProcessLifecycleOwner ON_STOP: no SSE socket or 20 s poll while nothing is visible. */
@@ -555,9 +619,15 @@ class AppModel {
                 scope.launch { loadInboxDigest(showLoading = false) }
             }
         }
+        // A new unread conversation counts at once; mail joining one that's already unread
+        // doesn't (counts are conversations, AVE-228). The server settles it either way.
         if (email.isUnread) {
-            adjustFolderUnread(email.folderId ?: "inbox", 1)
+            val joinsUnread = email.threadId?.let { threadId ->
+                _emails.value.any { it.id != email.id && it.threadId == threadId && it.isUnread }
+            } ?: false
+            if (!joinsUnread) adjustFolderUnread(email.folderId ?: "inbox", 1)
         }
+        scheduleFolderCountsRefresh()
     }
 
     suspend fun refreshMailboxes(showLoading: Boolean = true) {
@@ -760,7 +830,7 @@ class AppModel {
                 val conversationsDeferred = async { runCatching { ApiClient.shared.listConversations(id) }.getOrNull() }
                 val replyLaterDeferred = async { refreshReplyLaterCount() }
                 val folders = foldersDeferred.await()
-                ifStillSelected(id) { _folders.value = folders }
+                applyServerFolders(id, folders)
                 conversationsDeferred.await()?.let { server ->
                     ifStillSelected(id) {
                         _conversations.value = visibleConversations(server)
@@ -1306,6 +1376,7 @@ class AppModel {
             if (isSelected(mailboxId) && folderId == FolderIds.INBOX) refreshScreenerQueue()
         }
         if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
+        scheduleFolderCountsRefresh()
     }
 
     /** Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh. */
@@ -1581,11 +1652,23 @@ class AppModel {
         }
         // Switched mailboxes while the original / draft loaded: don't open a stale compose.
         if (!isSelected(mailboxId)) return
+        val form = newComposeForm(mode, mailbox, enrichedOriginal ?: original, enrichedDraft ?: draft, initialTo)
+        _composeSession.value = ComposeSession(form, ComposePresentation.Expanded)
+        _selectedEmail.value = null
+    }
+
+    private fun newComposeForm(
+        mode: ComposeMode,
+        mailbox: Mailbox,
+        original: Email?,
+        draft: Email?,
+        initialTo: List<MailAddress> = emptyList(),
+    ): ComposeFormModel {
         val form = ComposeFormModel(
             mode = mode,
             mailbox = mailbox,
-            original = enrichedOriginal ?: original,
-            draft = enrichedDraft ?: draft,
+            original = original,
+            draft = draft,
             initialTo = initialTo,
         )
         form.onDraftSaved = { id, threadId, originalId, subject, body, recipient ->
@@ -1594,8 +1677,7 @@ class AppModel {
         form.onDraftDeleted = { id, threadId, originalId ->
             markThreadHasDraft(id, threadId, originalId, null, null, null, hasDraft = false)
         }
-        _composeSession.value = ComposeSession(form, ComposePresentation.Expanded)
-        _selectedEmail.value = null
+        return form
     }
 
     fun closeEmail() {
@@ -2013,6 +2095,9 @@ class AppModel {
         _threadNotesKey.value = null
         previewThreadNotes.clear()
         _composeSession.value = null
+        _focusReply.value = null
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
         _isMailboxLoading.value = true
@@ -2067,7 +2152,12 @@ class AppModel {
         _domainServices.value = domainServices
         _mailboxes.value = mailboxes
         _selectedMailboxId.value = selectedMailboxId
-        _folders.value = folders
+        // The Inbox's unread count is its New conversations (AVE-228): one number in the
+        // fixture's header and New section.
+        val inboxRows = emails.filter { (it.folderId ?: FolderIds.INBOX) == FolderIds.INBOX }
+        _folders.value = if (inboxRows.isEmpty()) folders else folders.map { folder ->
+            if (folder.id == FolderIds.INBOX) folder.copy(unreadCount = inboxRows.count { it.isUnread }) else folder
+        }
         _emails.value = emails
         _selectedTab.value = selectedTab
         _selectedEmail.value = selectedEmail
@@ -2078,6 +2168,9 @@ class AppModel {
         _isAdmin.value = isAdmin
         _inboxDigest.value = null
         _composeSession.value = null
+        _focusReply.value = null
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
         _pendingInviteToken.value = null
@@ -2099,7 +2192,7 @@ class AppModel {
         // Debounced: list refreshes, SSE, reads and archives arrive in bursts. The
         // publisher also skips writes whose content didn't change.
         scope.launch {
-            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount) { _, _, _, _ -> Unit }
+            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount, _folders) { _, _, _, _, _ -> Unit }
                 .collectLatest {
                     delay(INBOX_WIDGET_DEBOUNCE_MS)
                     publishInboxWidgetNow()
@@ -2124,17 +2217,21 @@ class AppModel {
         if (!publishesInboxWidget) return
         val mailbox = selectedMailbox ?: return
         val inboxRows = db.getEmails(mailbox.id, FolderIds.INBOX)
-        val serverNewCount = _inboxNewTotal.value
-            ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
-            ?.count
-        // The Inbox hasn't loaded for this mailbox yet: keep the last snapshot rather
-        // than claim inbox zero.
-        if (inboxRows.isEmpty() && serverNewCount == null) return
+        // The count is the server's New total (AVE-228), never the cached rows: the cache
+        // holds a capped page plus whatever older pages left behind, so counting it drifted
+        // (8, then 4). With no server number for this mailbox yet, keep the last snapshot.
+        val serverNewCount = _folders.value.firstOrNull { it.id == FolderIds.INBOX }
+            ?.takeIf { foldersSyncedMailboxId == mailbox.id }
+            ?.unreadCount
+            ?: _inboxNewTotal.value
+                ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
+                ?.count
+            ?: return
         InboxWidgetPublisher.publish(
             InboxWidgetSnapshot.make(
                 mailbox = mailbox,
                 inboxRows = inboxRows,
-                serverNewCount = serverNewCount,
+                newCount = serverNewCount,
                 replyLaterCount = _replyLaterCount.value,
             ),
         )
@@ -2201,7 +2298,8 @@ class AppModel {
             }.onSuccess {
                 form.deleteSavedDraft()
                 showToast("Sent")
-                closeCompose()
+                // Focus & Reply (AVE-193): the next thread's reply takes this one's place.
+                if (!focusReplySent(session)) closeCompose()
                 refreshCurrentTabSilently()
             }.onFailure {
                 // Server errors (e.g. 409 `alias_inactive` for a paused private email) carry a
@@ -2489,7 +2587,9 @@ class AppModel {
             }
         }
         if (previous != null) {
-            adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
+            // Conversations, like the counts (AVE-228): the row's unread state, not one message's.
+            val row = _emails.value.firstOrNull { it.id == updated.id }
+            adjustFolderUnread(previous, wasUnread = previous.isUnread, isUnread = row?.isUnread ?: !updated.read)
             // Reading (or un-queueing) a due mail clears the attention state right away.
             if (previous.isReplyLaterDue != updated.isReplyLaterDue) {
                 _replyLaterDueCount.update { (it + if (updated.isReplyLaterDue) 1 else -1).coerceAtLeast(0) }
@@ -2698,21 +2798,28 @@ class AppModel {
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
             _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
+            val restoreIds = ScreenerDecision.restoreIds(response, email.id)
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
-                _selectedEmail.value = null
-                _threadEmails.value = emptyList()
+                if (destinationFolderId != null) {
+                    // Accept keeps the reader open (AVE-182): the message is
+                    // filed where it was accepted to, so the Screener bar goes.
+                    refileOpenThread(queuedIds + restoreIds, localFolderId)
+                } else {
+                    _selectedEmail.value = null
+                    _threadEmails.value = emptyList()
+                }
             }
             showScreenerUndoToast(
                 ScreenerDecision.toastTitle(destinationFolderId),
                 mailboxId = mailboxId,
                 sender = sender,
-                restoreIds = ScreenerDecision.restoreIds(response, email.id),
+                restoreIds = restoreIds,
             )
             loadEmailsForCurrentTab(showLoading = false)
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-                ifStillSelected(mailboxId) { _folders.value = folders }
+                applyServerFolders(mailboxId, folders)
             }
         } catch (e: Exception) {
             _errorMessage.value = e.message
@@ -2746,6 +2853,20 @@ class AppModel {
         }
     }
 
+    /** Re-files messages of the open reader in place, without closing it. */
+    private fun refileOpenThread(ids: Set<String>, folderId: String) {
+        _selectedEmail.update { selected ->
+            if (selected != null && selected.id in ids) {
+                selected.copy(folderId = folderId, folderName = null)
+            } else {
+                selected
+            }
+        }
+        _threadEmails.update { thread ->
+            thread.map { if (it.id in ids) it.copy(folderId = folderId, folderName = null) else it }
+        }
+    }
+
     private suspend fun undoScreenerDecision(mailboxId: String, sender: String, restoreIds: List<String>) {
         val deleted = runCatching { ApiClient.shared.deleteSenderTriage(mailboxId, sender) }
         if (deleted.isFailure) {
@@ -2758,10 +2879,12 @@ class AppModel {
             db.moveEmail(id, FolderIds.SCREENER)
             runCatching { ApiClient.shared.moveEmail(mailboxId, id, FolderIds.SCREENER) }
         }
+        // A reader left open after Accept (AVE-182) shows the Screener bar again.
+        refileOpenThread(restoreIds.toSet(), FolderIds.SCREENER)
         refreshScreenerQueue()
         loadEmailsForCurrentTab(showLoading = false)
         runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-            ifStillSelected(mailboxId) { _folders.value = folders }
+            applyServerFolders(mailboxId, folders)
         }
         showToast("Undone")
     }
@@ -2871,6 +2994,7 @@ class AppModel {
     }
 
     fun minimizeCompose() {
+        endFocusReply()
         val session = _composeSession.value ?: return
         session.form.commitPendingTokens()
         _composeSession.value = ComposeSession(session.form, ComposePresentation.Minimized)
@@ -2904,7 +3028,7 @@ class AppModel {
             _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
         }
         runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
-            ifStillSelected(mailboxId) { _folders.value = folders }
+            applyServerFolders(mailboxId, folders)
         }
         loadEmailsForCurrentTab(showLoading = false)
         return ok
@@ -2933,8 +3057,147 @@ class AppModel {
     }
 
     fun closeCompose() {
+        endFocusReply()
         _composeSession.value?.form?.cancelAutoSave()
         _composeSession.value = null
+    }
+
+    // Focus & Reply (AVE-193). Web twin: `app/routes/reply-later.tsx`; iOS twin:
+    // `AppModel.startFocusReply`.
+
+    /**
+     * Opens the first thread in the Reply Later pile with a reply ready. Sending or
+     * skipping moves on to the next; the run ends with "All done" on the pile.
+     */
+    suspend fun startFocusReply() {
+        if (_selectedTab.value !is HomeTab.ReplyLater) return
+        if (_composeSession.value != null) {
+            showToast("Send or close the open message first")
+            return
+        }
+        val run = FocusReplyRun.start(_emails.value)
+        val first = run.current ?: return
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
+        _focusReply.value = run
+        startCompose(ComposeMode.Reply, original = first)
+        // Read-only mailbox or switched away: compose didn't open, so there is nothing to focus.
+        if (_composeSession.value == null || _focusReply.value == null) {
+            _focusReply.value = null
+            return
+        }
+        prefetchNextFocusReply()
+    }
+
+    /**
+     * Focus & Reply "Skip": leave this thread in the pile and move on. Anything typed
+     * is kept as a draft. The sheet persists its fields to the form first.
+     */
+    fun skipFocusReply() {
+        val run = _focusReply.value ?: return
+        val session = _composeSession.value ?: return
+        val id = session.form.originalEmailId ?: return
+        val form = session.form
+        form.commitPendingTokens()
+        form.cancelAutoSave()
+        if (form.hasTypedReply) {
+            scope.launch { form.saveDraft(explicit = false) }
+        }
+        _focusReply.value = run.markSkipped(id)
+        advanceFocusReply()
+    }
+
+    /** Leaving the run (close, minimize, sign-out) without reaching the end. */
+    fun endFocusReply() {
+        if (_focusReply.value == null) return
+        _focusReply.value = null
+        focusReplyPrefetch.clear()
+    }
+
+    /** DEBUG preview: the pile right after a run emptied it. */
+    fun applyFocusReplyResultForPreview(result: FocusReplyResult) {
+        _focusReplyResult.value = result
+    }
+
+    /** "All done" belongs to the visit to the pile that earned it. */
+    fun clearFocusReplyResult() {
+        _focusReplyResult.value = null
+    }
+
+    /** After a successful send: true when Focus & Reply took over the open compose. */
+    private fun focusReplySent(session: ComposeSession): Boolean {
+        val run = _focusReply.value ?: return false
+        if (_composeSession.value !== session) return false
+        val id = session.form.originalEmailId ?: return false
+        _focusReply.value = run.markReplied(id)
+        // The server took it out of the pile with the reply; mirror that before the refresh.
+        removeFromReplyLaterPile(id)
+        advanceFocusReply()
+        return true
+    }
+
+    private fun advanceFocusReply() {
+        // Rows that joined the pile since the start (a later page) join the end of the run.
+        val run = _focusReply.value?.let {
+            if (_selectedTab.value is HomeTab.ReplyLater) it.absorb(_emails.value) else it
+        } ?: return
+        _focusReply.value = run
+        val next = run.current
+        val mailbox = selectedMailbox
+        if (next == null || mailbox == null || mailbox.isReadOnly) {
+            finishFocusReply()
+            return
+        }
+        val original = focusReplyPrefetch.remove(next.id) ?: db.getEmail(next.id) ?: next
+        _composeSession.value?.form?.cancelAutoSave()
+        val session = ComposeSession(newComposeForm(ComposeMode.Reply, mailbox, original, null), ComposePresentation.Expanded)
+        // Swap in place so compose stays up between threads.
+        _composeSession.value = session
+        _selectedEmail.value = null
+        if (original.body == null) enrichFocusReply(session, next.id, mailbox.id)
+        prefetchNextFocusReply()
+    }
+
+    private fun finishFocusReply() {
+        val run = _focusReply.value ?: return
+        _focusReply.value = null
+        focusReplyPrefetch.clear()
+        _focusReplyResult.value = run.result
+        _composeSession.value?.form?.cancelAutoSave()
+        _composeSession.value = null
+    }
+
+    private fun removeFromReplyLaterPile(id: String) {
+        val wasDue = _emails.value.firstOrNull { it.id == id }?.isReplyLaterDue == true
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            _emails.update { list -> list.filterNot { it.id == id } }
+        }
+        _replyLaterCount.update { (it - 1).coerceAtLeast(0) }
+        if (wasDue) _replyLaterDueCount.update { (it - 1).coerceAtLeast(0) }
+    }
+
+    private fun prefetchNextFocusReply() {
+        if (isDebugPreview) return
+        val run = _focusReply.value ?: return
+        val mailboxId = _selectedMailboxId.value ?: return
+        val next = run.remaining.drop(1).firstOrNull() ?: return
+        if (focusReplyPrefetch.containsKey(next.id)) return
+        scope.launch {
+            val full = runCatching { ApiClient.shared.getEmail(mailboxId, next.id) }.getOrNull() ?: return@launch
+            if (_focusReply.value != null) focusReplyPrefetch[next.id] = full
+        }
+    }
+
+    /** The next thread opened before its full copy arrived: swap it in if nothing was typed yet. */
+    private fun enrichFocusReply(session: ComposeSession, emailId: String, mailboxId: String) {
+        if (isDebugPreview) return
+        scope.launch {
+            val full = runCatching { ApiClient.shared.getEmail(mailboxId, emailId) }.getOrNull() ?: return@launch
+            val mailbox = selectedMailbox ?: return@launch
+            if (_composeSession.value !== session || session.form.hasTypedReply || mailbox.id != mailboxId) return@launch
+            session.form.cancelAutoSave()
+            _composeSession.value = ComposeSession(newComposeForm(ComposeMode.Reply, mailbox, full, null), ComposePresentation.Expanded)
+        }
     }
 
     fun openChatSession(existingId: String? = null, resumeActive: Boolean = true, forceNew: Boolean = false) {
@@ -3181,6 +3444,7 @@ class AppModel {
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
         /** Quiet period before the widget snapshot is written (iOS uses 1 s too). */
         private const val INBOX_WIDGET_DEBOUNCE_MS = 1_000L
+        private const val FOLDER_COUNTS_DEBOUNCE_MS = 800L
 
         /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
         const val REMINDER_TOAST_DURATION_MS = 5_000L

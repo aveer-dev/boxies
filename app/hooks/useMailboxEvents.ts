@@ -4,11 +4,20 @@
 
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "~/queries/keys";
+import {
+	MAILBOX_EVENT_TARGETS,
+	mailboxEventTargets,
+	queryKeysForTargets,
+	type MailboxEventTarget,
+} from "~/lib/mailbox-events";
+
+/** One refetch per burst: a Screener decision emits several events at once. */
+const COALESCE_MS = 150;
 
 /**
- * Subscribe to mailbox SSE and invalidate email queries when delivery
- * state (or other email fields) change via `email_updated`.
+ * Subscribe to mailbox SSE and invalidate the queries each live event makes
+ * stale (see `MAILBOX_EVENT_TARGETS`), so a change made on another device
+ * shows up here without waiting for a refetch interval.
  */
 export function useMailboxEvents(mailboxId: string | undefined) {
 	const qc = useQueryClient();
@@ -19,59 +28,35 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 		const url = `/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/events`;
 		const source = new EventSource(url, { withCredentials: true });
 
-		const invalidateEmailData = () => {
-			qc.invalidateQueries({ queryKey: ["emails", mailboxId] });
-			qc.invalidateQueries({ queryKey: queryKeys.folders.list(mailboxId) });
-			qc.invalidateQueries({ queryKey: queryKeys.workflowPiles.list(mailboxId) });
+		const pending = new Set<MailboxEventTarget>();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+
+		const flush = () => {
+			timer = undefined;
+			const keys = queryKeysForTargets(mailboxId, pending);
+			pending.clear();
+			for (const queryKey of keys) qc.invalidateQueries({ queryKey });
 		};
 
-		const onEmailUpdated = () => {
-			invalidateEmailData();
+		const onEvent = (event: MessageEvent) => {
+			const targets = mailboxEventTargets(event.type);
+			if (targets.length === 0) return;
+			for (const target of targets) pending.add(target);
+			timer ??= setTimeout(flush, COALESCE_MS);
 		};
 
-		// A stored thread summary goes stale when its thread gains a message;
-		// refetching the open thread's summary regenerates it (AVE-20).
-		const invalidateSummaries = () => {
-			qc.invalidateQueries({ queryKey: queryKeys.summaries.all(mailboxId) });
-		};
-
-		const onNewEmail = () => {
-			invalidateEmailData();
-			invalidateSummaries();
-		};
-
-		const onEmailMoved = () => {
-			invalidateEmailData();
-			invalidateSummaries();
-		};
-
-		// Private emails created elsewhere (extension, phone) show up live.
-		const onAliasChanged = () => {
-			qc.invalidateQueries({ queryKey: ["aliases", mailboxId] });
-		};
-
-		source.addEventListener("email_updated", onEmailUpdated);
-		source.addEventListener("new_email", onNewEmail);
-		source.addEventListener("email_moved", onEmailMoved);
-		source.addEventListener("emails_refiled", onEmailMoved);
-		source.addEventListener("sender_preference_updated", onEmailUpdated);
-		source.addEventListener("alias_created", onAliasChanged);
-		source.addEventListener("alias_updated", onAliasChanged);
-		source.addEventListener("alias_deleted", onAliasChanged);
+		// EventSource only delivers named events to listeners registered by
+		// name; unnamed ones arrive as "message" and fall back to a full refresh.
+		const eventNames = [...Object.keys(MAILBOX_EVENT_TARGETS), "message"];
+		for (const name of eventNames) source.addEventListener(name, onEvent);
 
 		source.onerror = () => {
 			// Browser auto-reconnects EventSource; avoid noisy logs.
 		};
 
 		return () => {
-			source.removeEventListener("email_updated", onEmailUpdated);
-			source.removeEventListener("new_email", onNewEmail);
-			source.removeEventListener("email_moved", onEmailMoved);
-			source.removeEventListener("emails_refiled", onEmailMoved);
-			source.removeEventListener("sender_preference_updated", onEmailUpdated);
-			source.removeEventListener("alias_created", onAliasChanged);
-			source.removeEventListener("alias_updated", onAliasChanged);
-			source.removeEventListener("alias_deleted", onAliasChanged);
+			for (const name of eventNames) source.removeEventListener(name, onEvent);
+			if (timer) clearTimeout(timer);
 			source.close();
 		};
 	}, [mailboxId, qc]);

@@ -39,6 +39,10 @@ class InboxiesFirebaseMessagingService : FirebaseMessagingService() {
         val body = message.data["body"] ?: message.notification?.body ?: return
         val emailId = message.data["emailId"]
         val folderId = message.data["folderId"] ?: "inbox"
+        // Keep "Today's inbox" on the server's New total while the app is closed (AVE-228).
+        if (mailboxId != null && folderId == "inbox") {
+            co.inboxies.app.widget.InboxWidgetPublisher.refreshFromServer(mailboxId)
+        }
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("mailboxId", mailboxId)

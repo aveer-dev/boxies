@@ -184,6 +184,10 @@ class ComposeFormModel(
             attachments.isEmpty() &&
             !ComposeHtml.bodyHasUserContent(body, signature)
 
+    /** Something written beyond the prefilled reply (Focus & Reply keeps it as a draft on Skip). */
+    val hasTypedReply: Boolean
+        get() = ComposeHtml.bodyHasUserContent(body, signature) || attachments.isNotEmpty()
+
     val hasUnsavedChanges: Boolean
         get() = ComposeHtml.bodyHasUserContent(body, signature) ||
             subject.isNotBlank() ||

@@ -86,6 +86,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -188,7 +189,23 @@ internal object AliasRequestBodies {
 
     /** Second precision (`2026-10-08T12:00:00Z`), which zod `datetime()` accepts. */
     fun isoUtc(instant: Instant): String = instant.truncatedTo(ChronoUnit.SECONDS).toString()
+
+    /**
+     * Onboarding `setup-aliases` body. The Worker reads `aliasLocal` and `targetMailboxId`
+     * and silently skips items without them (matches web `api.setupDomainAliases`).
+     */
+    fun setupAliases(aliases: List<SetupAlias>): JsonObject = buildJsonObject {
+        put("aliases", JsonArray(aliases.map { alias ->
+            buildJsonObject {
+                put("aliasLocal", alias.aliasLocal)
+                put("targetMailboxId", alias.targetMailboxId)
+            }
+        }))
+    }
 }
+
+/** One onboarding alias: local part on the domain, and the mailbox id (full address) it delivers to. */
+data class SetupAlias(val aliasLocal: String, val targetMailboxId: String)
 
 /** Thin OkHttp + kotlinx.serialization client mirroring iOS APIClient. */
 class ApiClient private constructor() {
@@ -217,6 +234,17 @@ class ApiClient private constructor() {
 
         fun idempotencyHeaders(key: String?): Map<String, String> =
             if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
+
+        /**
+         * Body for `POST .../quick-reply`. `quote_time_zone` makes the quoted "On <date>"
+         * line use the device's zone instead of the Worker's UTC default (AVE-225; iOS twin
+         * sends `TimeZone.current.identifier`).
+         */
+        fun quickReplyBody(text: String, timeZoneId: String = java.util.TimeZone.getDefault().id): JsonObject =
+            buildJsonObject {
+                put("text", text)
+                put("quote_time_zone", timeZoneId)
+            }
 
         /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
@@ -795,32 +823,42 @@ class ApiClient private constructor() {
         return res.aliases
     }
 
-    suspend fun setupDomainAliases(domain: String, aliases: List<Map<String, String>>) {
+    suspend fun setupDomainAliases(domain: String, aliases: List<SetupAlias>) {
         request<EmptyResponse>(
             "/api/v1/admin/domains/${pathEncode(domain)}/setup-aliases",
             method = "POST",
-            body = buildJsonObject {
-                put("aliases", kotlinx.serialization.json.JsonArray(aliases.map { map ->
-                    buildJsonObject {
-                        map.forEach { (k, v) -> put(k, v) }
-                    }
-                }))
-            },
+            body = AliasRequestBodies.setupAliases(aliases),
         )
     }
 
-    suspend fun setupDomainUsers(domain: String, users: List<Map<String, String>>) {
+    suspend fun setupDomainUsers(domain: String, users: List<SetupUser>) {
         request<EmptyResponse>(
             "/api/v1/admin/domains/${pathEncode(domain)}/setup-users",
             method = "POST",
-            body = buildJsonObject {
-                put("users", kotlinx.serialization.json.JsonArray(users.map { map ->
-                    buildJsonObject {
-                        map.forEach { (k, v) -> put(k, v) }
-                    }
-                }))
-            },
+            body = SetupUsersRequest.body(users),
         )
+    }
+
+    /**
+     * One teammate added during domain onboarding. [contactEmail] (may be empty) is where their
+     * mailbox invite goes; the Worker falls back to [username] when [fullName] is empty.
+     */
+    data class SetupUser(val fullName: String, val contactEmail: String, val username: String)
+
+    internal object SetupUsersRequest {
+        /**
+         * Onboarding `setup-users` body. The Worker reads `fullName`, `contactEmail` and
+         * `username` (matches web `api.setupDomainUsers`).
+         */
+        fun body(users: List<SetupUser>): JsonObject = buildJsonObject {
+            put("users", kotlinx.serialization.json.JsonArray(users.map { user ->
+                buildJsonObject {
+                    put("fullName", user.fullName)
+                    put("contactEmail", user.contactEmail)
+                    put("username", user.username)
+                }
+            }))
+        }
     }
 
     // MARK: - Admin DNS Suite
@@ -987,8 +1025,11 @@ class ApiClient private constructor() {
         )
     }
 
+    /** Folder unread counts are conversations when the Worker sends them (AVE-228). */
     suspend fun listFolders(mailboxId: String): List<Folder> =
-        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
+        request<List<Folder>>("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders").map { folder ->
+            folder.copy(unreadCount = folder.unreadThreadCount ?: folder.unreadCount, unreadThreadCount = null)
+        }
 
     /**
      * Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
@@ -1467,7 +1508,7 @@ class ApiClient private constructor() {
     ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/quick-reply",
         method = "POST",
-        body = buildJsonObject { put("text", text) },
+        body = quickReplyBody(text),
         headers = idempotencyHeaders(idempotencyKey),
     )
 

@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { retrySummaryOnce } from "~/lib/summary-quota";
 import api from "~/services/api";
 import type { AiSummaryResponse } from "~/types";
 import { queryKeys } from "./keys";
@@ -23,8 +24,9 @@ export function useThreadSummary(
 		queryFn: ({ signal }) => api.getThreadSummary(mailboxId!, threadId!, { signal }),
 		enabled: enabled && Boolean(mailboxId && threadId),
 		staleTime: 5 * 60_000,
-		// A model failure (502) is worth one quiet retry, nothing more.
-		retry: 1,
+		// A model failure (502) is worth one quiet retry, nothing more. The
+		// daily AI limit (429) can't clear until the reset, so it isn't retried.
+		retry: retrySummaryOnce,
 	});
 }
 

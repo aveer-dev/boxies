@@ -877,18 +877,89 @@ enum ComposeHTML {
         return fromName
     }
 
-    /// Signature inserted into compose when mailbox signature is enabled.
-    static func signatureText(settings: MailboxSettings?, fromName: String?) -> String {
-        guard settings?.signature?.enabled ?? true else { return "" }
-        if let html = settings?.signature?.html?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !html.isEmpty {
-            return stripHTML(html)
+    /// The fixed line the apps add when the signature is on but has no words.
+    static let defaultSignature = "Sent with Inboxies Email"
+
+    /// Whether the mailbox signature is on. A mailbox that never saved one is on
+    /// (with `defaultSignature`), as it always has been on iOS.
+    static func signatureEnabled(_ settings: MailboxSettings?) -> Bool {
+        settings?.signature?.enabled ?? true
+    }
+
+    /// The signature's words, on or off: the web's formatted signature as text
+    /// (links keep their address), else the saved text, else `defaultSignature`.
+    /// A custom signature replaces the fixed line (AVE-204).
+    static func signatureWords(_ settings: MailboxSettings?) -> String {
+        if let html = settings?.signature?.html {
+            let words = signatureHTMLToText(html)
+            if !words.isEmpty { return words }
         }
         if let text = settings?.signature?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
            !text.isEmpty {
             return text
         }
-        return "Sent with Inboxies Email"
+        return defaultSignature
+    }
+
+    /// Signature inserted into new mail, replies and forwards when it is on.
+    static func signatureText(settings: MailboxSettings?, fromName: String?) -> String {
+        guard signatureEnabled(settings) else { return "" }
+        return signatureWords(settings)
+    }
+
+    /// Plain text for the web's signature HTML (port of `shared/signature.ts`
+    /// `signatureHtmlToText`): a line per paragraph or break, bullets for list
+    /// items, and "Label (https://…)" for a link unless the label is the address.
+    static func signatureHTMLToText(_ html: String) -> String {
+        var working = html
+        if let link = try? NSRegularExpression(
+            pattern: "<a\\b[^>]*\\bhref=\"([^\"]*)\"[^>]*>(.*?)</a>",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) {
+            let ns = working as NSString
+            var out = ""
+            var cursor = 0
+            for match in link.matches(in: working, range: NSRange(location: 0, length: ns.length)) {
+                out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+                let href = decodeSignatureEntities(ns.substring(with: match.range(at: 1)))
+                let inner = ns.substring(with: match.range(at: 2))
+                let label = decodeSignatureEntities(
+                    inner.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let bare = href.replacingOccurrences(of: "^mailto:", with: "", options: [.regularExpression, .caseInsensitive])
+                if label.isEmpty || label == href || label == bare || label + "/" == href {
+                    out += escapeHTML(bare)
+                } else {
+                    out += "\(inner) (\(escapeHTML(bare)))"
+                }
+                cursor = match.range.location + match.range.length
+            }
+            out += ns.substring(from: cursor)
+            working = out
+        }
+        let marked = working
+            .replacingOccurrences(of: "[ \\t\\r\\n\\f]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "<br\\b[^>]*>", with: "\n", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "<li\\b[^>]*>", with: "\u{1}• ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "</(p|div|ul|ol|li)\\s*>", with: "\u{1}", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\u{1}[\u{1} ]*", with: "\n", options: .regularExpression)
+        return decodeSignatureEntities(marked)
+            .components(separatedBy: "\n")
+            .map { $0.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func decodeSignatureEntities(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
     }
 
     /// Two empty paragraphs above the signature so the user has room to type.
@@ -897,9 +968,16 @@ enum ComposeHTML {
     }
 
     /// True when compose text has user-authored content beyond the mailbox signature.
+    /// Whitespace is collapsed on both sides: the editor turns the signature's line
+    /// breaks into paragraphs, which mustn't read as new content.
     static func bodyHasUserContent(_ body: String, signature: String) -> Bool {
-        var text = stripHTML(body)
-        if !signature.isEmpty, let range = text.range(of: signature) {
+        let collapse: (String) -> String = {
+            $0.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var text = collapse(stripHTML(body))
+        let sig = collapse(signature)
+        if !sig.isEmpty, let range = text.range(of: sig) {
             text.removeSubrange(range)
         }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

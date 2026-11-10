@@ -54,6 +54,12 @@ struct EmailDetailView: View {
         return EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
+    /// The newest message's code or invite; none while the thread is still loading.
+    private var mailCard: MailCards.Card? {
+        if app.isEmailDetailLoading && app.threadEmails.isEmpty { return nil }
+        return MailCards.card(for: app.threadEmails)
+    }
+
     private var subjectText: String {
         let subject = email?.subject ?? ""
         return subject.isEmpty ? "(no subject)" : subject
@@ -123,6 +129,14 @@ struct EmailDetailView: View {
                     }
                 }
             }
+            // Code / Invite card in thumb reach, above the bottom bar (AVE-176).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let card = mailCard {
+                    MailCardView(card: card)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mailCard)
             .overlay {
                 let stickies = noteGroups.sticky
                 if !stickies.isEmpty {
@@ -316,6 +330,10 @@ struct EmailDetailView: View {
                 }
             }
         }
+        // The compact reader is a sheet, outside HomeShellView's `.tint(AppTheme.ink)`.
+        // Without this, pre-iOS 26 toolbars fall back to system blue (the iPad
+        // reading pane already inherits ink from HomeSplitLayout).
+        .tint(AppTheme.ink)
     }
 
     private var tagsRow: some View {
@@ -456,6 +474,12 @@ struct EmailDetailView: View {
 
                 if message.isSpoofed {
                     SpoofWarningBanner()
+                        .padding(.top, 10)
+                }
+
+                // The server stripped tracking pixels from this body (AVE-195).
+                if isExpanded, let note = TrackerNote.text(message.blockedTrackers) {
+                    TrackerNoteLine(text: note)
                         .padding(.top, 10)
                 }
 
@@ -1055,6 +1079,27 @@ private struct SpamReasonLine: View {
             Text(text)
                 .font(.inter(size: AppTheme.FontSize.meta))
                 .lineLimit(1)
+        }
+        .foregroundStyle(AppTheme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// "Blocked tracking from Mailchimp": the pixels the server removed from this
+/// body (AVE-195). Same quiet line as `SpamReasonLine`; Android twin
+/// `TrackerNoteLine` in EmailDetailView.kt, web `TrackerNote` in MessageBody.tsx.
+private struct TrackerNoteLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "eye.slash")
+                .font(.system(size: 12))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .lineLimit(2)
         }
         .foregroundStyle(AppTheme.muted)
         .frame(maxWidth: .infinity, alignment: .leading)

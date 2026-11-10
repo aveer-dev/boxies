@@ -28,9 +28,11 @@ import {
 	CONVERSATION_FLUSH_ALARM_BUDGET,
 	CONVERSATION_FLUSH_CONTINUE_DELAY_MS,
 	CONVERSATION_FLUSH_READ_BUDGET,
+	PARTICIPANT_LABEL_SQL,
 	SENT_FOLDER_ID_SQL,
 	conversationIndexIsClean,
 	countConversationsFromIndex,
+	countUnreadConversationsByFolder,
 	countThreadedByScan,
 	countThreadedSectionsByScan,
 	flushConversationIndex,
@@ -47,8 +49,13 @@ import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
 import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
-import { decodeStoredInvite } from "../lib/calendar-invite";
+import { decodeStoredInvite, organizerMatchesSender } from "../lib/calendar-invite";
 import { mailCardsAllowed, type EmailInvite, type EmailOtp } from "../../shared/mail-cards";
+import {
+	blockTrackingPixels,
+	shouldBlockTrackingPixels,
+	type BlockedTrackers,
+} from "../../shared/tracking-pixels";
 import {
 	buildInboxDigest,
 	type DigestEmailRow,
@@ -179,6 +186,25 @@ import {
 } from "../lib/thread-notes";
 import type { ThreadNote } from "../../shared/thread-notes";
 import {
+	countTaggedEmails,
+	createTag,
+	deleteTag,
+	listTaggedEmails,
+	listTags,
+	renameTag,
+	setEmailTag,
+	setThreadTag,
+	tagExists,
+	tagsForEmails,
+	withTagFields,
+	type CreateTagResult,
+	type EmailTagResult,
+	type RenameTagResult,
+	type TaggedEmailsOptions,
+	type ThreadTagResult,
+} from "../lib/tags";
+import type { Tag } from "../../shared/tags";
+import {
 	decideOutboundSendClaim,
 	outboundSendClaimKey,
 	type OutboundSendClaim,
@@ -194,12 +220,15 @@ import {
 import {
 	deleteSummariesForEmail,
 	resolveSummary,
+	shareInflight,
 	SummaryGenerationError,
+	SummaryQuotaExceededError,
 	type SummaryMessageMeta,
+	type SummaryQuotaCheck,
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
-import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import type { AiQuotaExceededError, AiUsageSnapshot } from "../../shared/ai-quota";
 import {
 	AI_DAILY_LIMITS,
 	aiUsageSnapshot,
@@ -211,10 +240,21 @@ import {
 } from "../lib/ai-quota";
 
 /**
- * DO-side summary result. Model failures come back as a value rather than a
- * thrown error because custom error classes don't survive the RPC boundary.
+ * DO-side summary result. Model failures and a reached daily AI quota come
+ * back as values rather than thrown errors because custom error classes
+ * don't survive the RPC boundary.
  */
-export type MailboxSummaryResult = AiSummaryResponse | { status: "generation_failed"; error: string };
+export type MailboxSummaryResult =
+	| AiSummaryResponse
+	| { status: "generation_failed"; error: string }
+	| { status: "quota_exceeded"; error: AiQuotaExceededError };
+
+/**
+ * Quota bucket AI summaries count against (AVE-215). The ai_usage table only
+ * accepts 'chat' and 'inbound' (migration 41), so summaries share the
+ * user-initiated 'chat' bucket rather than adding a bucket and a migration.
+ */
+const SUMMARY_QUOTA_BUCKET: AiQuotaBucket = "chat";
 
 /** KV flag set when a purge starts (before any wipe) so writers cannot resurrect mail. */
 const MAILBOX_DELETED_KEY = "mailbox_deleted";
@@ -1024,21 +1064,51 @@ export class MailboxDO extends DurableObject<Env> {
 	/**
 	 * Reader cards (AVE-175, shared/mail-cards.ts): turn the stored
 	 * `otp_code` / `calendar_invite` columns into `otp` / `invite`, and drop
-	 * both while the message sits in Spam or its sender failed auth.
+	 * both while the message sits in Spam or its sender failed auth. The
+	 * invite says whether its ORGANIZER lines up with the From (AVE-220),
+	 * decided here so rows stored before the flag get it too.
 	 */
-	#withMailCards<T extends { otp_code?: unknown; calendar_invite?: unknown; folder_id?: unknown; auth_tier?: unknown }>(
+	#withMailCards<
+		T extends { otp_code?: unknown; calendar_invite?: unknown; folder_id?: unknown; auth_tier?: unknown; sender?: unknown },
+	>(
 		email: T,
 	): Omit<T, "otp_code" | "calendar_invite"> & { otp: EmailOtp | null; invite: EmailInvite | null } {
 		const { otp_code, calendar_invite, ...rest } = email;
+		const authTier = typeof email.auth_tier === "string" ? email.auth_tier : null;
 		const allowed = mailCardsAllowed({
 			folder_id: typeof email.folder_id === "string" ? email.folder_id : null,
-			auth_tier: typeof email.auth_tier === "string" ? email.auth_tier : null,
+			auth_tier: authTier,
 		});
+		const invite = allowed ? decodeStoredInvite(calendar_invite) : null;
 		return {
 			...rest,
 			otp: allowed && typeof otp_code === "string" && otp_code ? { code: otp_code } : null,
-			invite: allowed ? decodeStoredInvite(calendar_invite) : null,
+			invite: invite && {
+				...invite,
+				organizerMatchesSender: organizerMatchesSender(
+					invite.organizer,
+					typeof email.sender === "string" ? email.sender : null,
+					authTier,
+				),
+			},
 		};
+	}
+
+	/**
+	 * Tracking pixels (AVE-195, shared/tracking-pixels.ts): strip known open
+	 * pixels from the served body in every folder but Drafts, and report what
+	 * was removed so the readers can show a note. Stored mail is unchanged.
+	 */
+	#withTrackersBlocked<T extends object>(
+		email: T,
+	): T & { blocked_trackers: BlockedTrackers | null } {
+		const { body, folder_id } = email as { body?: unknown; folder_id?: unknown };
+		const folderId = typeof folder_id === "string" ? folder_id : null;
+		if (typeof body !== "string" || !shouldBlockTrackingPixels(folderId)) {
+			return { ...email, blocked_trackers: null };
+		}
+		const { html, blocked } = blockTrackingPixels(body);
+		return { ...email, body: html, blocked_trackers: blocked };
 	}
 
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
@@ -1127,13 +1197,17 @@ export class MailboxDO extends DurableObject<Env> {
 			.offset(offset)
 			.all();
 
-		return this.#withFileAttachmentFlag(
-			result.map((email) => this.#withDecodedAuth({
-				...email,
-				read: !!email.read,
-				starred: !!email.starred,
-				reply_later: !!email.reply_later,
-			})),
+		return withTagFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(
+				result.map((email) => this.#withDecodedAuth({
+					...email,
+					read: !!email.read,
+					starred: !!email.starred,
+					reply_later: !!email.reply_later,
+				})),
+			),
+			"email",
 		);
 	}
 
@@ -1338,6 +1412,7 @@ export class MailboxDO extends DurableObject<Env> {
 				`WITH
 				folder_emails AS (
 					SELECT *,
+						rowid AS rid,
 						COALESCE(in_reply_to, id) as draft_group_key
 					FROM emails
 					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
@@ -1346,9 +1421,18 @@ export class MailboxDO extends DurableObject<Env> {
 					SELECT
 						draft_group_key,
 						COUNT(*) as thread_count,
-						0 as thread_unread_count,
-						GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants
+						0 as thread_unread_count
 					FROM folder_emails
+					GROUP BY draft_group_key
+				),
+				draft_participants AS (
+					SELECT draft_group_key, GROUP_CONCAT(p, char(31)) as participants
+					FROM (
+						SELECT draft_group_key, ${PARTICIPANT_LABEL_SQL} AS p
+						FROM folder_emails
+						GROUP BY draft_group_key, p
+						ORDER BY draft_group_key, MIN(rid)
+					)
 					GROUP BY draft_group_key
 				),
 				latest_per_group AS (
@@ -1367,9 +1451,10 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
 					lp.auth, lp.auth_tier, lp.classification_reason, lp.matched_rule_id,
-					ds.thread_count, ds.thread_unread_count, ds.participants
+					ds.thread_count, ds.thread_unread_count, dp.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
+				JOIN draft_participants dp ON dp.draft_group_key = ds.draft_group_key
 				WHERE lp.rn = 1
 				ORDER BY lp.date DESC
 				LIMIT ?2 OFFSET ?3`,
@@ -1377,20 +1462,24 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 
 			const rows = [...result];
-			return withThreadNoteFields(
+			return withTagFields(
 				this.ctx.storage.sql,
-				this.#withFileAttachmentFlag(
-					rows.map((row: any) => this.#withDecodedAuth({
-						...row,
-						read: !!row.read,
-						starred: !!row.starred,
-						reply_later: !!row.reply_later,
-						thread_count: row.thread_count || 1,
-						thread_unread_count: row.thread_unread_count || 0,
-						participants: row.participants || row.sender,
-					})),
+				withThreadNoteFields(
+					this.ctx.storage.sql,
+					this.#withFileAttachmentFlag(
+						rows.map((row: any) => this.#withDecodedAuth({
+							...row,
+							read: !!row.read,
+							starred: !!row.starred,
+							reply_later: !!row.reply_later,
+							thread_count: row.thread_count || 1,
+							thread_unread_count: row.thread_unread_count || 0,
+							participants: row.participants || row.sender,
+						})),
+					),
+					options.userId,
 				),
-				options.userId,
+				"thread",
 			);
 		}
 
@@ -1427,10 +1516,14 @@ export class MailboxDO extends DurableObject<Env> {
 			needs_reply: !!row.needs_reply,
 			has_draft: !!row.has_draft,
 		}));
-		return withThreadNoteFields(
+		return withTagFields(
 			this.ctx.storage.sql,
-			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
-			options.userId,
+			withThreadNoteFields(
+				this.ctx.storage.sql,
+				this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
+				options.userId,
+			),
+			"thread",
 		);
 	}
 
@@ -1546,7 +1639,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return this.#withMailCards(this.#withDecodedAuth({
+		return this.#withTrackersBlocked(this.#withMailCards(this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
 			one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1557,7 +1650,8 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments.map(withAttachmentRisk),
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
-		}));
+			tags: this.#emailTags([id]).get(id) ?? [],
+		})));
 	}
 
 	/**
@@ -1622,9 +1716,10 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 
 		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
+		const tagsByEmail = this.#emailTags(emailIds);
 
 		return await Promise.all(
-			emailRows.map(async (email) => this.#withMailCards(this.#withDecodedAuth({
+			emailRows.map(async (email) => this.#withTrackersBlocked(this.#withMailCards(this.#withDecodedAuth({
 				...email,
 				...this.#aliasFields(email.alias_id),
 				one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
@@ -1634,7 +1729,8 @@ export class MailboxDO extends DurableObject<Env> {
 				reply_later: !!email.reply_later,
 				attachments: (attachmentsByEmail.get(email.id) || []).map(withAttachmentRisk),
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
-			}))),
+				tags: tagsByEmail.get(email.id) ?? [],
+			})))),
 		);
 	}
 
@@ -1682,11 +1778,32 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.#hydrateBody(emailId, row.body, row.snippet);
 	}
 
+	/** One summary model run against today's quota; fails open like tryConsumeAiQuota. */
+	#consumeSummaryQuota(tier: PlanTier): SummaryQuotaCheck {
+		try {
+			const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+			const result = consumeAiQuota(
+				this.ctx.storage.sql,
+				SUMMARY_QUOTA_BUCKET,
+				dailyLimit(planTier, SUMMARY_QUOTA_BUCKET),
+			);
+			if (!result.allowed) {
+				console.warn(`AI quota reached for a summary: ${result.used}/${result.limit}`);
+				return { allowed: false, error: result.error };
+			}
+			return { allowed: true };
+		} catch (e) {
+			console.error("AI quota check failed (summary), allowing:", (e as Error).message);
+			return null;
+		}
+	}
+
 	async #resolveSummary(
 		type: AiSummaryTargetType,
 		targetId: string,
 		threadKey: string,
 		mode: "cached" | "lazy" | "force",
+		tier: PlanTier,
 	): Promise<MailboxSummaryResult | null> {
 		const threadMessages = this.#summaryThreadMetas(threadKey);
 		if (threadMessages.length === 0) return null;
@@ -1702,10 +1819,14 @@ export class MailboxDO extends DurableObject<Env> {
 				loadBody: (id) => this.#summaryBody(id),
 				mode,
 				assertWritable: () => this.#assertMailboxWritable(),
+				consumeQuota: () => this.#consumeSummaryQuota(tier),
 			});
 		} catch (e) {
 			if (e instanceof SummaryGenerationError) {
 				return { status: "generation_failed", error: e.message };
+			}
+			if (e instanceof SummaryQuotaExceededError) {
+				return { status: "quota_exceeded", error: e.quota };
 			}
 			throw e;
 		}
@@ -1715,42 +1836,45 @@ export class MailboxDO extends DurableObject<Env> {
 		return result;
 	}
 
-	/** Shares one in-flight generation per target; "cached" reads never wait on it. */
+	/**
+	 * Shares one in-flight generation per target, so concurrent calls run the
+	 * model (and use quota) once; "cached" reads never wait on it.
+	 */
 	#dedupedSummary(
 		type: AiSummaryTargetType,
 		targetId: string,
 		threadKey: string,
 		mode: "cached" | "lazy" | "force",
+		tier: PlanTier,
 	): Promise<MailboxSummaryResult | null> {
-		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode);
-		const key = `${type}:${targetId}`;
-		const pending = this.#summaryInflight.get(key);
-		if (pending) return pending;
-		const run = this.#resolveSummary(type, targetId, threadKey, mode).finally(() => {
-			this.#summaryInflight.delete(key);
-		});
-		this.#summaryInflight.set(key, run);
-		return run;
+		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode, tier);
+		return shareInflight(this.#summaryInflight, `${type}:${targetId}`, () =>
+			this.#resolveSummary(type, targetId, threadKey, mode, tier),
+		);
 	}
 
 	/**
 	 * Thread summary for the detail screen: cached, or generated on first open
 	 * ("lazy") / always ("force", Regenerate). Null when the thread has no mail.
+	 * A model run counts against `tier`'s daily AI quota.
 	 */
 	async getThreadSummary(
 		threadKey: string,
 		mode: "lazy" | "force" = "lazy",
+		tier: PlanTier = "free",
 	): Promise<MailboxSummaryResult | null> {
-		return this.#dedupedSummary("thread", threadKey, threadKey, mode);
+		return this.#dedupedSummary("thread", threadKey, threadKey, mode, tier);
 	}
 
 	/**
 	 * Quick summary of one message in a multi-message thread. "cached" never
-	 * runs the model. Null when the email doesn't exist.
+	 * runs the model. Null when the email doesn't exist. A model run counts
+	 * against `tier`'s daily AI quota.
 	 */
 	async getEmailSummary(
 		emailId: string,
 		mode: "cached" | "lazy" | "force" = "cached",
+		tier: PlanTier = "free",
 	): Promise<MailboxSummaryResult | null> {
 		const row = this.db
 			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
@@ -1758,7 +1882,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.emails.id, emailId))
 			.get();
 		if (!row) return null;
-		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode);
+		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode, tier);
 	}
 
 	// ── Notes to self (private to their author; see lib/thread-notes) ──
@@ -1789,6 +1913,103 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async deleteThreadNote(noteId: string, userId: string): Promise<boolean> {
 		return deleteThreadNote(this.ctx.storage.sql, noteId, userId) !== null;
+	}
+
+	// ── Tags (AVE-240; see lib/tags and shared/tags) ───────────────
+	// Shared by the whole mailbox, so changes broadcast: `email_updated`
+	// { id, tags } per message whose tags changed, `tags_changed` after a
+	// tag is created, renamed or deleted.
+
+	/** Tags per email id; empty map when the lookup fails (payloads keep working). */
+	#emailTags(emailIds: string[]): Map<string, { id: string; name: string }[]> {
+		try {
+			return tagsForEmails(this.ctx.storage.sql, emailIds);
+		} catch (e) {
+			console.error("tag lookup failed:", (e as Error).message);
+			return new Map();
+		}
+	}
+
+	async listTags(): Promise<Tag[]> {
+		return listTags(this.ctx.storage.sql);
+	}
+
+	async createTag(name: unknown): Promise<CreateTagResult> {
+		await this.#assertMailboxWritable();
+		const result = createTag(this.ctx.storage.sql, name);
+		if (result.ok) this.broadcastEvent("tags_changed", {});
+		return result;
+	}
+
+	async renameTag(tagId: string, name: unknown): Promise<RenameTagResult> {
+		await this.#assertMailboxWritable();
+		const result = renameTag(this.ctx.storage.sql, tagId, name);
+		if (result.ok && result.changed) this.broadcastEvent("tags_changed", {});
+		return result;
+	}
+
+	/** Delete a tag and its links; emails stay. False when it doesn't exist. */
+	async deleteTag(tagId: string): Promise<boolean> {
+		const emailIds = this.ctx.storage.transactionSync(() => deleteTag(this.ctx.storage.sql, tagId));
+		if (emailIds === null) return false;
+		this.broadcastEvent("tags_changed", {});
+		return true;
+	}
+
+	async setEmailTag(emailId: string, tagId: string, on: boolean): Promise<EmailTagResult> {
+		await this.#assertMailboxWritable();
+		const result = setEmailTag(this.ctx.storage.sql, emailId, tagId, on);
+		if (result.ok && result.changed) {
+			this.broadcastEvent("email_updated", { id: result.id, tags: result.tags });
+		}
+		return result;
+	}
+
+	async setThreadTag(threadId: string, tagId: string, on: boolean): Promise<ThreadTagResult> {
+		await this.#assertMailboxWritable();
+		const result = this.ctx.storage.transactionSync(() =>
+			setThreadTag(this.ctx.storage.sql, threadId, tagId, on),
+		);
+		if (result.ok && result.emailIds.length > 0) {
+			const byEmail = this.#emailTags(result.emailIds);
+			for (const id of result.emailIds) {
+				this.broadcastEvent("email_updated", { id, tags: byEmail.get(id) ?? [] });
+			}
+		}
+		return result;
+	}
+
+	/** Mail with a tag (see shared/tags for the row shape); null when the tag doesn't exist. */
+	async getTaggedEmails(
+		tagId: string,
+		options: TaggedEmailsOptions & { userId?: string } = {},
+	): Promise<{ emails: unknown[]; totalCount: number } | null> {
+		const sql = this.ctx.storage.sql;
+		if (!tagExists(sql, tagId)) return null;
+		const threaded = !!options.threaded;
+		const mapped = listTaggedEmails(sql, tagId, options).map((row: any) => {
+			const base = {
+				...row,
+				read: !!row.read,
+				starred: !!row.starred,
+				reply_later: !!row.reply_later,
+			};
+			return this.#withDecodedAuth(
+				threaded
+					? {
+							...base,
+							thread_count: row.thread_count || 1,
+							thread_unread_count: row.thread_unread_count || 0,
+							participants: row.participants || row.sender,
+						}
+					: base,
+			);
+		});
+		const withFlags = this.#withFileAttachmentFlag(mapped);
+		const emails = threaded
+			? withTagFields(sql, withThreadNoteFields(sql, withFlags, options.userId), "thread")
+			: withTagFields(sql, withFlags, "email");
+		return { emails, totalCount: countTaggedEmails(sql, tagId, options) };
 	}
 
 	async updateEmail(
@@ -2262,6 +2483,9 @@ export class MailboxDO extends DurableObject<Env> {
 			...emailAttachments.map((att) => attachmentKey(id, att.id, att.filename)),
 		];
 		this.ctx.storage.transactionSync(() => {
+			// Tag links cascade with the row; deleted explicitly too so they
+			// never outlive it (AVE-240).
+			this.ctx.storage.sql.exec(`DELETE FROM email_tags WHERE email_id = ?1`, id);
 			this.db
 				.delete(schema.emails)
 				.where(eq(schema.emails.id, id))
@@ -2373,7 +2597,15 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Folders (Drizzle) ──────────────────────────────────────────
 
-	async getFolders() {
+	/**
+	 * Folders with two unread counts (AVE-228):
+	 * - `unreadCount`: unread messages in the folder (kept for older clients).
+	 * - `unreadThreadCount`: unread conversations, in the unit and with the
+	 *   grouping of the threaded list. For the Inbox it equals the New section
+	 *   total (`newCount` on the threaded Inbox list). Absent for a folder only
+	 *   while the conversation index is catching up (the Inbox is then scanned).
+	 */
+	async getFolders(): Promise<Array<{ id: string; name: string; unreadCount: number; unreadThreadCount?: number }>> {
 		const result = this.db
 			.select({
 				id: schema.folders.id,
@@ -2384,7 +2616,14 @@ export class MailboxDO extends DurableObject<Env> {
 			.leftJoin(schema.emails, eq(schema.emails.folder_id, schema.folders.id))
 			.groupBy(schema.folders.id, schema.folders.name)
 			.all();
-		return result;
+		if (this.#conversationIndexReady()) {
+			const unreadThreads = countUnreadConversationsByFolder(this.ctx.storage.sql);
+			return result.map((folder) => ({ ...folder, unreadThreadCount: unreadThreads.get(folder.id) ?? 0 }));
+		}
+		const inbox = countThreadedSectionsByScan(this.ctx.storage.sql, Folders.INBOX).newCount;
+		return result.map((folder) =>
+			folder.id === Folders.INBOX ? { ...folder, unreadThreadCount: inbox } : folder,
+		);
 	}
 
 	async createFolder(id: string, name: string, is_deletable: number = 1) {
@@ -3182,13 +3421,17 @@ export class MailboxDO extends DurableObject<Env> {
 		params.push(limit, offset);
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
-		return this.#withFileAttachmentFlag(
-			[...result].map((row: any) => this.#withDecodedAuth({
-				...row,
-				read: !!row.read,
-				starred: !!row.starred,
-				reply_later: !!row.reply_later,
-			})),
+		return withTagFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(
+				[...result].map((row: any) => this.#withDecodedAuth({
+					...row,
+					read: !!row.read,
+					starred: !!row.starred,
+					reply_later: !!row.reply_later,
+				})),
+			),
+			"email",
 		);
 	}
 
@@ -3708,7 +3951,8 @@ export class MailboxDO extends DurableObject<Env> {
 		const inbox = folders.find(
 			(folder) => folder.id === Folders.INBOX || folder.name.toLowerCase() === "inbox",
 		);
-		const unreadCount = inbox?.unreadCount ?? 0;
+		// Unread conversations, like the threaded Inbox it summarises (AVE-228).
+		const unreadCount = inbox?.unreadThreadCount ?? inbox?.unreadCount ?? 0;
 
 		const dismissedRows = [
 			...this.ctx.storage.sql.exec(`SELECT email_id FROM dismissed_todos;`),

@@ -15,8 +15,12 @@
  * - Hardened: a fixed system prompt, email text wrapped as untrusted data,
  *   capped input and output.
  *
- * Pure module apart from the injected `sql` / `ai` / body loader, so it runs
- * under Node in workers/test/ai-summary.test.mjs.
+ * - Metered (AVE-215): every model run counts one request against the
+ *   mailbox's daily AI quota (`consumeQuota`). Cached reads, ineligible or
+ *   too-short mail and concurrent calls that share one run are free.
+ *
+ * Pure module apart from the injected `sql` / `ai` / body loader / quota
+ * check, so it runs under Node in workers/test/ai-summary.test.mjs.
  */
 
 import {
@@ -27,6 +31,7 @@ import {
 	type AiSummaryResponse,
 	type AiSummaryTargetType,
 } from "../../shared/ai-summaries";
+import type { AiQuotaExceededError } from "../../shared/ai-quota";
 import { Folders } from "../../shared/folders";
 import { normalizeEmailAddress } from "./mail-automations";
 
@@ -79,6 +84,23 @@ export class SummaryGenerationError extends Error {
 		this.name = "SummaryGenerationError";
 	}
 }
+
+/** The mailbox is at its daily AI limit; the model was not called. */
+export class SummaryQuotaExceededError extends Error {
+	readonly quota: AiQuotaExceededError;
+	constructor(quota: AiQuotaExceededError) {
+		super(quota.message);
+		this.name = "SummaryQuotaExceededError";
+		this.quota = quota;
+	}
+}
+
+/**
+ * Outcome of a quota check before a model run: allowed, or refused with the
+ * typed error. Null means the check itself failed, which fails open (the
+ * same as tryConsumeAiQuota).
+ */
+export type SummaryQuotaCheck = { allowed: true } | { allowed: false; error: AiQuotaExceededError } | null;
 
 // ── Eligibility ────────────────────────────────────────────────────
 
@@ -491,6 +513,26 @@ export interface ResolveSummaryInput {
 	now?: () => string;
 	/** Throws when the mailbox can't be written (purged); called before saving. */
 	assertWritable?: () => Promise<void>;
+	/**
+	 * Count one request against the daily AI quota. Called only right before
+	 * the model runs, never for a cached, ineligible or too-short result.
+	 */
+	consumeQuota?: () => SummaryQuotaCheck | Promise<SummaryQuotaCheck>;
+}
+
+/**
+ * One in-flight run per key: a call that arrives while the same key is
+ * running gets that run's promise, so the model (and the quota) is charged
+ * once. The entry is dropped when the run settles.
+ */
+export function shareInflight<T>(inflight: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
+	const pending = inflight.get(key);
+	if (pending) return pending;
+	const started = run().finally(() => {
+		inflight.delete(key);
+	});
+	inflight.set(key, started);
+	return started;
 }
 
 /**
@@ -529,6 +571,8 @@ export async function resolveSummary(input: ResolveSummaryInput): Promise<AiSumm
 	if (totalChars < MIN_SUMMARY_CHARS) return { status: "not_eligible", reason: "too_short" };
 
 	if (!input.ai) throw new SummaryGenerationError("Workers AI is not configured");
+	const quota = await input.consumeQuota?.();
+	if (quota && !quota.allowed) throw new SummaryQuotaExceededError(quota.error);
 	const generated = await runSummaryModel(input.ai, buildSummaryPrompt(target.type, withText));
 
 	await input.assertWritable?.();

@@ -43,10 +43,10 @@ export default function ReaderColumn({
 	const shownSubject = useRef<string | null>(null);
 
 	const folderId = email?.folder_id ?? folder;
-	const isTag = Boolean(folderId && !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folderId));
+	const isCustomFolder = Boolean(folderId && !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folderId));
 	const folderName = folderId
-		? isTag
-			? `#${(folders.find((f) => f.id === folderId)?.name ?? folderId).replace(/^#/, "")}`
+		? isCustomFolder
+			? (folders.find((f) => f.id === folderId)?.name ?? folderId).replace(/^#/, "")
 			: (FOLDER_DISPLAY_NAMES[folderId] ?? folderId)
 		: null;
 

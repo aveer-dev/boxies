@@ -212,6 +212,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
+| Signature | `previewSignature` | `signature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API. Peer of iOS `-previewSignature` (AVE-204) |
 | Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
@@ -221,9 +222,14 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
 | Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
 | Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
+| Screener reader after Accept | `previewScreenerReaderAccept` | `screenerReaderAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`). AVE-182 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Focus & Reply | `previewFocusReply` · `previewFocusReplyDone` | `focusReply` · `focusReplyDone` | Reply Later with the first thread's reply open under "Focus & Reply · 1 of N · Skip" · the pile after a run emptied it ("All done"). Peer of iOS `-previewReplyLater -previewFocusReply` / `-previewFocusReplyDone` (AVE-193) |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
+| Code card | `previewCode` | `code` | Sign-in mail in the reader with the Code card pinned above the bottom bar: 22.sp monospaced code + Copy (sensitive clip). Peer of iOS `-previewDetail -previewCode` (AVE-177) |
+| Invite card | `previewInvite` · `previewInviteExpanded` · `previewInviteAddress` · `previewInviteAddressExpanded` · `previewInviteCancelled` | `inviteCard` · `inviteCardExpanded` · `inviteCardAddress` · `inviteCardAddressExpanded` · `inviteCardCancelled` | Reader with the Invite card: Meet link (Join) · details open · in person (Directions via `geo:`) · in person, details open · cancelled (no actions). Peer of iOS `-previewDetail -previewInvite [-previewInviteAddress] [-previewInviteExpanded] [-previewInviteCancelled]` |
+| Invite free/busy | `previewInviteFree` · `previewInviteConflict` · `previewInviteAdded` · `previewInviteAsk` | `inviteCardFree` · `inviteCardConflict` · `inviteCardAdded` · `inviteCardAsk` | Invite card on fixture calendars (`PreviewInviteCalendar`, no CalendarContract or permission dialog): "You're free" + calendar picker · "Conflicts with Team sync +1 more" · added in one tap, pinned "Added to Work · Undo" toast · "Check availability" before access. Peer of iOS `… -previewInvite -previewInviteFreeBusy free\|conflict\|added\|ask` (AVE-206) |
 | Notes to self (list) | `previewNotes` | `notes` | Inbox rows with a sticky-note strip and "N private notes" chip |
 | Notes to self (detail) | `previewNotesDetail` | `notesDetail` | Q3 thread open: draggable sticky + inline private notes (in-memory edits) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |

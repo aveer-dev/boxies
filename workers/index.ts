@@ -46,6 +46,7 @@ import { SendEmailRequestSchema } from "./lib/schemas";
 import { countRecipients } from "./lib/send-quota";
 import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
+import { normalizeSignatureSetting, withStoredSignature } from "../shared/signature";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
 import { attachmentResponseHeaders } from "../shared/attachment-risk";
 import {
@@ -94,6 +95,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
 import { blockSuppressedSend, registerSuppressionRoutes } from "./routes/suppressions";
+import { registerTagRoutes } from "./routes/tags";
 import {
 	applyInboundDsn,
 	parseDeliveryStatusReport,
@@ -303,6 +305,7 @@ registerBillingRoutes(app);
 registerExportAndOffboardingRoutes(app);
 registerAliasRoutes(app);
 registerSuppressionRoutes(app);
+registerTagRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -382,7 +385,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 			mailboxId: check.mailboxId,
 			ownerUserId: principal.userId,
 			name,
-			settings: settings ? stripAclFromSettings(settings) : undefined,
+			settings: settings ? withStoredSignature(stripAclFromSettings(settings)) : undefined,
 		});
 		return c.json({ ...(await mailboxResponse(c.env, db, check.mailboxId, "owner", stored)), name }, 201);
 	} catch (e) {
@@ -426,6 +429,17 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 		);
 		if (changed.length > 0) {
 			return c.json({ error: `Only mailbox owners can change ${changed.join(", ")}` }, 403);
+		}
+	}
+	// The signature goes out in mail (AVE-204): store it allowlist-sanitised. A
+	// stored one that no longer passes doesn't block saving other settings.
+	if ("signature" in next) {
+		const signature = normalizeSignatureSetting(next.signature);
+		if (signature.ok) {
+			if (signature.signature) next.signature = signature.signature;
+			else delete next.signature;
+		} else if (JSON.stringify(existing.signature ?? null) !== JSON.stringify(next.signature ?? null)) {
+			return c.json({ error: signature.error }, 400);
 		}
 	}
 	const automationError = automationSettingsError(parseAutomationSettings(next), mailboxId);
@@ -1070,7 +1084,9 @@ app.get("/api/v1/mailboxes/:mailboxId/ai-usage", async (c: AppContext) => {
 // -- AI summaries (AVE-20) ------------------------------------------
 // Generated lazily on first open and stored in the mailbox DO. Gating
 // (folder, screened-out sender, length, multi-message for quick summaries)
-// lives in lib/ai-summary.ts; responses are AiSummaryResponse.
+// lives in lib/ai-summary.ts; responses are AiSummaryResponse. Each model
+// run counts against the mailbox's daily AI quota (AVE-215): over it, the
+// route answers 429 with the typed AiQuotaExceededError (plus `error`).
 
 const MAX_SUMMARY_ROUTE_ID = 512;
 
@@ -1087,6 +1103,9 @@ async function summaryResponse(
 		console.error("AI summary failed:", result.error);
 		return c.json({ error: "Couldn't generate a summary. Try again." }, 502);
 	}
+	if (result.status === "quota_exceeded") {
+		return c.json({ ...result.error, error: result.error.message }, 429);
+	}
 	return c.json(result satisfies AiSummaryResponse);
 }
 
@@ -1098,13 +1117,13 @@ function summaryRouteId(c: AppContext, name: string): string | null {
 app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary", async (c: AppContext) => {
 	const threadId = summaryRouteId(c, "threadId");
 	if (!threadId) return c.json({ error: "Thread not found" }, 404);
-	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "lazy"), "Thread not found");
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "lazy", getPlanTier(c.var.mailboxId)), "Thread not found");
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary/regenerate", async (c: AppContext) => {
 	const threadId = summaryRouteId(c, "threadId");
 	if (!threadId) return c.json({ error: "Thread not found" }, 404);
-	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "force"), "Thread not found");
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "force", getPlanTier(c.var.mailboxId)), "Thread not found");
 });
 
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id/summary", async (c: AppContext) => {
@@ -1120,7 +1139,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/summary/generate", async (c: A
 	const { regenerate } = GenerateEmailSummaryBody.parse(raw.trim() ? JSON.parse(raw) : {});
 	return summaryResponse(
 		c,
-		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy"),
+		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy", getPlanTier(c.var.mailboxId)),
 		"Email not found",
 	);
 });

@@ -67,7 +67,7 @@ sealed interface MailNotificationRequest {
     /** `PUT .../emails/:id { reply_later: true, reply_later_remind_at }` */
     data class ReplyLater(val remindAtIso: String) : MailNotificationRequest
 
-    /** `POST .../emails/:id/quick-reply { text }` */
+    /** `POST .../emails/:id/quick-reply { text, quote_time_zone }` */
     data class QuickReply(val text: String) : MailNotificationRequest
 }
 

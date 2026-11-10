@@ -213,9 +213,73 @@ enum PreviewSupport {
         deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
     )
 
+    /// `-previewDetail -previewCode` (AVE-176): sign-in mail with a one-time code, so the
+    /// reader pins the Code card above the bottom bar. Android twin: AVE-177.
+    static let codeEmail = Email(
+        id: "preview-code",
+        folderId: "inbox",
+        subject: "Your Acme sign-in code",
+        sender: "no-reply@acme.example",
+        senderName: "Acme",
+        recipient: "you@inboxies.email",
+        date: "2026-11-06T14:02:00.000Z",
+        read: false,
+        starred: false,
+        body: "<p>Hi Alex,</p><p>Use this code to finish signing in to Acme:</p><p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">482 913</p><p>It expires in 10 minutes. If you didn’t try to sign in, you can ignore this email.</p><p>— The Acme team</p>",
+        snippet: "Use this code to finish signing in to Acme: 482 913",
+        authTier: "verified",
+        otp: EmailOtp(code: "482913")
+    )
+
+    /// `-previewDetail -previewInvite` (AVE-176): calendar invite with a join link and a
+    /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant,
+    /// `-previewInviteAddress` for an in-person invite (address only, Directions),
+    /// `-previewInviteExpanded` to open the details, `-previewInviteClaimed` for a
+    /// stranger naming someone else as organizer (AVE-220). Add `-previewInviteFreeBusy
+    /// free|conflict|added|ask` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
+    /// "You're free", "Conflicts with Team sync +1 more", the "Added to Work · Undo"
+    /// toast, or the "Check availability" link before access.
+    static func inviteEmail(cancelled: Bool, inPerson: Bool = false, claimed: Bool = false) -> Email {
+        Email(
+            id: "preview-invite",
+            folderId: "inbox",
+            subject: cancelled ? "Canceled: Design review" : "Invitation: Design review @ Thu Nov 12",
+            sender: claimed ? "mallory@stranger.example" : "pat@studio.example",
+            senderName: claimed ? "Mallory" : "Pat Lee",
+            recipient: "you@inboxies.email",
+            date: "2026-11-06T13:30:00.000Z",
+            read: false,
+            starred: false,
+            body: cancelled
+                ? "<p>This event has been cancelled.</p><p>Design review · Thursdays 10–11am</p>"
+                : "<p>Pat Lee has invited you to <b>Design review</b>.</p><p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" + (inPerson ? "<p>We’ll meet in Room 4B, 200 Market St.</p>" : "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"),
+            snippet: cancelled ? "This event has been cancelled." : "Pat Lee has invited you to Design review.",
+            hasAttachment: true,
+            authTier: claimed ? "unverified" : "verified",
+            invite: EmailInvite(
+                method: cancelled ? "CANCEL" : "REQUEST",
+                cancelled: cancelled,
+                uid: "design-review@studio.example",
+                sequence: cancelled ? 2 : 0,
+                title: "Design review",
+                start: "2026-11-12T15:00:00.000Z",
+                end: "2026-11-12T16:00:00.000Z",
+                timezone: "America/New_York",
+                location: "Room 4B, 200 Market St",
+                organizer: claimed
+                    ? EmailInviteOrganizer(email: "ceo@studio.example", name: "CEO")
+                    : EmailInviteOrganizer(email: "pat@studio.example", name: "Pat Lee"),
+                organizerMatchesSender: !claimed,
+                meetingUrl: inPerson ? nil : "https://meet.google.com/abc-defg-hij",
+                recurrence: "FREQ=WEEKLY;BYDAY=TH"
+            )
+        )
+    }
+
     /// `-previewDetail -previewNewsletter` (AVE-89): a long marketing mail with a fixed 640px card,
     /// a long unbroken URL and a rigid 900px table, for the fit-to-width / sideways-scroll body.
     /// Android twin: `PreviewSupport.newsletterEmail` (`run-debug-preview.sh newsletter`).
+    /// Carries the "Blocked tracking from Mailchimp" note above the body (AVE-195).
     static let newsletterEmail = Email(
         id: "preview-newsletter",
         folderId: "inbox",
@@ -227,7 +291,8 @@ enum PreviewSupport {
         read: true,
         starred: false,
         body: newsletterHTML,
-        snippet: "Good morning. This issue is built like most marketing mail."
+        snippet: "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers: BlockedTrackers(count: 1, services: ["Mailchimp"])
     )
 
     /// `-previewMailbox -previewReplyQuote` (AVE-133): reply to a promo mail whose HTML carries a
@@ -422,6 +487,24 @@ enum PreviewSupport {
         return app
     }
 
+    /// Settings → Signature (AVE-204) on a signature formatted on the web: bold
+    /// name and a link, shown here as words with the link's address.
+    @MainActor
+    static func signaturePreviewModel() -> AppModel {
+        let app = appModel()
+        if var mailbox = app.mailboxes.first {
+            var settings = mailbox.settings ?? MailboxSettings()
+            settings.signature = SignatureSettings(
+                enabled: true,
+                text: "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                html: "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>"
+            )
+            mailbox.settings = settings
+            app.mailboxes = [mailbox]
+        }
+        return app
+    }
+
     @MainActor
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
@@ -445,6 +528,25 @@ enum PreviewSupport {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)
             app.replyLaterCount = app.emails.count
+            if args.contains("-previewFocusReplyDone") {
+                // AVE-193: a Focus & Reply run just emptied the pile.
+                app.emails = []
+                app.replyLaterCount = 0
+                app.focusReplyResult = FocusReplyResult(replied: 3, skipped: 0)
+            }
+        } else if args.contains("-previewDetail"),
+                  args.contains("-previewCode") || args.contains("-previewInvite") {
+            // AVE-176: reader with the Code card / Invite card pinned at the bottom.
+            let email = args.contains("-previewCode")
+                ? codeEmail
+                : inviteEmail(
+                    cancelled: args.contains("-previewInviteCancelled"),
+                    inPerson: args.contains("-previewInviteAddress"),
+                    claimed: args.contains("-previewInviteClaimed")
+                )
+            app.emails.insert(email, at: 0)
+            app.selectedEmail = email
+            app.threadEmails = [email]
         } else if args.contains("-previewDetail"), args.contains("-previewNewsletter") {
             app.emails.insert(newsletterEmail, at: 0)
             app.selectedEmail = newsletterEmail
@@ -473,6 +575,21 @@ enum PreviewSupport {
             app.emails.removeAll { screenerSenderKeyMatches($0, decided) }
             app.screenerQueue.removeAll { screenerSenderKeyMatches($0, decided) }
             let destination: String? = args.contains("-previewScreenerAccept") ? "promotions" : nil
+            // `-previewScreener` (reader open): Accept keeps it open on the refiled
+            // message, so the Screener bar is gone (AVE-182). Decline closes it.
+            if let open = app.selectedEmail, screenerSenderKeyMatches(open, decided) {
+                if let destination {
+                    app.selectedEmail?.folderId = destination
+                    app.selectedEmail?.folderName = nil
+                    for index in app.threadEmails.indices where screenerSenderKeyMatches(app.threadEmails[index], decided) {
+                        app.threadEmails[index].folderId = destination
+                        app.threadEmails[index].folderName = nil
+                    }
+                } else {
+                    app.selectedEmail = nil
+                    app.threadEmails = []
+                }
+            }
             app.showToast(ScreenerDecision.toastTitle(destinationFolderId: destination), isUndo: true, duration: 0)
         }
         if args.contains("-previewToast") {
@@ -485,7 +602,19 @@ enum PreviewSupport {
         if let service = previewDomainService(args: args) {
             applyPreviewService(service, to: app)
         }
+        matchInboxUnreadToNew(app)
         return app
+    }
+
+    /// The Inbox's unread count is its New conversations (AVE-228): keep the fixture's header
+    /// and New section on one number.
+    @MainActor
+    private static func matchInboxUnreadToNew(_ app: AppModel) {
+        let inboxRows = app.emails.filter { ($0.folderId ?? "inbox") == "inbox" }
+        guard !inboxRows.isEmpty,
+              let index = app.folders.firstIndex(where: { $0.id == "inbox" }) else { return }
+        let newCount = inboxRows.filter(\.isUnread).count
+        app.folders[index] = Folder(id: "inbox", name: app.folders[index].name, unreadCount: newCount)
     }
 
     @MainActor
@@ -1019,6 +1148,13 @@ struct PreviewAdminAuthRoot: View {
                     SuppressionsSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSignature") {
+                // Settings → Outgoing mail → Signature on a web-formatted fixture, no API
+                // (AVE-204; Android: `signature`).
+                NavigationStack {
+                    SignatureSettingsView()
+                }
+                .environment(PreviewSupport.signaturePreviewModel())
             } else if args.contains("-previewTags") {
                 // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
                 // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.

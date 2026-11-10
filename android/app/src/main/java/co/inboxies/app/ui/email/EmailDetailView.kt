@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,6 +54,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.automirrored.outlined.StickyNote2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,6 +71,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -119,8 +123,11 @@ import co.inboxies.app.ui.notes.InlineNotesView
 import co.inboxies.app.ui.notes.NoteEditorSheet
 import co.inboxies.app.ui.notes.NoteEditorTarget
 import co.inboxies.app.ui.notes.StickyNotesLayer
+import co.inboxies.app.ui.compose.rememberReduceMotion
+import co.inboxies.app.models.MailCards
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.models.TrackerNote
 import co.inboxies.app.services.ThreadNoteGroups
 import co.inboxies.app.util.DeliveryStatus
 import co.inboxies.app.utils.DateUtils
@@ -194,6 +201,15 @@ fun EmailDetailView(
 
     val subjectText = current.subject.ifBlank { "(no subject)" }
     val messages = thread.ifEmpty { listOf(current) }
+
+    /** The newest message's code or invite; none while the thread is still loading. */
+    val mailCard = remember(thread, loading) {
+        if (loading && thread.isEmpty()) null else MailCards.card(thread)
+    }
+    /** Keeps the last card on screen while it animates out. */
+    var shownMailCard by remember { mutableStateOf(mailCard) }
+    if (mailCard != null && mailCard != shownMailCard) shownMailCard = mailCard
+    val reduceMotion = rememberReduceMotion()
 
     fun seedExpandedMessages() {
         val latest = messages.lastOrNull { !it.isDraft }
@@ -320,13 +336,6 @@ fun EmailDetailView(
                         },
                     )
                     Spacer(modifier = Modifier.weight(1f))
-                    if (canWriteNotes) {
-                        HomeChromeToolbarButton(
-                            icon = Icons.AutoMirrored.Outlined.StickyNote2,
-                            contentDescription = "Add sticky note",
-                            onClick = { noteEditor = NoteEditorTarget.NewSticky(noteThreadKey) },
-                        )
-                    }
                     HomeChromeToolbarCluster {
                         HomeChromeToolbarClusterItem(
                             icon = Icons.Outlined.KeyboardArrowUp,
@@ -361,66 +370,86 @@ fun EmailDetailView(
             }
         },
         bottomBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding)
-                    .padding(top = 8.dp, bottom = HomeChromeMetrics.chromeBottomPadding),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
-            ) {
-                // Read-only mailbox: no delete / archive / reply, so no cluster at all.
-                if (availability.showsDelete || availability.showsArchive || availability.showsReplyActions) HomeChromeToolbarCluster(
-                    contentPadding = PaddingValues(horizontal = HomeChromeMetrics.toolbarClusterInnerPadding),
-                    itemSpacing = HomeChromeMetrics.toolbarClusterItemSpacing,
+            Column {
+                // Code / Invite card in thumb reach, above the bottom bar (AVE-177).
+                AnimatedVisibility(
+                    visible = mailCard != null,
+                    enter = if (reduceMotion) fadeIn(mailCardSpring()) else slideInVertically(mailCardSpring()) { it } + fadeIn(mailCardSpring()),
+                    exit = if (reduceMotion) fadeOut(mailCardSpring()) else slideOutVertically(mailCardSpring()) { it } + fadeOut(mailCardSpring()),
                 ) {
-                    if (availability.showsDelete) Box {
-                        HomeChromeToolbarClusterItem(
-                            icon = Icons.Outlined.Delete,
-                            contentDescription = "Delete",
-                            onClick = { showDeleteMenu = true },
-                        )
-                        InboxiesDropdownMenu(
-                            expanded = showDeleteMenu,
-                            onDismiss = { showDeleteMenu = false },
-                        ) {
-                            InboxiesMenuItem(
-                                text = "Delete Message",
+                    shownMailCard?.let { card ->
+                        key(card.emailId) { MailCardView(card) }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding)
+                        .padding(top = 8.dp, bottom = HomeChromeMetrics.chromeBottomPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
+                ) {
+                    // Read-only mailbox: no delete / archive / note / reply, so no cluster at all.
+                    // Same order as the iOS bottom bar: Delete, Archive, Add sticky note, Reply.
+                    if (availability.showsDelete || availability.showsArchive || canWriteNotes || availability.showsReplyActions) HomeChromeToolbarCluster(
+                        contentPadding = PaddingValues(horizontal = HomeChromeMetrics.toolbarClusterInnerPadding),
+                        itemSpacing = HomeChromeMetrics.toolbarClusterItemSpacing,
+                    ) {
+                        if (availability.showsDelete) Box {
+                            HomeChromeToolbarClusterItem(
                                 icon = Icons.Outlined.Delete,
-                                destructive = true,
+                                contentDescription = "Delete",
+                                onClick = { showDeleteMenu = true },
+                            )
+                            InboxiesDropdownMenu(
+                                expanded = showDeleteMenu,
+                                onDismiss = { showDeleteMenu = false },
+                            ) {
+                                InboxiesMenuItem(
+                                    text = "Delete Message",
+                                    icon = Icons.Outlined.Delete,
+                                    destructive = true,
+                                    onClick = {
+                                        showDeleteMenu = false
+                                        scope.launch { app.deleteCurrentEmail() }
+                                    },
+                                )
+                            }
+                        }
+                        if (availability.showsArchive) {
+                            HomeChromeToolbarClusterItem(
+                                icon = Icons.Outlined.Archive,
+                                contentDescription = "Archive",
+                                onClick = { scope.launch { app.archiveCurrentEmail() } },
+                            )
+                        }
+                        if (canWriteNotes) {
+                            HomeChromeToolbarClusterItem(
+                                icon = Icons.AutoMirrored.Outlined.StickyNote2,
+                                contentDescription = "Add sticky note",
+                                onClick = { noteEditor = NoteEditorTarget.NewSticky(noteThreadKey) },
+                            )
+                        }
+                        if (availability.showsReplyActions) {
+                            HomeChromeToolbarClusterItem(
+                                icon = Icons.AutoMirrored.Outlined.Reply,
+                                contentDescription = "Reply",
                                 onClick = {
-                                    showDeleteMenu = false
-                                    scope.launch { app.deleteCurrentEmail() }
+                                    scope.launch {
+                                        app.startCompose(ComposeMode.Reply, original = source)
+                                    }
                                 },
                             )
                         }
                     }
-                    if (availability.showsArchive) {
-                        HomeChromeToolbarClusterItem(
-                            icon = Icons.Outlined.Archive,
-                            contentDescription = "Archive",
-                            onClick = { scope.launch { app.archiveCurrentEmail() } },
-                        )
-                    }
-                    if (availability.showsReplyActions) {
-                        HomeChromeToolbarClusterItem(
-                            icon = Icons.AutoMirrored.Outlined.Reply,
-                            contentDescription = "Reply",
-                            onClick = {
-                                scope.launch {
-                                    app.startCompose(ComposeMode.Reply, original = source)
-                                }
-                            },
-                        )
-                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    HomeChromeToolbarButton(
+                        icon = Icons.Outlined.MoreHoriz,
+                        contentDescription = "More",
+                        onClick = { toolbarSheetEmail = current },
+                    )
                 }
-                Spacer(modifier = Modifier.weight(1f))
-                HomeChromeToolbarButton(
-                    icon = Icons.Outlined.MoreHoriz,
-                    contentDescription = "More",
-                    onClick = { toolbarSheetEmail = current },
-                )
             }
         },
     ) { padding ->
@@ -437,7 +466,7 @@ fun EmailDetailView(
                 if (isScreenerEmail && !readOnly) {
                     ScreenerTriageBar(
                         email = current,
-                        onDone = onClose,
+                        onDeclined = onClose,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
@@ -541,6 +570,13 @@ fun EmailDetailView(
                                     exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { 6 },
                                 ) {
                                     Column {
+                                        // The server stripped tracking pixels from this body (AVE-195).
+                                        TrackerNote.text(message.blockedTrackers)?.let { note ->
+                                            TrackerNoteLine(
+                                                text = note,
+                                                modifier = Modifier.padding(top = 10.dp),
+                                            )
+                                        }
                                         EmailBodyView(
                                             email = message,
                                             modifier = Modifier.padding(top = 20.dp),
@@ -756,7 +792,8 @@ private fun TagChip(title: String, destructive: Boolean = false) {
 @Composable
 private fun ScreenerTriageBar(
     email: Email,
-    onDone: () -> Unit,
+    /** Decline closes the reader; Accept keeps it open on the refiled message (AVE-182). */
+    onDeclined: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val app = LocalAppModel.current
@@ -782,15 +819,12 @@ private fun ScreenerTriageBar(
         ScreenerActionButtons(
             email = email,
             onAccept = { dest ->
-                scope.launch {
-                    app.approveScreenerSender(email, dest)
-                    onDone()
-                }
+                scope.launch { app.approveScreenerSender(email, dest) }
             },
             onDecline = {
                 scope.launch {
                     app.rejectScreenerSender(email)
-                    onDone()
+                    onDeclined()
                 }
             },
         )
@@ -849,6 +883,36 @@ private fun SpamReasonLine(text: String, modifier: Modifier = Modifier) {
             fontSize = AppThemeDims.FontSize.meta,
             color = colors.muted,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * "Blocked tracking from Mailchimp": the pixels the server removed from this body
+ * (AVE-195). Same quiet line as [SpamReasonLine]; iOS twin `TrackerNoteLine` in
+ * EmailDetailView.swift, web `TrackerNote` in MessageBody.tsx.
+ */
+@Composable
+private fun TrackerNoteLine(text: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.VisibilityOff,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -1475,3 +1539,6 @@ private fun EmailDetailBouncedDeliveryPreview() {
         }
     }
 }
+
+/** Default chrome spring for the reader card's enter / exit. */
+private fun <T> mailCardSpring() = spring<T>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)

@@ -40,6 +40,9 @@ export const SHORTCUTS = {
 	toggleRead: { keys: "U", label: "Mark read / unread", group: "Mail", match: { key: "u" } },
 	star: { keys: "S", label: "Star / unstar", group: "Mail", match: { key: "s" } },
 	replyLater: { keys: "L", label: "Reply later", group: "Mail", match: { key: "l" } },
+	tags: { keys: "⇧L", label: "Add or remove tags", group: "Mail", match: { key: "l", shift: true } },
+	nextThread: { keys: "J", label: "Next message", group: "Navigation", match: { key: "j" } },
+	prevThread: { keys: "K", label: "Previous message", group: "Navigation", match: { key: "k" } },
 	openInColumn: { keys: "O", label: "Open in new column", group: "Navigation", match: { key: "o" } },
 	popOut: { keys: "P", label: "Pop out message", group: "Navigation", match: { key: "p" } },
 	prevColumn: { keys: "[", label: "Previous column", group: "Navigation", match: { key: "[" } },
@@ -82,12 +85,24 @@ export function isModalOpen(): boolean {
 	);
 }
 
-function matches(spec: KeySpec, e: KeyboardEvent): boolean {
+type KeyLike = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
+
+function matches(spec: KeySpec, e: KeyLike): boolean {
 	const mod = e.metaKey || e.ctrlKey;
 	if (Boolean(spec.mod) !== mod || e.altKey) return false;
 	if (!spec.anyShift && Boolean(spec.shift) !== e.shiftKey) return false;
 	const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 	return key === spec.key;
+}
+
+/** The shortcut a key press means, if any (the first match in `SHORTCUTS`). */
+export function shortcutFor(e: KeyLike): ShortcutId | null {
+	for (const id of Object.keys(SHORTCUTS) as ShortcutId[]) {
+		const def: ShortcutDef = SHORTCUTS[id];
+		const specs = Array.isArray(def.match) ? def.match : [def.match];
+		if (specs.some((spec) => matches(spec, e))) return id;
+	}
+	return null;
 }
 
 /** Returns false when it didn't act, so the next handler for the key gets a turn. */
@@ -105,25 +120,21 @@ let listening = false;
 
 function dispatch(e: KeyboardEvent) {
 	if (e.defaultPrevented || e.isComposing) return;
-	const typing = isTypingTarget(e.target);
-	for (const id of Object.keys(SHORTCUTS) as ShortcutId[]) {
-		const def: ShortcutDef = SHORTCUTS[id];
-		const specs = Array.isArray(def.match) ? def.match : [def.match];
-		if (!specs.some((spec) => matches(spec, e))) continue;
-		if (typing && !def.inFields) return;
-		// A dialog owns the keyboard (its own Esc closes it).
-		if (!def.inFields && isModalOpen()) return;
-		// Highest priority first; among equals, the most recently mounted.
-		const handlers = [...(registry.get(id) ?? [])].sort(
-			(a, b) => b.priority - a.priority || b.order - a.order,
-		);
-		for (const { handler } of handlers) {
-			if (handler.current(e) !== false) {
-				e.preventDefault();
-				return;
-			}
+	const id = shortcutFor(e);
+	if (!id) return;
+	const def: ShortcutDef = SHORTCUTS[id];
+	if (!def.inFields && isTypingTarget(e.target)) return;
+	// A dialog owns the keyboard (its own Esc closes it).
+	if (!def.inFields && isModalOpen()) return;
+	// Highest priority first; among equals, the most recently mounted.
+	const handlers = [...(registry.get(id) ?? [])].sort(
+		(a, b) => b.priority - a.priority || b.order - a.order,
+	);
+	for (const { handler } of handlers) {
+		if (handler.current(e) !== false) {
+			e.preventDefault();
+			return;
 		}
-		return;
 	}
 }
 

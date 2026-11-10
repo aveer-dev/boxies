@@ -6,9 +6,11 @@ import type { ClipName, StillName } from "./media";
 
 export type { ClipName, StillName };
 
-export type Platform = "ios" | "android" | "web" | "chrome" | "mcp";
+export type Platform = "ios" | "android" | "web" | "chrome";
 export type Status = "available" | "next" | "review" | "progress" | "planned" | "exploring" | "partly" | "notyet";
-export type Claim = "roadmap" | "negated";
+// "dev": copy for developers (open source, running your own copy, MCP), the
+// only place check:claims lets that wording and Cloudflare product names appear.
+export type Claim = "roadmap" | "negated" | "dev";
 export type Block = string | { list: string[] } | { table: [string, string][] } | { records: [string, string][] };
 
 export interface Sourced { src: string; ownerConfirm?: string }
@@ -71,9 +73,8 @@ export interface RecordRow extends Sourced { label: string; value: string }
 export interface BreakdownLine extends Sourced { label: string; detail?: string; amount: string }
 export interface PriceBreakdown extends Sourced { lines: BreakdownLine[]; total: BreakdownLine; note: string }
 
-// A Row on the landing's pricing brief, and the self-host row on /pricing.
+// A Row on the landing's pricing brief.
 export interface BriefRow extends Sourced { id: string; title: string; href: string; meta: string; description: string }
-export interface SelfHost extends Sourced { title: string; href: string; meta: string; description: string }
 
 export interface Faq extends Sourced {
 	id: string; group: string; q: string; a: Block[]; claim?: Claim; hidden?: boolean;

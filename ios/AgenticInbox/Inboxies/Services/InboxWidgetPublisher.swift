@@ -30,6 +30,27 @@ enum InboxWidgetPublisher {
     }
     #endif
 
+    /// Background push (AVE-228): the app isn't running, so ask the server for the Inbox's
+    /// New page and write it. Only mailboxes the app already published are refreshed (the
+    /// user is signed in and placed this mailbox's data in the App Group before).
+    static func refreshFromServer(mailboxId: String) async {
+        guard APIClient.shared.authToken != nil,
+              let store = InboxWidgetStore.shared,
+              let previous = store.snapshot(mailboxId: mailboxId) else { return }
+        guard let page = try? await APIClient.shared.listEmails(
+            mailboxId: mailboxId,
+            folder: "inbox",
+            page: 1,
+            section: "new"
+        ) else { return }
+        publish(.make(
+            mailboxId: mailboxId,
+            mailboxAddress: previous.mailboxAddress,
+            newPage: page,
+            replyLaterCount: previous.replyLaterCount
+        ))
+    }
+
     /// Sign-out: the widget goes back to "Open Inboxies".
     static func clear() {
         InboxWidgetStore.shared?.removeAll()
@@ -38,32 +59,57 @@ enum InboxWidgetPublisher {
 }
 
 extension InboxWidgetSnapshot {
-    /// The widget's view of an Inbox: the same New rows and New total the Inbox's New
-    /// section shows (`inboxSections` + `inboxNewPreview`), newest first, up to five.
+    /// The widget's view of an Inbox: the Inbox's New total and its newest New rows, newest
+    /// first, up to five. `newCount` is the server's New total (the Inbox unread count, AVE-228)
+    /// so the widget, the New section and "All new" agree; cached rows only fill the deck.
     static func make(
         mailbox: Mailbox,
         inboxRows: [Email],
-        serverNewCount: Int?,
+        newCount: Int,
         replyLaterCount: Int,
         now: Date = Date()
     ) -> InboxWidgetSnapshot {
         let newRows = EmailListPaging.inboxSections(inboxRows, sectionFloor: nil).new
-        let preview = EmailListPaging.inboxNewPreview(newRows, serverNewCount: serverNewCount, limit: maxThreads)
-        let threads = preview.shown.map { email in
-            Thread(
-                id: email.id,
-                senderName: email.displaySender,
-                subject: email.subject.isEmpty ? "(no subject)" : email.subject,
-                receivedAt: email.parsedDate ?? now
-            )
-        }
+        let preview = EmailListPaging.inboxNewPreview(newRows, serverNewCount: newCount, limit: maxThreads)
         return InboxWidgetSnapshot(
             mailboxId: mailbox.id,
             mailboxAddress: mailbox.email,
             newCount: preview.shown.count + preview.hiddenCount,
             replyLaterCount: max(0, replyLaterCount),
-            threads: threads,
+            threads: preview.shown.map { thread($0, now: now) },
             updatedAt: now
+        )
+    }
+
+    /// From the server's own New page (`section=new`): used when the app is woken in the
+    /// background, where there is no in-memory Inbox to build from.
+    static func make(
+        mailboxId: String,
+        mailboxAddress: String,
+        newPage: EmailListResponse,
+        replyLaterCount: Int,
+        now: Date = Date()
+    ) -> InboxWidgetSnapshot {
+        let total = newPage.newCount ?? newPage.totalCount
+        let rows = newPage.emails.filter(\.isUnread)
+            .sorted { $0.inboxSortKey > $1.inboxSortKey }
+            .prefix(min(maxThreads, total))
+        return InboxWidgetSnapshot(
+            mailboxId: mailboxId,
+            mailboxAddress: mailboxAddress,
+            newCount: max(0, total),
+            replyLaterCount: max(0, replyLaterCount),
+            threads: rows.map { thread($0, now: now) },
+            updatedAt: now
+        )
+    }
+
+    private static func thread(_ email: Email, now: Date) -> Thread {
+        Thread(
+            id: email.id,
+            senderName: email.displaySender,
+            subject: email.subject.isEmpty ? "(no subject)" : email.subject,
+            receivedAt: email.parsedDate ?? now
         )
     }
 }

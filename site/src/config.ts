@@ -1,4 +1,4 @@
-// src: BRIEF (fixed values), PS#6 (support address, X handle), PS#7 (repo), FC#8 (TestFlight, no store listing)
+// src: BRIEF (fixed values), PS#6 (support address, X handle), PS#7 (repo, public again 30 Oct 2026), FC#8 (TestFlight, no store listing)
 export const SITE_URL = "https://inboxies.co";
 export const APP_URL = "https://inboxies.app";             // the web app's origin; never a link target on its own (mail addresses stay @inboxies.email)
 export const APP_HOST = new URL(APP_URL).host;
@@ -14,7 +14,7 @@ export const SUPPORT_EMAIL = "support@inboxies.email";
 export const IOS_BETA_MAILTO =
   `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("iPhone beta invite")}` +
   `&body=${encodeURIComponent("Hi, I'd like to try the Inboxies iPhone beta. The email I use for TestFlight is: ")}`;
-export const GITHUB_URL = "https://github.com/aveer-dev/boxies";
+export const GITHUB_URL = "https://github.com/aveer-dev/boxies"; // developer copy only (data-claim="dev")
 export const X_URL: string | null = "https://x.com/inboxies_app"; // [OWNER: handle live and owned] — null hides every X link
 
 export const flags = {

@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Runtime permission on API 33+; requested once after sign-in and from Settings. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Invite card free/busy + one-tap add (AVE-206). Requested only when the person taps
+         Check availability or Add; without them Add opens the calendar app's insert screen. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <uses-feature

@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.NoteText
 import co.inboxies.app.ui.notes.PrivateNotesChip
 import co.inboxies.app.ui.notes.StickyNoteRowStrip
@@ -177,6 +178,14 @@ fun EmailListView(
     /** One email per waiting sender, newest first; the row stacks their avatars. */
     screeningRoomSenders: List<Email> = emptyList(),
     onOpenScreeningRoom: (() -> Unit)? = null,
+    /**
+     * Reply Later: pile size for the "N waiting · Focus & Reply" strip (AVE-193). The strip
+     * shows when [onStartFocusReply] is set and the pile isn't empty.
+     */
+    focusReplyCount: Int = 0,
+    /** How the last Focus & Reply run ended: "All done" on an empty pile, or the strip's line. */
+    focusReplyResult: FocusReplyResult? = null,
+    onStartFocusReply: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -187,6 +196,14 @@ fun EmailListView(
                     count = screeningRoomCount,
                     senders = screeningRoomSenders,
                     onClick = onOpenScreeningRoom,
+                )
+            }
+        } else if (onStartFocusReply != null && !isSelectMode && emails.isNotEmpty()) {
+            {
+                FocusReplyStrip(
+                    label = focusReplyResult?.summary
+                        ?: FocusReplyCopy.waitingLabel(maxOf(focusReplyCount, emails.size)),
+                    onStart = onStartFocusReply,
                 )
             }
         } else {
@@ -222,6 +239,7 @@ fun EmailListView(
                 filterChipsBar = filterChipsBar,
                 bottomInset = bottomInset,
                 topRow = screeningRoomRow,
+                allDone = focusReplyResult != null && onStartFocusReply != null,
             )
             else -> EmailRows(
                 emails = emails,
@@ -1036,8 +1054,19 @@ private fun EmptyList(
     filterChipsBar: (@Composable () -> Unit)?,
     bottomInset: Dp,
     topRow: (@Composable () -> Unit)? = null,
+    /** Reply Later right after Focus & Reply emptied the pile (AVE-193). */
+    allDone: Boolean = false,
 ) {
     val colors = inboxiesColors()
+    if (allDone) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = bottomInset),
+        ) {
+            item(key = "focus-reply-done") { FocusReplyDone() }
+        }
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = bottomInset),

@@ -54,6 +54,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                     mailboxId: mailboxId,
                     folderId: folderId
                 )
+                // Keep "Today's inbox" on the server's New total while the app sleeps (AVE-228).
+                if folderId == "inbox" {
+                    await InboxWidgetPublisher.refreshFromServer(mailboxId: mailboxId)
+                }
                 completionHandler(emails.isEmpty ? .noData : .newData)
             } catch {
                 completionHandler(.failed)

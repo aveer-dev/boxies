@@ -94,6 +94,7 @@ import co.inboxies.app.models.DomainAvailabilityResponse
 import co.inboxies.app.models.DomainCheckoutResponse
 import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.services.ApiClient
+import co.inboxies.app.services.SetupAlias
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.theme.liquidGlass
@@ -1432,7 +1433,7 @@ fun MailboxOnboardingView(
                                                 if (teamUsers.isNotEmpty()) {
                                                     try {
                                                         val domain = customDomain.trim().lowercase()
-                                                        val payload = teamUsers.map { mapOf("name" to it.name, "email" to it.email, "username" to it.username) }
+                                                        val payload = teamUsers.map { ApiClient.SetupUser(fullName = it.name, contactEmail = it.email, username = it.username) }
                                                         ApiClient.shared.setupDomainUsers(domain, payload)
                                                     } catch (_: Exception) {}
                                                 }
@@ -1537,7 +1538,7 @@ fun MailboxOnboardingView(
                                                 if (domainAliases.isNotEmpty()) {
                                                     try {
                                                         val domain = customDomain.trim().lowercase()
-                                                        val payload = domainAliases.map { mapOf("alias" to it.alias, "target" to it.target) }
+                                                        val payload = domainAliases.map { SetupAlias(aliasLocal = it.alias, targetMailboxId = it.target) }
                                                         ApiClient.shared.setupDomainAliases(domain, payload)
                                                     } catch (_: Exception) {}
                                                 }

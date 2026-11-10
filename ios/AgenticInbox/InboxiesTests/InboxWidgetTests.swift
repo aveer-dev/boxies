@@ -233,7 +233,7 @@ final class InboxWidgetTests: XCTestCase {
         let snapshot = InboxWidgetSnapshot.make(
             mailbox: mailbox,
             inboxRows: rows,
-            serverNewCount: 12,
+            newCount: 12,
             replyLaterCount: 3,
             now: Date(timeIntervalSince1970: 1_800_000_000)
         )
@@ -246,27 +246,55 @@ final class InboxWidgetTests: XCTestCase {
         XCTAssertFalse(snapshot.threads.contains { $0.id == "seen" })
     }
 
-    func testMakeCountsLocalNewWithoutAServerTotal() throws {
-        let rows = try [
-            inboxEmail("n1", date: "2026-10-28T08:00:00Z", unread: true),
-            inboxEmail("s1", date: "2026-10-28T07:00:00Z", unread: false),
-        ]
-        let snapshot = InboxWidgetSnapshot.make(
-            mailbox: Mailbox(id: "m1", email: "you@acme.com", name: "You"),
-            inboxRows: rows,
-            serverNewCount: nil,
-            replyLaterCount: 0
-        )
-        XCTAssertEqual(snapshot.newCount, 1)
-        XCTAssertFalse(snapshot.isInboxZero)
+    func testMakeUsesTheServerTotalNotTheCache() throws {
+        // AVE-228: the cache held 8 New rows (some read elsewhere) while the server said 5.
+        let rows = try (1...8).map { try inboxEmail("n\($0)", date: "2026-10-28T0\($0):00:00Z", unread: true) }
+            + [inboxEmail("s1", date: "2026-10-28T00:30:00Z", unread: false)]
+        let mailbox = Mailbox(id: "m1", email: "you@acme.com", name: "You")
+        let snapshot = InboxWidgetSnapshot.make(mailbox: mailbox, inboxRows: rows, newCount: 5, replyLaterCount: 0)
+        XCTAssertEqual(snapshot.newCount, 5)
+        XCTAssertEqual(snapshot.threads.count, 5)
 
-        let zero = InboxWidgetSnapshot.make(
-            mailbox: Mailbox(id: "m1", email: "you@acme.com", name: "You"),
-            inboxRows: [rows[1]],
-            serverNewCount: 0,
-            replyLaterCount: 0
+        // A capped page (3 cached New rows) still reports the full total.
+        let capped = InboxWidgetSnapshot.make(
+            mailbox: mailbox, inboxRows: Array(rows.suffix(4)), newCount: 5, replyLaterCount: 0
         )
+        XCTAssertEqual(capped.newCount, 5)
+        XCTAssertEqual(capped.threads.count, 3)
+
+        // Fewer New on the server than in the cache: never more cards than the count.
+        let two = InboxWidgetSnapshot.make(mailbox: mailbox, inboxRows: rows, newCount: 2, replyLaterCount: 0)
+        XCTAssertEqual(two.newCount, 2)
+        XCTAssertEqual(two.threads.count, 2)
+
+        let zero = InboxWidgetSnapshot.make(mailbox: mailbox, inboxRows: rows, newCount: 0, replyLaterCount: 0)
         XCTAssertTrue(zero.isInboxZero)
         XCTAssertEqual(zero.threads, [])
+    }
+
+    func testMakeFromTheServerNewPage() throws {
+        let rows = try (1...3).map { try inboxEmail("n\($0)", date: "2026-10-28T0\($0):00:00Z", unread: true) }
+        let page = EmailListResponse(emails: rows, totalCount: 7, newCount: 7, seenCount: 2)
+        let snapshot = InboxWidgetSnapshot.make(
+            mailboxId: "m1", mailboxAddress: "you@acme.com", newPage: page, replyLaterCount: 1
+        )
+        XCTAssertEqual(snapshot.newCount, 7)
+        XCTAssertEqual(snapshot.threads.map(\.id), ["n3", "n2", "n1"])
+        XCTAssertEqual(snapshot.replyLaterCount, 1)
+    }
+
+    func testFolderPrefersUnreadConversations() throws {
+        let threaded = try JSONDecoder().decode(
+            Folder.self,
+            from: Data(#"{"id":"inbox","name":"Inbox","unreadCount":7,"unreadThreadCount":5}"#.utf8)
+        )
+        XCTAssertEqual(threaded.unreadCount, 5, "the header reads conversations, like New")
+        let legacy = try JSONDecoder().decode(
+            Folder.self,
+            from: Data(#"{"id":"inbox","name":"Inbox","unreadCount":7}"#.utf8)
+        )
+        XCTAssertEqual(legacy.unreadCount, 7, "an older Worker still decodes")
+        let roundTrip = try JSONDecoder().decode(Folder.self, from: JSONEncoder().encode(threaded))
+        XCTAssertEqual(roundTrip, threaded)
     }
 }

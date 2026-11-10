@@ -49,6 +49,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
     /** Settings → Outgoing mail → Bounced addresses with fixture rows (iOS `-previewSuppressions`, AVE-157). */
     Suppressions("suppressions", "previewSuppressions"),
+    /** Settings → Outgoing mail → Signature on a web-formatted fixture (iOS `-previewSignature`, AVE-204). */
+    Signature("signature", "previewSignature"),
     /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
     Tags("tags", "previewTags"),
     /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
@@ -82,10 +84,38 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerUndo("screenerUndo", "previewScreenerUndo"),
     /** Same after Accept → Promotions (iOS `… -previewScreenerUndo -previewScreenerAccept`). */
     ScreenerUndoAccept("screenerUndoAccept", "previewScreenerUndoAccept"),
+    /** Reader left open after Accept → Promotions: Screener bar gone, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`, AVE-182). */
+    ScreenerReaderAccept("screenerReaderAccept", "previewScreenerReaderAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
+    /** Focus & Reply on the first thread in the pile: reply open with "Focus & Reply · 1 of N · Skip" (iOS `-previewReplyLater -previewFocusReply`, AVE-193). */
+    FocusReply("focusReply", "previewFocusReply"),
+    /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */
+    FocusReplyDone("focusReplyDone", "previewFocusReplyDone"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),
+    /** Sign-in mail open in the reader with the Code card pinned above the bottom bar (iOS `-previewDetail -previewCode`, AVE-177). */
+    Code("code", "previewCode"),
+    /** Invite with a Meet link: collapsed Invite card, Join + Add to calendar (iOS `-previewDetail -previewInvite`). */
+    InviteCard("inviteCard", "previewInvite"),
+    /** Same invite with the details open (iOS `… -previewInvite -previewInviteExpanded`). */
+    InviteCardExpanded("inviteCardExpanded", "previewInviteExpanded"),
+    /** In-person invite (address only): Directions + Add to calendar (iOS `… -previewInvite -previewInviteAddress`). */
+    InviteCardAddress("inviteCardAddress", "previewInviteAddress"),
+    /** In-person invite with the details open; the address is tappable (iOS `… -previewInviteAddress -previewInviteExpanded`). */
+    InviteCardAddressExpanded("inviteCardAddressExpanded", "previewInviteAddressExpanded"),
+    /** Cancelled invite: struck-through title, "Cancelled", no actions (iOS `… -previewInvite -previewInviteCancelled`). */
+    InviteCardCancelled("inviteCardCancelled", "previewInviteCancelled"),
+    /** AVE-220: a stranger's invite naming someone else as organizer, details open: "From …" + "Claims organizer: …" (iOS `… -previewInvite -previewInviteClaimed -previewInviteExpanded`). */
+    InviteCardClaimed("inviteCardClaimed", "previewInviteClaimed"),
+    /** Invite card with fixture calendars: "You're free" + the calendar picker (iOS `… -previewInvite -previewInviteFreeBusy free`, AVE-206). */
+    InviteCardFree("inviteCardFree", "previewInviteFree"),
+    /** Fixture calendars: "Conflicts with Team sync +1 more" (iOS `… -previewInviteFreeBusy conflict`). */
+    InviteCardConflict("inviteCardConflict", "previewInviteConflict"),
+    /** Added in one tap: "Added" button + pinned "Added to Work · Undo" toast (iOS `… -previewInviteFreeBusy added`). */
+    InviteCardAdded("inviteCardAdded", "previewInviteAdded"),
+    /** Before access: the "Check availability" link; tapping it grants without the system dialog (iOS `… -previewInviteFreeBusy ask`). */
+    InviteCardAsk("inviteCardAsk", "previewInviteAsk"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
     /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */

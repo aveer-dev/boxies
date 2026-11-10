@@ -923,4 +923,51 @@ export const mailboxMigrations: Migration[] = [
             ALTER TABLE emails ADD COLUMN calendar_invite TEXT;
         `),
 	},
+	{
+		// Thread participants joined with U+001F (AVE-224): the conversation
+		// index (42) used to store `GROUP_CONCAT(DISTINCT …)`, always comma
+		// separated, so "Hale, Jordan" read as two people. Rows recompute
+		// with the new separator; this re-marks only the conversations whose
+		// senders have a comma in their name (the only rows that change
+		// meaning). Others keep their comma lists, which clients still split
+		// on commas, until their next recompute.
+		// Additive only. Numbered 47, after 46_mail_cards.
+		name: "47_participants_unit_separator",
+		sql: txn(`
+            INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+            SELECT DISTINCT COALESCE(thread_id, id), folder_id, ${normalizedSubjectSql("subject")}
+              FROM emails
+             WHERE sender_name LIKE '%,%';
+        `),
+	},
+	{
+		// Tags (AVE-240, workers/lib/tags.ts, shared/tags.ts): a layer on top
+		// of folders, so one email can carry many tags while keeping its one
+		// folder_id. `name_key` is the trimmed, lower-cased name and makes
+		// names unique per mailbox regardless of case. Links go with their
+		// email or tag (ON DELETE CASCADE); deleting a tag never touches
+		// emails. Tags are read after the list query, so the conversation
+		// index (42) needs no trigger. Existing custom folders stay folders;
+		// tags start empty.
+		// Additive only: two new tables. Numbered 48, after
+		// 47_participants_unit_separator; the runner tracks by name, so an
+		// open PR that also uses 48_ can land in either order.
+		name: "48_email_tags",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                name_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS email_tags (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, tag_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_email_tags_tag ON email_tags(tag_id, email_id);
+        `),
+	},
 ];

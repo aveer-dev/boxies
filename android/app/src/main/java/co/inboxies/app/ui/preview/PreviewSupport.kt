@@ -5,11 +5,18 @@ import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
+import co.inboxies.app.models.BlockedTrackers
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.EmailInvite
+import co.inboxies.app.models.EmailInviteOrganizer
+import co.inboxies.app.models.EmailOtp
+import co.inboxies.app.ui.email.MailCardDebug
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
+import co.inboxies.app.services.InviteCalendar
 import co.inboxies.app.services.ReauthChallenge
 import co.inboxies.app.services.ReauthMethod
+import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.ReplyLaterReminderPresets
 import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.ToastAction
@@ -115,7 +122,16 @@ object PreviewSupport {
             name = "Alex Rivera",
             settings = MailboxSettings(
                 fromName = "Alex Rivera",
-                signature = SignatureSettings(enabled = true, text = "Alex"),
+                signature = if (mode == PreviewMode.Signature) {
+                    // Formatted on the web: bold name and a link (AVE-204).
+                    SignatureSettings(
+                        enabled = true,
+                        text = "Alex Rivera\nFounder, Rivera Studio (https://rivera.studio)",
+                        html = "<p><strong>Alex Rivera</strong></p><p>Founder, <a href=\"https://rivera.studio\">Rivera Studio</a></p>",
+                    )
+                } else {
+                    SignatureSettings(enabled = true, text = "Alex")
+                },
                 screener = if (mode == PreviewMode.SettingsScreenerOff) ScreenerSettings(enabled = false) else null,
             ),
             readOnly = service?.isEnded,
@@ -154,6 +170,24 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.SCREENER),
                     selectedEmail = screener.firstOrNull(),
                     threadEmails = screener.take(1),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.ScreenerReaderAccept -> {
+                // Accept keeps the reader open (AVE-182): the first sender's mail left
+                // the room and the open message is filed to Promotions.
+                val queue = allEmails.filter { it.folderId == FolderIds.SCREENER }
+                val decided = queue.first()
+                val opened = decided.copy(folderId = "promotions", folderName = null)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = queue.filterNot { it.sender.equals(decided.sender, ignoreCase = true) },
+                    selectedTab = HomeTab.Folder(FolderIds.SCREENER),
+                    selectedEmail = opened,
+                    threadEmails = listOf(opened),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -206,6 +240,54 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.Code,
+            PreviewMode.InviteCard,
+            PreviewMode.InviteCardExpanded,
+            PreviewMode.InviteCardAddress,
+            PreviewMode.InviteCardAddressExpanded,
+            PreviewMode.InviteCardCancelled,
+            PreviewMode.InviteCardClaimed,
+            PreviewMode.InviteCardFree,
+            PreviewMode.InviteCardConflict,
+            PreviewMode.InviteCardAdded,
+            PreviewMode.InviteCardAsk,
+            -> {
+                // AVE-177: reader with the Code card / Invite card pinned at the bottom.
+                val card = if (mode == PreviewMode.Code) {
+                    codeEmail(you)
+                } else {
+                    inviteEmail(
+                        you = you,
+                        cancelled = mode == PreviewMode.InviteCardCancelled,
+                        inPerson = mode == PreviewMode.InviteCardAddress || mode == PreviewMode.InviteCardAddressExpanded,
+                        claimed = mode == PreviewMode.InviteCardClaimed,
+                    )
+                }
+                MailCardDebug.startsExpanded =
+                    mode == PreviewMode.InviteCardExpanded || mode == PreviewMode.InviteCardAddressExpanded ||
+                    mode == PreviewMode.InviteCardClaimed
+                // AVE-206: fixture calendars for free/busy; other card modes keep the real (permissionless) path.
+                InviteCalendar.override = when (mode) {
+                    PreviewMode.InviteCardFree -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Free)
+                    PreviewMode.InviteCardConflict -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Conflict)
+                    PreviewMode.InviteCardAdded -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Added)
+                    PreviewMode.InviteCardAsk -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Ask)
+                    else -> null
+                }
+                DatabaseService.shared.upsertEmails(mailbox.id, listOf(card))
+                val inbox = listOf(card) + allEmails.filter { it.folderId == FolderIds.INBOX }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = card,
+                    threadEmails = listOf(card),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.Notes, PreviewMode.NotesDetail -> {
                 val notes = noteFixtures()
                 val thread = noteThread(you)
@@ -251,8 +333,9 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.ReplyLater -> {
-                val queued = allEmails.filter { it.replyLater }
+            PreviewMode.ReplyLater, PreviewMode.FocusReply, PreviewMode.FocusReplyDone -> {
+                // FocusReplyDone: a Focus & Reply run just emptied the pile (AVE-193).
+                val queued = if (mode == PreviewMode.FocusReplyDone) emptyList() else allEmails.filter { it.replyLater }
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
@@ -351,11 +434,16 @@ object PreviewSupport {
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
         )
-        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept) {
+        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept ||
+            mode == PreviewMode.ScreenerReaderAccept
+        ) {
             // Decision toast with Undo (AVE-159); the decided sender has left the room and its count.
             app.setScreenerQueueForPreview(app.emails.value)
-            val destination = if (mode == PreviewMode.ScreenerUndoAccept) "promotions" else null
+            val destination = if (mode == PreviewMode.ScreenerUndo) null else "promotions"
             app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
+        }
+        if (mode == PreviewMode.FocusReplyDone) {
+            app.applyFocusReplyResultForPreview(FocusReplyResult(replied = 3, skipped = 0))
         }
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
@@ -726,9 +814,86 @@ object PreviewSupport {
     """.trimIndent()
 
     /**
+     * AVE-177: sign-in mail with a one-time code, so the reader pins the Code card above
+     * the bottom bar. iOS twin: `PreviewSupport.codeEmail` (`-previewDetail -previewCode`).
+     */
+    fun codeEmail(you: String = addr("you")): Email = Email(
+        id = "preview-code",
+        folderId = FolderIds.INBOX,
+        subject = "Your Acme sign-in code",
+        sender = "no-reply@acme.example",
+        senderName = "Acme",
+        recipient = you,
+        date = "2026-11-06T14:02:00.000Z",
+        read = false,
+        starred = false,
+        body = "<p>Hi Alex,</p><p>Use this code to finish signing in to Acme:</p>" +
+            "<p style=\"font-size:24px;font-weight:bold;letter-spacing:4px\">482 913</p>" +
+            "<p>It expires in 10 minutes. If you didn’t try to sign in, you can ignore this email.</p>" +
+            "<p>— The Acme team</p>",
+        snippet = "Use this code to finish signing in to Acme: 482 913",
+        authTier = "verified",
+        otp = EmailOtp(code = "482913"),
+    )
+
+    /**
+     * AVE-177: calendar invite with a Meet link and a weekly repeat; [inPerson] drops the
+     * link (address only, Directions), [cancelled] is the cancelled variant, [claimed] comes
+     * from a stranger naming someone else as organizer (AVE-220). iOS twin:
+     * `PreviewSupport.inviteEmail` (`-previewDetail -previewInvite …`).
+     */
+    fun inviteEmail(
+        you: String = addr("you"),
+        cancelled: Boolean,
+        inPerson: Boolean = false,
+        claimed: Boolean = false,
+    ): Email = Email(
+        id = "preview-invite",
+        folderId = FolderIds.INBOX,
+        subject = if (cancelled) "Canceled: Design review" else "Invitation: Design review @ Thu Nov 12",
+        sender = if (claimed) "mallory@stranger.example" else "pat@studio.example",
+        senderName = if (claimed) "Mallory" else "Pat Lee",
+        recipient = you,
+        date = "2026-11-06T13:30:00.000Z",
+        read = false,
+        starred = false,
+        body = if (cancelled) {
+            "<p>This event has been cancelled.</p><p>Design review · Thursdays 10–11am</p>"
+        } else {
+            "<p>Pat Lee has invited you to <b>Design review</b>.</p>" +
+                "<p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" +
+                if (inPerson) "<p>We’ll meet in Room 4B, 200 Market St.</p>"
+                else "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"
+        },
+        snippet = if (cancelled) "This event has been cancelled." else "Pat Lee has invited you to Design review.",
+        hasAttachment = true,
+        authTier = if (claimed) "unverified" else "verified",
+        invite = EmailInvite(
+            method = if (cancelled) "CANCEL" else "REQUEST",
+            cancelled = cancelled,
+            uid = "design-review@studio.example",
+            sequence = if (cancelled) 2 else 0,
+            title = "Design review",
+            start = "2026-11-12T15:00:00.000Z",
+            end = "2026-11-12T16:00:00.000Z",
+            timezone = "America/New_York",
+            location = "Room 4B, 200 Market St",
+            organizer = if (claimed) {
+                EmailInviteOrganizer(email = "ceo@studio.example", name = "CEO")
+            } else {
+                EmailInviteOrganizer(email = "pat@studio.example", name = "Pat Lee")
+            },
+            organizerMatchesSender = !claimed,
+            meetingUrl = if (inPerson) null else "https://meet.google.com/abc-defg-hij",
+            recurrence = "FREQ=WEEKLY;BYDAY=TH",
+        ),
+    )
+
+    /**
      * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
      * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
-     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`).
+     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
+     * "Blocked tracking from Mailchimp" note above the body (AVE-195).
      */
     fun newsletterEmail(you: String = addr("you")): Email = Email(
         id = "preview-newsletter",
@@ -742,6 +907,7 @@ object PreviewSupport {
         starred = false,
         body = NEWSLETTER_HTML,
         snippet = "Good morning. This issue is built like most marketing mail.",
+        blockedTrackers = BlockedTrackers(count = 1, services = listOf("Mailchimp")),
     )
 
     private val NEWSLETTER_HTML = """

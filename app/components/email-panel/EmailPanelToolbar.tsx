@@ -5,6 +5,7 @@
 import { Button } from "@cloudflare/kumo";
 import { useCallback, useRef, useState } from "react";
 import FloatingPanel from "~/components/FloatingPanel";
+import { TagPicker } from "~/components/TagPicker";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import { isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
@@ -27,10 +28,12 @@ import {
 	PencilSimpleIcon,
 	ShieldCheckIcon,
 	StarIcon,
+	TagSimpleIcon,
 	TrashIcon,
 	WarningIcon,
 	XIcon,
 } from "@phosphor-icons/react";
+import type { TagRef } from "shared/tags";
 import type { Folder, Email } from "~/types";
 
 interface EmailPanelToolbarProps {
@@ -64,10 +67,18 @@ interface EmailPanelToolbarProps {
 	onDelete: () => void;
 	/** Pins a new sticky note to the conversation (AVE-60). */
 	onAddStickyNote?: () => void;
+	/** Tags (AVE-241): the conversation's key and tags; absent hides the button. */
+	tagging?: {
+		threadId: string;
+		tags: readonly TagRef[];
+		open: boolean;
+		onOpenChange: (open: boolean) => void;
+	};
 }
 
 export default function EmailPanelToolbar({
 	email,
+	mailboxId,
 	isDraftFolder,
 	isSending,
 	moveToFolders,
@@ -90,6 +101,7 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 	onAddStickyNote,
+	tagging,
 }: EmailPanelToolbarProps) {
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
@@ -184,6 +196,9 @@ export default function EmailPanelToolbar({
 				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
 			)}
 			{!isReadOnly && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
+			{!isReadOnly && tagging && (
+				<TagButton mailboxId={mailboxId} tagging={tagging} />
+			)}
 
 			{spamAction && onSpamAction && !isReadOnly && (
 				<IconButton
@@ -220,6 +235,44 @@ export default function EmailPanelToolbar({
 				/>
 			</div>
 		</div>
+	);
+}
+
+function TagButton({
+	mailboxId,
+	tagging,
+}: {
+	mailboxId?: string;
+	tagging: NonNullable<EmailPanelToolbarProps["tagging"]>;
+}) {
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const { onOpenChange } = tagging;
+	const close = useCallback(() => onOpenChange(false), [onOpenChange]);
+	if (!mailboxId) return null;
+	const tagged = tagging.tags.length > 0;
+	return (
+		<>
+			<IconButton
+				ref={triggerRef}
+				label="Tags"
+				shortcut={keysFor("tags")}
+				icon={TagSimpleIcon}
+				size="md"
+				weight={tagged ? "fill" : "regular"}
+				iconClassName={tagged ? "text-kumo-default" : ""}
+				onClick={() => tagging.onOpenChange(!tagging.open)}
+				aria-haspopup="listbox"
+				aria-expanded={tagging.open}
+			/>
+			<TagPicker
+				mailboxId={mailboxId}
+				threadId={tagging.threadId}
+				applied={tagging.tags}
+				anchorRef={triggerRef}
+				open={tagging.open}
+				onClose={close}
+			/>
+		</>
 	);
 }
 

@@ -6,7 +6,9 @@ import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
 import { Modal, ModalHeader } from "~/components/Modal";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useListFolderId } from "~/hooks/useListFolder";
-import { useMailboxId } from "~/hooks/useCurrentMailbox";
+import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
+import { taggedPath } from "~/hooks/useMailNavigation";
+import { unionTags } from "~/lib/tags";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
@@ -21,6 +23,8 @@ import StickyNotes from "~/components/notes/StickyNotes";
 import { groupThreadNotes, threadKeyFor } from "~/lib/thread-notes";
 import { useThreadNotes } from "~/queries/thread-notes";
 import AISummaryCard from "~/components/email-panel/AISummaryCard";
+import MailCard from "~/components/email-panel/MailCard";
+import { readerCard } from "~/lib/mail-cards";
 import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries";
 import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
@@ -114,6 +118,9 @@ export default function EmailPanel({
 		data?: Mailbox;
 	};
 	const { startCompose, openPopOut } = useUIStore();
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
+	const mailboxRef = useMailboxRef();
+	const [tagPickerOpen, setTagPickerOpen] = useState(false);
 	const closePanel = onClose;
 	const toastManager = useKumoToastManager();
 	const [isSending, setIsSending] = useState(false);
@@ -147,6 +154,9 @@ export default function EmailPanel({
 
 	// Reset expanded state only when the selected email changes, not on every refetch.
 	// Using allMessages as a dependency would reset user expand/collapse state on background refetches.
+	// Tags (AVE-241): a conversation carries the tags of all its messages.
+	const threadTags = useMemo(() => unionTags(allMessages), [allMessages]);
+
 	const currentEmailId = email?.id;
 	useEffect(() => { if (allMessages.length > 1) setExpandedMessages(new Set([allMessages[0].id])); }, [currentEmailId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -165,6 +175,12 @@ export default function EmailPanel({
 		const nonDrafts = allMessages.filter((msg) => !draftMessageIds.has(msg.id));
 		return nonDrafts.length > 0 ? nonDrafts[0] : email;
 	}, [allMessages, draftMessageIds, currentMailbox?.email, email]);
+
+	// Code / Invite card (AVE-178): from the newest message that carries one.
+	const mailCard = useMemo(
+		() => (isDraftFolder ? null : readerCard(allMessages, draftMessageIds)),
+		[allMessages, draftMessageIds, isDraftFolder],
+	);
 
 	// AI summary (AVE-20): only for mail that reached the mailbox and has
 	// enough text. The server re-checks both; this just skips pointless calls.
@@ -228,6 +244,7 @@ export default function EmailPanel({
 	useReaderKey("star");
 	useReaderKey("replyLater");
 	useReaderKey("popOut");
+	useReaderKey("tags");
 
 	const shownSubject = email ? email.subject || "(no subject)" : null;
 	useEffect(() => {
@@ -404,6 +421,8 @@ export default function EmailPanel({
 	const popOut = inPopOut
 		? undefined
 		: () => openPopOut(email.id, rootRef.current?.closest<HTMLElement>("section[data-column-id]")?.dataset.columnId);
+	// Drafts aren't conversations yet; a read-only mailbox only flags mail.
+	const canTag = Boolean(mailboxId) && !isDraftFolder && !isReadOnly;
 	keyActions.current = {
 		...(isDraftFolder ? {} : { reply, replyAll, forward }),
 		popOut,
@@ -412,6 +431,7 @@ export default function EmailPanel({
 		toggleRead,
 		star: toggleStar,
 		replyLater: toggleReplyLater,
+		...(canTag ? { tags: () => setTagPickerOpen(true) } : {}),
 	};
 
 	const hasThread = allMessages.length > 1;
@@ -460,6 +480,11 @@ export default function EmailPanel({
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
 				onAddStickyNote={mailboxId && !isDraftFolder ? () => setCreatingSticky(true) : undefined}
+				tagging={
+					canTag && threadKey
+						? { threadId: threadKey, tags: threadTags, open: tagPickerOpen, onOpenChange: setTagPickerOpen }
+						: undefined
+				}
 			/>
 
 			{isScreenerFolder && mailboxId && email.sender && (
@@ -468,7 +493,7 @@ export default function EmailPanel({
 					emailId={email.id}
 					sender={email.sender}
 					senderName={email.sender_name}
-					onDone={closePanel}
+					onDeclined={closePanel}
 				/>
 			)}
 
@@ -477,6 +502,7 @@ export default function EmailPanel({
 				messageCount={allMessages.length}
 				showThreadCount={hasThread}
 				chips={chips}
+				tags={threadTags.map((tag) => ({ ...tag, href: taggedPath(mailboxRef, tag.id) }))}
 				previousSubject={morphFrom}
 				reveal={!isSwitch}
 			/>
@@ -539,6 +565,8 @@ export default function EmailPanel({
 				/>
 			)}
 			</div>
+
+			{mailCard && <MailCard card={mailCard} className="mx-4 mt-3 mb-3 shrink-0 md:mx-6" />}
 
 			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
 				renderFooter(lastReceivedMessage)}

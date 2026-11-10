@@ -195,6 +195,7 @@ fun HomeShellView(
     val folders by appModel.folders.collectAsState()
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
+    val focusReplyResult by appModel.focusReplyResult.collectAsState()
     val replyLaterDueCount by appModel.replyLaterDueCount.collectAsState()
     val reminderPickerEmail by appModel.reminderPickerEmail.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
@@ -389,6 +390,8 @@ fun HomeShellView(
             val next = folderTabs.indexOf(tab).coerceAtLeast(0)
             tabNavigatingForward = next > current
         }
+        // "All done" belongs to the visit to the pile that earned it (AVE-193).
+        if (tab !is HomeTab.ReplyLater) appModel.clearFocusReplyResult()
         scope.launch { appModel.selectTab(tab) }
     }
 
@@ -970,6 +973,13 @@ fun HomeShellView(
                                 onLoadMore = { appModel.loadMoreEmails() },
                                 onOpen = { email ->
                                     scope.launch { appModel.openEmail(email) }
+                                },
+                                focusReplyCount = replyLaterCount,
+                                focusReplyResult = focusReplyResult,
+                                onStartFocusReply = if (isReadOnly) {
+                                    null
+                                } else {
+                                    { scope.launch { appModel.startFocusReply() } }
                                 },
                             )
                             HomeTab.Chats -> Unit

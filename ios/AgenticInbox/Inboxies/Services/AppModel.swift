@@ -21,7 +21,15 @@ final class AppModel {
             }
         }
     }
-    var folders: [Folder] = []
+    /// Unread counts are conversations (AVE-228); the Inbox's is the New section total.
+    var folders: [Folder] = [] {
+        didSet {
+            if folders != oldValue { scheduleInboxWidgetSnapshot() }
+        }
+    }
+    /// Mailbox whose `folders` came from the server this session (not just the SQLite cache,
+    /// which may still hold message counts from an older build). The widget only trusts those.
+    private var foldersSyncedMailboxId: String?
     var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = [] {
         didSet { scheduleInboxWidgetSnapshot() }
@@ -109,6 +117,15 @@ final class AppModel {
     }
     
     var pendingUndoAction: UndoableAction?
+    /// Focus & Reply run through the Reply Later pile (AVE-193); nil when not focusing.
+    var focusReply: FocusReplyRun?
+    /// How the last run ended; Reply Later shows "All done" from it until you leave the pile.
+    var focusReplyResult: FocusReplyResult?
+    /// Full copies of the next thread in the run, fetched while you write the current reply.
+    @ObservationIgnored private var focusReplyPrefetch: [String: Email] = [:]
+    /// Set while Focus & Reply swaps one reply for the next, so the close in between
+    /// doesn't end the run.
+    @ObservationIgnored private var isAdvancingFocusReply = false
     private var pendingUndoTask: Task<Void, Never>?
     /// Disk copy of a send in its undo window (kill safety). Swappable for tests.
     var pendingSendStore = PendingSendStore.shared
@@ -191,18 +208,61 @@ final class AppModel {
         return EmailListPaging.inboxOrder(rows, sectionFloor: nil)
     }
 
-    /// Optimistic read/unread on the inbox keeps the "Show all N new" count honest until the
-    /// next page-1 sync replaces it.
-    private func adjustInboxNewCount(wasUnread: Bool, isUnread: Bool) {
-        guard wasUnread != isUnread, selectedTab.syncFolderId == "inbox",
-              let count = inboxNewWindow?.count else { return }
-        inboxNewWindow?.count = max(0, count + (isUnread ? 1 : -1))
-    }
-
-    /// Server New total for the inbox on screen; nil before page 1 lands.
+    /// Server New total for the inbox on screen; nil before page 1 lands. It is the Inbox
+    /// folder's unread count (AVE-228), so the header, the New section, "All new" and the
+    /// widget read one number, and archive / delete / read adjust it in one place.
     var inboxNewCount: Int? {
         guard let inboxNewWindow, inboxNewWindow.key == currentListKey else { return nil }
-        return inboxNewWindow.count
+        return folders.first(where: { $0.id == "inbox" })?.unreadCount ?? inboxNewWindow.count
+    }
+
+    /// Inbox page 1 landed: its `newCount` is the Inbox unread total too (same Worker count).
+    private func applyInboxPage(_ page: MailboxSyncService.FolderPage, key: String) {
+        inboxNewWindow = InboxNewWindow(
+            key: key,
+            count: page.newCount,
+            ids: page.emails.filter(\.isUnread).map(\.id)
+        )
+        if let count = page.newCount {
+            setFolderUnread(folderId: "inbox", count: count)
+        }
+    }
+
+    /// Server folder list for `mailboxId` (counts are authoritative from here on).
+    func applyServerFolders(_ fresh: [Folder], mailboxId: String) {
+        guard selectedMailboxId == mailboxId else { return }
+        folders = fresh
+        foldersSyncedMailboxId = mailboxId
+    }
+
+    @ObservationIgnored private var folderCountsTask: Task<Void, Never>?
+
+    /// Live mail / a sync nudge: re-read folder counts shortly. A new message in an unread
+    /// conversation doesn't add an unread conversation, so counting locally would drift.
+    func scheduleFolderCountsRefresh() {
+        guard !isDebugPreview, let mailboxId = selectedMailboxId else { return }
+        folderCountsTask?.cancel()
+        folderCountsTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refreshFolderCounts(mailboxId: mailboxId)
+        }
+    }
+
+    private func refreshFolderCounts(mailboxId: String) async {
+        // Read / move mutations still in the outbox: the server hasn't seen them, so its
+        // counts would undo the optimistic ones. The next refresh settles.
+        guard !db.getPendingMutations().contains(where: { $0.mailboxId == mailboxId }) else { return }
+        guard let fresh = try? await APIClient.shared.listFolders(mailboxId: mailboxId) else { return }
+        db.upsertFolders(mailboxId: mailboxId, folders: fresh)
+        applyServerFolders(fresh, mailboxId: mailboxId)
+    }
+
+    private func setFolderUnread(folderId: String, count: Int) {
+        guard let index = folders.firstIndex(where: { $0.id == folderId }) else { return }
+        let current = folders[index]
+        guard current.unreadCount != count else { return }
+        adjustFolderUnread(folderId: folderId, delta: count - current.unreadCount)
     }
 
     /// The active mailbox's domain service ended: read, flag and export only.
@@ -247,11 +307,22 @@ final class AppModel {
         inboxWidgetTask = nil
         guard publishesInboxWidget, APIClient.shared.authToken != nil, let mailbox = selectedMailbox else { return }
         let inboxKey = EmailListPaging.key(mailboxId: mailbox.id, listId: "inbox")
-        let serverNewCount = inboxNewWindow?.key == inboxKey ? inboxNewWindow?.count : nil
+        // The count is the server's New total (AVE-228), never the cached rows: the cache
+        // holds a capped page plus whatever older pages left behind, so counting it gave
+        // 8 one moment and 4 the next. With no server number yet, keep the last snapshot.
+        let serverNewCount: Int?
+        if foldersSyncedMailboxId == mailbox.id, let inbox = folders.first(where: { $0.id == "inbox" }) {
+            serverNewCount = inbox.unreadCount
+        } else if inboxNewWindow?.key == inboxKey {
+            serverNewCount = inboxNewWindow?.count
+        } else {
+            serverNewCount = nil
+        }
+        guard let serverNewCount else { return }
         InboxWidgetPublisher.publish(.make(
             mailbox: mailbox,
             inboxRows: cachedFolderEmails(mailboxId: mailbox.id, folderId: "inbox"),
-            serverNewCount: serverNewCount,
+            newCount: serverNewCount,
             replyLaterCount: replyLaterCount
         ))
     }
@@ -410,7 +481,7 @@ final class AppModel {
             // Settle counts with the server (the moved mail lands in Inbox).
             if let fresh = try? await syncService.syncMailbox(mailboxId: mailboxId),
                selectedMailboxId == mailboxId {
-                folders = fresh
+                applyServerFolders(fresh, mailboxId: mailboxId)
             }
         }
     }
@@ -529,9 +600,18 @@ final class AppModel {
                 Task { await loadInboxDigest(showLoading: false) }
             }
         }
+        // A new unread conversation counts at once; mail joining one that's already unread
+        // doesn't. The server settles it either way (counts are conversations, AVE-228).
         if email.isUnread {
-            adjustFolderUnread(folderId: email.folderId ?? "inbox", delta: 1)
+            let folderId = email.folderId ?? "inbox"
+            let joinsUnread = email.threadId.map { threadId in
+                emails.contains { $0.id != email.id && $0.threadId == threadId && $0.isUnread }
+            } ?? false
+            if !joinsUnread {
+                adjustFolderUnread(folderId: folderId, delta: 1)
+            }
         }
+        scheduleFolderCountsRefresh()
     }
 
     func refreshMailboxes(showLoading: Bool = true) async {
@@ -700,7 +780,9 @@ final class AppModel {
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
             async let replyLaterTask: Void = refreshReplyLaterCount()
-            folders = try await foldersTask
+            let syncedFolders = try await foldersTask
+            folders = syncedFolders
+            if await syncService.isOnline { foldersSyncedMailboxId = id }
             if let server = try? await conversationsTask {
                 conversations = Self.visibleConversations(server)
                 dropStaleActiveConversation()
@@ -907,11 +989,7 @@ final class AppModel {
             if let page {
                 applyFirstPage(page, resetPaging: resetPaging)
                 if folderId == "inbox" {
-                    inboxNewWindow = InboxNewWindow(
-                        key: key,
-                        count: page.newCount,
-                        ids: page.emails.filter(\.isUnread).map(\.id)
-                    )
+                    applyInboxPage(page, key: key)
                 }
                 emailListError = nil
                 lastSyncedAt = Date()
@@ -1087,6 +1165,9 @@ final class AppModel {
                currentListKey == key {
                 if listPaging?.key != key { listPaging = EmailListPaging(key: key) }
                 applyFirstPage(page, resetPaging: false)
+                if folderId == "inbox" {
+                    applyInboxPage(page, key: key)
+                }
                 emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
                 lastSyncedAt = Date()
             }
@@ -1098,6 +1179,7 @@ final class AppModel {
             }
         }
         await refreshOpenEmailDetailSilently()
+        scheduleFolderCountsRefresh()
     }
 
     /// Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh.
@@ -1231,7 +1313,6 @@ final class AppModel {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
             }
-            adjustInboxNewCount(wasUnread: true, isUnread: false)
             // Keep inbox New→Seen order after optimistic read
             if selectedTab.syncFolderId == "inbox" {
                 emails = Self.orderNewThenSeen(emails)
@@ -1452,6 +1533,7 @@ final class AppModel {
             },
             rollback: { [weak self] in
                 if persists { store.clear(id: record.id) }
+                self?.focusReplySendUndone(session)
                 self?.composeSession = session
                 self?.composeSession?.expand()
             },
@@ -1879,6 +1961,9 @@ final class AppModel {
         threadNotes = []
         threadNotesKey = nil
         composeSession = nil
+        focusReply = nil
+        focusReplyResult = nil
+        focusReplyPrefetch = [:]
         toastDismissTask?.cancel()
         toastDismissTask = nil
         toast = nil
@@ -2191,9 +2276,6 @@ final class AppModel {
             } else {
                 emails[idx].listSection = "new"
             }
-            if let previous {
-                adjustInboxNewCount(wasUnread: previous.isUnread, isUnread: emails[idx].isUnread)
-            }
         }
         if selectedTab == .replyLater && !updated.replyLater {
             emails.removeAll(where: { $0.id == updated.id })
@@ -2201,8 +2283,9 @@ final class AppModel {
         if selectedTab.syncFolderId == "inbox" {
             emails = Self.orderNewThenSeen(emails)
         }
-        if let previous {
-            adjustFolderUnread(for: previous, wasUnread: !previous.read, isUnread: !updated.read)
+        // Conversations, like the counts (AVE-228): the row's unread state, not one message's.
+        if let previous, let row = emails.first(where: { $0.id == updated.id }) {
+            adjustFolderUnread(for: previous, wasUnread: previous.isUnread, isUnread: row.isUnread)
         }
         // Reading, removing or re-arming a due mail settles it (AVE-86).
         let wasDue = previousAnywhere?.isReplyLaterDue ?? false
@@ -2212,6 +2295,7 @@ final class AppModel {
     }
 
     func minimizeCompose() {
+        endFocusReply()
         composeSession?.minimize()
         if let form = composeSession?.form, !form.isEmpty && form.hasUnsavedChanges {
             Task { @MainActor in
@@ -2225,6 +2309,7 @@ final class AppModel {
     }
 
     func closeCompose() {
+        if !isAdvancingFocusReply { endFocusReply() }
         composeSession?.form.cancelAutoSave()
         // Sent or discarded: a restored message's disk record is no longer needed.
         if let restoredId = composeSession?.form.restoredPendingSendId {
@@ -2243,9 +2328,166 @@ final class AppModel {
         if let generation, generation != sessionGeneration { return }
         let reason = session.form.errorMessage ?? session.form.suppressionMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
+        if focusReply != nil, let current = composeSession, !current.form.isDirty {
+            // Focus & Reply moved on: bring the failed reply back in place of the
+            // untouched next one, so it can be fixed and sent again.
+            current.form.cancelAutoSave()
+            focusReplySendUndone(session)
+            composeSession = session
+            session.expand()
+            return
+        }
         guard composeSession == nil else { return }
         composeSession = session
         minimizeCompose()
+    }
+
+    // MARK: - Focus & Reply (AVE-193)
+    // Web twin: `app/routes/reply-later.tsx`. Android twin: `AppModel.startFocusReply`.
+
+    /// Opens the first thread in the Reply Later pile with a reply ready. Sending or
+    /// skipping moves on to the next; the run ends with "All done" on the pile.
+    func startFocusReply() async {
+        guard selectedTab == .replyLater else { return }
+        guard composeSession == nil else {
+            showToast("Send or close the open message first")
+            return
+        }
+        let run = FocusReplyRun(queue: emails)
+        guard let first = run.current else { return }
+        focusReplyResult = nil
+        focusReplyPrefetch = [:]
+        focusReply = run
+        await startCompose(mode: .reply, original: first)
+        // Read-only mailbox or no mailbox: compose didn't open, so there is nothing to focus.
+        guard composeSession != nil, focusReply != nil else {
+            focusReply = nil
+            return
+        }
+        prefetchNextFocusReply()
+    }
+
+    /// Focus & Reply "Send": the usual undoable send, then straight on to the next thread.
+    func sendFocusReply(_ session: ComposeSession) {
+        guard var run = focusReply, let id = session.form.originalEmailId else {
+            scheduleSend(session)
+            return
+        }
+        isAdvancingFocusReply = true
+        scheduleSend(session)
+        isAdvancingFocusReply = false
+        run.markReplied(id)
+        focusReply = run
+        // Replying takes it out of the pile; the server does the same when the send commits.
+        removeFromReplyLaterPile(id)
+        advanceFocusReply()
+    }
+
+    /// Focus & Reply "Skip": leave this thread in the pile and move on. Anything typed
+    /// is kept as a draft.
+    func skipFocusReply() {
+        guard var run = focusReply, let session = composeSession,
+              let id = session.form.originalEmailId else { return }
+        let form = session.form
+        form.commitPendingTokens()
+        if form.isDirty && !form.isEmpty {
+            Task { await form.saveDraft(explicit: false) }
+        }
+        form.cancelAutoSave()
+        run.markSkipped(id)
+        focusReply = run
+        advanceFocusReply()
+    }
+
+    /// Leaving the run (close, minimize, sign-out) without reaching the end.
+    func endFocusReply() {
+        guard focusReply != nil else { return }
+        focusReply = nil
+        focusReplyPrefetch = [:]
+    }
+
+    private func advanceFocusReply() {
+        guard var run = focusReply else { return }
+        // Rows that joined the pile since the start (a later page) join the end of the run.
+        if selectedTab == .replyLater { run.absorb(emails) }
+        focusReply = run
+        guard let next = run.current, let mailbox = selectedMailbox, !mailbox.isReadOnly else {
+            finishFocusReply()
+            return
+        }
+        let original = focusReplyPrefetch.removeValue(forKey: next.id) ?? db.getEmail(id: next.id) ?? next
+        let form = makeComposeForm(mode: .reply, mailbox: mailbox, original: original, draft: nil)
+        let session = ComposeSession(form: form, presentation: .expanded)
+        // Swap in place so the compose sheet stays up between threads.
+        composeSession = session
+        selectedEmail = nil
+        if original.body == nil {
+            enrichFocusReply(session, emailId: next.id, mailboxId: mailbox.id)
+        }
+        prefetchNextFocusReply()
+    }
+
+    private func finishFocusReply() {
+        guard let run = focusReply else { return }
+        focusReply = nil
+        focusReplyPrefetch = [:]
+        focusReplyResult = run.result
+        if composeSession != nil {
+            isAdvancingFocusReply = true
+            closeCompose()
+            isAdvancingFocusReply = false
+        }
+    }
+
+    /// Undo (or a failed send) puts the thread back where it was in the run and the pile.
+    private func focusReplySendUndone(_ session: ComposeSession) {
+        guard let id = session.form.originalEmailId else { return }
+        if var run = focusReply {
+            if let current = composeSession, current !== session { current.form.cancelAutoSave() }
+            run.undoReply(id)
+            focusReply = run
+        } else if focusReplyResult != nil {
+            focusReplyResult = nil
+        } else {
+            return
+        }
+        Task {
+            await loadEmailsForCurrentTab(showLoading: false)
+            await refreshReplyLaterCount()
+        }
+    }
+
+    private func removeFromReplyLaterPile(_ id: String) {
+        let wasDue = emails.first(where: { $0.id == id })?.isReplyLaterDue ?? false
+        if selectedTab == .replyLater {
+            emails.removeAll { $0.id == id }
+        }
+        replyLaterCount = max(0, replyLaterCount - 1)
+        if wasDue { replyLaterDueCount = max(0, replyLaterDueCount - 1) }
+    }
+
+    private func prefetchNextFocusReply() {
+        guard !isDebugPreview, let run = focusReply, let mailboxId = selectedMailboxId,
+              let next = run.remaining.dropFirst().first,
+              focusReplyPrefetch[next.id] == nil else { return }
+        Task { [weak self] in
+            guard let full = try? await APIClient.shared.getEmail(mailboxId: mailboxId, id: next.id) else { return }
+            guard self?.focusReply != nil else { return }
+            self?.focusReplyPrefetch[next.id] = full
+        }
+    }
+
+    /// The next thread opened before its full copy arrived: swap it in if nothing was typed yet.
+    private func enrichFocusReply(_ session: ComposeSession, emailId: String, mailboxId: String) {
+        guard !isDebugPreview else { return }
+        Task { [weak self] in
+            guard let full = try? await APIClient.shared.getEmail(mailboxId: mailboxId, id: emailId),
+                  let self, self.composeSession === session, !session.form.isDirty,
+                  let mailbox = self.selectedMailbox, mailbox.id == mailboxId else { return }
+            session.form.cancelAutoSave()
+            let form = self.makeComposeForm(mode: .reply, mailbox: mailbox, original: full, draft: nil)
+            self.composeSession = ComposeSession(form: form, presentation: .expanded)
+        }
     }
 
     func openChatSession(existingId: String? = nil, resumeActive: Bool = true, forceNew: Bool = false) {
@@ -2619,5 +2861,69 @@ struct LastMailboxStore {
             return remembered
         }
         return available.first
+    }
+}
+
+/// One Focus & Reply pass through the Reply Later pile (AVE-193): the pile as it stood
+/// when you started, minus what you've replied to or skipped. Android twin: `FocusReplyRun`.
+struct FocusReplyRun: Equatable {
+    /// The pile when the run started, in list order.
+    private(set) var queue: [Email]
+    private(set) var repliedIds: Set<String> = []
+    private(set) var skippedIds: Set<String> = []
+
+    init(queue: [Email]) {
+        self.queue = queue.filter(\.replyLater)
+    }
+
+    /// Threads still to do, current first.
+    var remaining: [Email] {
+        queue.filter { !repliedIds.contains($0.id) && !skippedIds.contains($0.id) }
+    }
+
+    /// The thread whose reply is open.
+    var current: Email? { remaining.first }
+    var total: Int { queue.count }
+    var position: Int { min(repliedIds.count + skippedIds.count + 1, max(total, 1)) }
+    /// "2 of 5".
+    var progressLabel: String { "\(position) of \(total)" }
+    var result: FocusReplyResult {
+        FocusReplyResult(replied: repliedIds.count, skipped: skippedIds.count)
+    }
+
+    mutating func markReplied(_ id: String) {
+        skippedIds.remove(id)
+        repliedIds.insert(id)
+    }
+
+    mutating func markSkipped(_ id: String) {
+        guard !repliedIds.contains(id) else { return }
+        skippedIds.insert(id)
+    }
+
+    /// Undo send: the thread is back in the pile and up next.
+    mutating func undoReply(_ id: String) {
+        repliedIds.remove(id)
+    }
+
+    /// Adds threads that joined the pile after the run started to the end.
+    mutating func absorb(_ emails: [Email]) {
+        let known = Set(queue.map(\.id))
+        queue.append(contentsOf: emails.filter { $0.replyLater && !known.contains($0.id) })
+    }
+}
+
+/// How a Focus & Reply run ended.
+struct FocusReplyResult: Equatable {
+    let replied: Int
+    let skipped: Int
+
+    /// Line on the pile after a run that left skipped threads behind.
+    var summary: String {
+        switch skipped {
+        case 0: return "Reached the end"
+        case 1: return "Reached the end · 1 skipped"
+        default: return "Reached the end · \(skipped) skipped"
+        }
     }
 }

@@ -9,32 +9,40 @@ import {
 	AlarmIcon,
 	ClockCounterClockwiseIcon,
 	FileIcon,
+	FolderSimpleIcon,
+	PencilSimpleIcon,
 	MegaphoneIcon,
 	NewspaperIcon,
 	PaperPlaneTiltIcon,
 	PlusIcon,
 	ProhibitIcon,
 	ShieldCheckIcon,
+	TagSimpleIcon,
 	TrashIcon,
 	TrayIcon,
 	WarningIcon,
 } from "@phosphor-icons/react";
-import { type ReactNode, useMemo, useState } from "react";
-import { NavLink, useLocation } from "react-router";
+import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router";
+import { useContextMenu } from "~/components/ContextMenu";
+import { useTagEditor } from "~/components/TagDialogs";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import {
 	FOLDER_DISPLAY_NAMES,
 	Folders,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
-import { folderPath, mailboxPath, tagPath } from "~/hooks/useMailNavigation";
+import { folderPath, mailboxPath, taggedPath, tagPath } from "~/hooks/useMailNavigation";
 import { isScreenerEnabled } from "~/lib/mailbox-settings";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
 import { orderTagIds } from "shared/tag-url";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
+import { useTags } from "~/queries/tags";
+import type { TagRef } from "shared/tags";
 import { IconButton } from "~/components/IconButton";
+import { folderUnread } from "~/types";
 import ColumnPane from "./ColumnPane";
 
 const FOLDER_ICONS: Record<string, ReactNode> = {
@@ -61,6 +69,7 @@ function FolderRow({
 	count,
 	muted = false,
 	attention,
+	onContextMenu,
 }: {
 	to: string;
 	icon: ReactNode;
@@ -69,12 +78,14 @@ function FolderRow({
 	muted?: boolean;
 	/** Reply Later reminders due (AVE-86): attention colour, a soft breathing glow and a "N due" pill. */
 	attention?: number;
+	onContextMenu?: (e: MouseEvent<HTMLAnchorElement>) => void;
 }) {
 	const due = attention != null && attention > 0;
 	return (
 		<NavLink
 			to={to}
 			aria-description={due ? `${attention} due` : undefined}
+			onContextMenu={onContextMenu}
 			className={({ isActive }) =>
 				`group/folder relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-150 ${
 					due
@@ -123,7 +134,11 @@ function SectionLabel({ children, action }: { children: ReactNode; action?: Reac
 	);
 }
 
-/** Column 2 — the open mailbox's folders, workflow piles and tags. */
+/**
+ * Column 2 — the open mailbox's folders, workflow piles, the folders you
+ * create (once shown as "tags": a message is in one) and tags (AVE-241: a
+ * message can carry many).
+ */
 export default function FoldersColumn() {
 	const mailboxId = useMailboxId();
 	const mailboxRef = useMailboxRef();
@@ -133,17 +148,41 @@ export default function FoldersColumn() {
 	const createFolder = useCreateFolder();
 	const toastManager = useKumoToastManager();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
-	const [newTagName, setNewTagName] = useState("");
+	const [newFolderName, setNewFolderName] = useState("");
+	const { data: labelTags = [] } = useTags(mailboxId);
+	const navigate = useNavigate();
+	const openMenu = useContextMenu((s) => s.open);
 	const { pathname } = useLocation();
+	const tagEditor = useTagEditor(mailboxId, {
+		// Deleting the tag on screen leaves its (now empty) view.
+		onDeleted: (tag) => {
+			if (pathname.startsWith(taggedPath(mailboxRef, tag.id))) navigate(folderPath(mailboxRef, Folders.INBOX));
+		},
+	});
+	const openTagMenu = (tag: TagRef) => (e: MouseEvent<HTMLAnchorElement>) => {
+		if (mailbox?.readOnly) return;
+		e.preventDefault();
+		openMenu({
+			x: e.clientX,
+			y: e.clientY,
+			label: `Actions for tag ${tag.name}`,
+			returnFocus: e.currentTarget,
+			entries: [
+				{ type: "item", label: "Rename…", icon: PencilSimpleIcon, onSelect: () => tagEditor.startRename(tag) },
+				{ type: "item", label: "Delete tag", icon: TrashIcon, danger: true, onSelect: () => tagEditor.startDelete(tag) },
+			],
+		});
+	};
 	const { railRef, markRef } = useSlidingHighlight<HTMLDivElement>(pathname);
 
 	const unreadById = useMemo(
-		() => Object.fromEntries(folders.map((f) => [f.id, f.unreadCount])),
+		() => Object.fromEntries(folders.map((f) => [f.id, folderUnread(f)])),
 		[folders],
 	);
-	// Custom folders render as tags (a message carries one: the folder it's in).
-	// Each links by its index, never its name (AVE-126, shared/tag-url.ts).
-	const tags = useMemo(() => {
+	// Custom folders: each links by its index, never its name (AVE-126,
+	// shared/tag-url.ts; the route is still `/tags/<index>` from when the web
+	// app called them tags).
+	const customFolders = useMemo(() => {
 		const refs = new Map(orderTagIds(folders.map((f) => f.id)).map((id, i) => [id, String(i)]));
 		return folders.flatMap((f) => {
 			const ref = refs.get(f.id);
@@ -165,21 +204,21 @@ export default function FoldersColumn() {
 
 	const displayName = mailboxDisplayName(mailbox, mailboxId);
 
-	const handleCreateTag = (e: React.FormEvent) => {
+	const handleCreateFolder = (e: React.FormEvent) => {
 		e.preventDefault();
-		const name = newTagName.trim().replace(/^#/, "");
+		const name = newFolderName.trim().replace(/^#/, "");
 		if (!name || !mailboxId) return;
 		createFolder.mutate(
 			{ mailboxId, name },
 			{
 				onSuccess: () => {
-					setNewTagName("");
+					setNewFolderName("");
 					setIsCreateOpen(false);
 				},
 				// Keep the dialog open with the name so the user can fix it.
 				onError: (err) =>
 					toastManager.add({
-						title: err instanceof Error ? err.message : "Failed to create tag",
+						title: err instanceof Error ? err.message : "Failed to create folder",
 						variant: "error",
 					}),
 			},
@@ -217,7 +256,7 @@ export default function FoldersColumn() {
 					action={
 						mailbox?.readOnly ? undefined : (
 							<IconButton
-								label="Create tag"
+								label="Create folder"
 								icon={PlusIcon}
 								onClick={() => setIsCreateOpen(true)}
 								className="-my-1.5 -mr-1"
@@ -225,39 +264,74 @@ export default function FoldersColumn() {
 						)
 					}
 				>
-					{displayName} tags
+					Folders
 				</SectionLabel>
-				<nav aria-label="Tags" className="space-y-0.5">
-					{tags.length === 0 ? (
+				<nav aria-label="Your folders" className="space-y-0.5">
+					{customFolders.length === 0 ? (
 						<p className="px-2.5 py-1 text-xs text-kumo-subtle">
-							No tags yet. Tags are folders you create.
+							No folders yet. A message lives in one folder.
 						</p>
 					) : (
-						tags.map((tag) => (
+						customFolders.map((folder) => (
+							<FolderRow
+								key={folder.id}
+								to={tagPath(mailboxRef, folder.ref)}
+								icon={<FolderSimpleIcon size={16} />}
+								label={folder.name.replace(/^#/, "")}
+								count={folderUnread(folder)}
+								muted={!folderUnread(folder)}
+							/>
+						))
+					)}
+				</nav>
+
+				<SectionLabel
+					action={
+						mailbox?.readOnly ? undefined : (
+							<IconButton
+								label="Create tag"
+								icon={PlusIcon}
+								onClick={tagEditor.startCreate}
+								className="-my-1.5 -mr-1"
+							/>
+						)
+					}
+				>
+					Tags
+				</SectionLabel>
+				<nav aria-label="Tags" className="space-y-0.5">
+					{labelTags.length === 0 ? (
+						<p className="px-2.5 py-1 text-xs text-kumo-subtle">
+							No tags yet. A message can have several.
+						</p>
+					) : (
+						labelTags.map((tag) => (
 							<FolderRow
 								key={tag.id}
-								to={tagPath(mailboxRef, tag.ref)}
-								icon={<span className="text-xs">#</span>}
-								label={tag.name.replace(/^#/, "")}
+								to={taggedPath(mailboxRef, tag.id)}
+								icon={<TagSimpleIcon size={16} />}
+								label={tag.name}
 								count={tag.unreadCount}
 								muted={!tag.unreadCount}
+								onContextMenu={openTagMenu(tag)}
 							/>
 						))
 					)}
 				</nav>
 			</div>
+			{tagEditor.dialogs}
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
 				<Modal size="sm">
 					<ModalHeader
-						title="Create tag"
+						title="Create folder"
 					/>
-					<form onSubmit={handleCreateTag} className="space-y-4">
+					<form onSubmit={handleCreateFolder} className="space-y-4">
 						<Input
-							label="Tag name"
+							label="Folder name"
 							placeholder="e.g. Engineering-PRs"
-							value={newTagName}
-							onChange={(e) => setNewTagName(e.target.value)}
+							value={newFolderName}
+							onChange={(e) => setNewFolderName(e.target.value)}
 							required
 						/>
 						<div className="flex justify-end gap-2">
@@ -268,7 +342,7 @@ export default function FoldersColumn() {
 									</Button>
 								)}
 							/>
-							<Button type="submit" variant="primary" disabled={!newTagName.trim()}>
+							<Button type="submit" variant="primary" disabled={!newFolderName.trim()}>
 								Create
 							</Button>
 						</div>

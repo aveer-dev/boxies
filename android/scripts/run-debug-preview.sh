@@ -17,12 +17,24 @@
 #   ./scripts/run-debug-preview.sh screenerList
 #   ./scripts/run-debug-preview.sh screenerUndo        # Screening room after Decline + Undo toast (AVE-159)
 #   ./scripts/run-debug-preview.sh screenerUndoAccept  # … after Accept → Promotions
+#   ./scripts/run-debug-preview.sh screenerReaderAccept # Reader kept open after Accept (AVE-182)
 #   ./scripts/run-debug-preview.sh domainDns
 #   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
+#   ./scripts/run-debug-preview.sh code                # reader with the Code card (AVE-177)
+#   ./scripts/run-debug-preview.sh inviteCard          # reader with the Invite card: Meet link, Join
+#   ./scripts/run-debug-preview.sh inviteCardExpanded  # … details open
+#   ./scripts/run-debug-preview.sh inviteCardAddress   # in-person invite: Directions
+#   ./scripts/run-debug-preview.sh inviteCardAddressExpanded  # … details open, address tappable
+#   ./scripts/run-debug-preview.sh inviteCardCancelled # cancelled invite, no actions
+#   ./scripts/run-debug-preview.sh inviteCardClaimed   # stranger's invite: From + "Claims organizer" (AVE-220)
+#   ./scripts/run-debug-preview.sh inviteCardFree      # fixture calendars: "You're free" + calendar picker (AVE-206)
+#   ./scripts/run-debug-preview.sh inviteCardConflict  # … "Conflicts with Team sync +1 more"
+#   ./scripts/run-debug-preview.sh inviteCardAdded     # … added in one tap, "Added to Work · Undo" toast
+#   ./scripts/run-debug-preview.sh inviteCardAsk       # … before access: "Check availability"
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
 #   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
@@ -43,6 +55,7 @@
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh signature           # Settings → Outgoing mail → Signature (AVE-204)
 #   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
 #   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
 #   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
@@ -92,6 +105,7 @@ case "$mode" in
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  signature|Signature|previewSignature) extra=previewSignature; label=signature ;;
   tags|Tags|previewTags) extra=previewTags; label=tags ;;
   tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
   tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
@@ -110,12 +124,26 @@ case "$mode" in
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
   screenerUndo|ScreenerUndo|previewScreenerUndo) extra=previewScreenerUndo; label=screenerUndo ;;
   screenerUndoAccept|ScreenerUndoAccept|previewScreenerUndoAccept) extra=previewScreenerUndoAccept; label=screenerUndoAccept ;;
+  screenerReaderAccept|ScreenerReaderAccept|previewScreenerReaderAccept) extra=previewScreenerReaderAccept; label=screenerReaderAccept ;;
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
+  focusReply|FocusReply|focus-reply|previewFocusReply) extra=previewFocusReply; label=focusReply ;;
+  focusReplyDone|FocusReplyDone|previewFocusReplyDone) extra=previewFocusReplyDone; label=focusReplyDone ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
+  code|Code|previewCode) extra=previewCode; label=code ;;
+  inviteCard|InviteCard|previewInvite) extra=previewInvite; label=inviteCard ;;
+  inviteCardExpanded|InviteCardExpanded|previewInviteExpanded) extra=previewInviteExpanded; label=inviteCardExpanded ;;
+  inviteCardAddress|InviteCardAddress|previewInviteAddress) extra=previewInviteAddress; label=inviteCardAddress ;;
+  inviteCardAddressExpanded|InviteCardAddressExpanded|previewInviteAddressExpanded) extra=previewInviteAddressExpanded; label=inviteCardAddressExpanded ;;
+  inviteCardCancelled|InviteCardCancelled|previewInviteCancelled) extra=previewInviteCancelled; label=inviteCardCancelled ;;
+  inviteCardClaimed|InviteCardClaimed|previewInviteClaimed) extra=previewInviteClaimed; label=inviteCardClaimed ;;
+  inviteCardFree|InviteCardFree|previewInviteFree) extra=previewInviteFree; label=inviteCardFree ;;
+  inviteCardConflict|InviteCardConflict|previewInviteConflict) extra=previewInviteConflict; label=inviteCardConflict ;;
+  inviteCardAdded|InviteCardAdded|previewInviteAdded) extra=previewInviteAdded; label=inviteCardAdded ;;
+  inviteCardAsk|InviteCardAsk|previewInviteAsk) extra=previewInviteAsk; label=inviteCardAsk ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
   forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
@@ -134,12 +162,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,64p' "$0"
+    sed -n '2,72p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | replyLater | spam | newsletter | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac
