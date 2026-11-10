@@ -35,7 +35,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "sender-destinations", group: "triage", name: "Sender destinations", status: "available", platforms: ["ios", "android", "web"], note: "Settings → Senders.", src: "FSW#sender-destinations" },
 	{ id: "reply-later", group: "triage", name: "Reply Later", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Leaves the pile when you reply. Add a reminder to bring a thread back at a set time.", landing: true, src: "RM#3; AVE-86 409d1b4" },
 	{ id: "private-notes", group: "triage", name: "Private notes", status: "available", platforms: ["ios", "android", "web"], note: "Sticky notes on a thread, or a note on one message. Only you see them.", src: "AVE-59..62 (ec2c8ca, 49f8ef3, bfcd7a9, 92c381e); shared/thread-notes.ts" },
-	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["web"], note: "Web only.", landing: true, src: "RM#3 (web only)" },
+	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Your Reply Later pile one thread at a time, with the reply open.", landing: true, src: "RM#3; AVE-193 (iOS, Android)" },
 	{ id: "filters", group: "triage", name: "Filters", status: "available", platforms: ["ios", "android", "web"], note: "Up to 50 per mailbox.", src: "FSW#filters" },
 	{ id: "unsubscribe", group: "triage", name: "Unsubscribe from lists", status: "available", platforms: ["ios", "android", "web"], note: "When you report list mail as spam, if the list allows one-click unsubscribe.", src: "AVE-99 78814bc: workers/lib/list-unsubscribe.ts (https List-Unsubscribe + One-Click only); EmailPanel.tsx, EmailActionsSheet.swift/.kt (Report spam confirmation)" },
 	{ id: "swipes", group: "triage", name: "Swipe actions", status: "available", platforms: ["ios", "android"], note: "Up to three per edge.", src: "FC#4.4" },
@@ -173,8 +173,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 
 /**
  * Every visible row, in group order (48 with the default flags). A shipped
- * row whose platforms are all hidden (the web app and Focus & Reply while the
- * web app isn't public) drops out rather than show no platform.
+ * row whose platforms are all hidden (the web app while it isn't public) drops out rather than show no platform.
  */
 export const rows: RoadmapRow[] = all
 	.filter((r) => !r.hidden && (r.status !== "available" || onSomePublicPlatform(r.platforms)))

@@ -524,6 +524,12 @@ enum PreviewSupport {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)
             app.replyLaterCount = app.emails.count
+            if args.contains("-previewFocusReplyDone") {
+                // AVE-193: a Focus & Reply run just emptied the pile.
+                app.emails = []
+                app.replyLaterCount = 0
+                app.focusReplyResult = FocusReplyResult(replied: 3, skipped: 0)
+            }
         } else if args.contains("-previewDetail"),
                   args.contains("-previewCode") || args.contains("-previewInvite") {
             // AVE-176: reader with the Code card / Invite card pinned at the bottom.

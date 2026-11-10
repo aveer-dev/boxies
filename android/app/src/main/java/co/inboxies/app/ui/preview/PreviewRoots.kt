@@ -160,6 +160,10 @@ object PreviewHarness {
             PreviewMode.ScreenerUndoAccept,
             PreviewMode.ScreenerReaderAccept,
             PreviewMode.ReplyLater,
+        PreviewMode.FocusReply,
+        PreviewMode.FocusReplyDone,
+            PreviewMode.FocusReply,
+            PreviewMode.FocusReplyDone,
             PreviewMode.Spam,
             PreviewMode.Newsletter,
             PreviewMode.Code,
@@ -315,6 +319,8 @@ fun PreviewRoot(
         PreviewMode.ScreenerUndoAccept,
         PreviewMode.ScreenerReaderAccept,
         PreviewMode.ReplyLater,
+        PreviewMode.FocusReply,
+        PreviewMode.FocusReplyDone,
         PreviewMode.Spam,
         PreviewMode.Newsletter,
         PreviewMode.Code,
@@ -339,6 +345,12 @@ fun PreviewRoot(
                 LaunchedEffect(Unit) {
                     delay(400)
                     appModel.startCompose(ComposeMode.Reply, original = PreviewSupport.promoEmail())
+                }
+            }
+            if (mode == PreviewMode.FocusReply) {
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    appModel.startFocusReply()
                 }
             }
             if (mode == PreviewMode.ForwardAttachments) {

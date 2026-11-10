@@ -265,6 +265,17 @@ class AppModel {
     private val _composeSession = MutableStateFlow<ComposeSession?>(null)
     val composeSession: StateFlow<ComposeSession?> = _composeSession.asStateFlow()
 
+    /** Focus & Reply run through the Reply Later pile (AVE-193); null when not focusing. */
+    private val _focusReply = MutableStateFlow<FocusReplyRun?>(null)
+    val focusReply: StateFlow<FocusReplyRun?> = _focusReply.asStateFlow()
+
+    /** How the last run ended; Reply Later shows "All done" from it until you leave the pile. */
+    private val _focusReplyResult = MutableStateFlow<FocusReplyResult?>(null)
+    val focusReplyResult: StateFlow<FocusReplyResult?> = _focusReplyResult.asStateFlow()
+
+    /** Full copies of the next thread in the run, fetched while you write the current reply. */
+    private val focusReplyPrefetch = mutableMapOf<String, Email>()
+
     private val _toast = MutableStateFlow<AppToast?>(null)
     val toast: StateFlow<AppToast?> = _toast.asStateFlow()
 
@@ -1641,11 +1652,23 @@ class AppModel {
         }
         // Switched mailboxes while the original / draft loaded: don't open a stale compose.
         if (!isSelected(mailboxId)) return
+        val form = newComposeForm(mode, mailbox, enrichedOriginal ?: original, enrichedDraft ?: draft, initialTo)
+        _composeSession.value = ComposeSession(form, ComposePresentation.Expanded)
+        _selectedEmail.value = null
+    }
+
+    private fun newComposeForm(
+        mode: ComposeMode,
+        mailbox: Mailbox,
+        original: Email?,
+        draft: Email?,
+        initialTo: List<MailAddress> = emptyList(),
+    ): ComposeFormModel {
         val form = ComposeFormModel(
             mode = mode,
             mailbox = mailbox,
-            original = enrichedOriginal ?: original,
-            draft = enrichedDraft ?: draft,
+            original = original,
+            draft = draft,
             initialTo = initialTo,
         )
         form.onDraftSaved = { id, threadId, originalId, subject, body, recipient ->
@@ -1654,8 +1677,7 @@ class AppModel {
         form.onDraftDeleted = { id, threadId, originalId ->
             markThreadHasDraft(id, threadId, originalId, null, null, null, hasDraft = false)
         }
-        _composeSession.value = ComposeSession(form, ComposePresentation.Expanded)
-        _selectedEmail.value = null
+        return form
     }
 
     fun closeEmail() {
@@ -2073,6 +2095,9 @@ class AppModel {
         _threadNotesKey.value = null
         previewThreadNotes.clear()
         _composeSession.value = null
+        _focusReply.value = null
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
         _isMailboxLoading.value = true
@@ -2143,6 +2168,9 @@ class AppModel {
         _isAdmin.value = isAdmin
         _inboxDigest.value = null
         _composeSession.value = null
+        _focusReply.value = null
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
         _pendingInviteToken.value = null
@@ -2270,7 +2298,8 @@ class AppModel {
             }.onSuccess {
                 form.deleteSavedDraft()
                 showToast("Sent")
-                closeCompose()
+                // Focus & Reply (AVE-193): the next thread's reply takes this one's place.
+                if (!focusReplySent(session)) closeCompose()
                 refreshCurrentTabSilently()
             }.onFailure {
                 // Server errors (e.g. 409 `alias_inactive` for a paused private email) carry a
@@ -2965,6 +2994,7 @@ class AppModel {
     }
 
     fun minimizeCompose() {
+        endFocusReply()
         val session = _composeSession.value ?: return
         session.form.commitPendingTokens()
         _composeSession.value = ComposeSession(session.form, ComposePresentation.Minimized)
@@ -3027,8 +3057,147 @@ class AppModel {
     }
 
     fun closeCompose() {
+        endFocusReply()
         _composeSession.value?.form?.cancelAutoSave()
         _composeSession.value = null
+    }
+
+    // Focus & Reply (AVE-193). Web twin: `app/routes/reply-later.tsx`; iOS twin:
+    // `AppModel.startFocusReply`.
+
+    /**
+     * Opens the first thread in the Reply Later pile with a reply ready. Sending or
+     * skipping moves on to the next; the run ends with "All done" on the pile.
+     */
+    suspend fun startFocusReply() {
+        if (_selectedTab.value !is HomeTab.ReplyLater) return
+        if (_composeSession.value != null) {
+            showToast("Send or close the open message first")
+            return
+        }
+        val run = FocusReplyRun.start(_emails.value)
+        val first = run.current ?: return
+        _focusReplyResult.value = null
+        focusReplyPrefetch.clear()
+        _focusReply.value = run
+        startCompose(ComposeMode.Reply, original = first)
+        // Read-only mailbox or switched away: compose didn't open, so there is nothing to focus.
+        if (_composeSession.value == null || _focusReply.value == null) {
+            _focusReply.value = null
+            return
+        }
+        prefetchNextFocusReply()
+    }
+
+    /**
+     * Focus & Reply "Skip": leave this thread in the pile and move on. Anything typed
+     * is kept as a draft. The sheet persists its fields to the form first.
+     */
+    fun skipFocusReply() {
+        val run = _focusReply.value ?: return
+        val session = _composeSession.value ?: return
+        val id = session.form.originalEmailId ?: return
+        val form = session.form
+        form.commitPendingTokens()
+        form.cancelAutoSave()
+        if (form.hasTypedReply) {
+            scope.launch { form.saveDraft(explicit = false) }
+        }
+        _focusReply.value = run.markSkipped(id)
+        advanceFocusReply()
+    }
+
+    /** Leaving the run (close, minimize, sign-out) without reaching the end. */
+    fun endFocusReply() {
+        if (_focusReply.value == null) return
+        _focusReply.value = null
+        focusReplyPrefetch.clear()
+    }
+
+    /** DEBUG preview: the pile right after a run emptied it. */
+    fun applyFocusReplyResultForPreview(result: FocusReplyResult) {
+        _focusReplyResult.value = result
+    }
+
+    /** "All done" belongs to the visit to the pile that earned it. */
+    fun clearFocusReplyResult() {
+        _focusReplyResult.value = null
+    }
+
+    /** After a successful send: true when Focus & Reply took over the open compose. */
+    private fun focusReplySent(session: ComposeSession): Boolean {
+        val run = _focusReply.value ?: return false
+        if (_composeSession.value !== session) return false
+        val id = session.form.originalEmailId ?: return false
+        _focusReply.value = run.markReplied(id)
+        // The server took it out of the pile with the reply; mirror that before the refresh.
+        removeFromReplyLaterPile(id)
+        advanceFocusReply()
+        return true
+    }
+
+    private fun advanceFocusReply() {
+        // Rows that joined the pile since the start (a later page) join the end of the run.
+        val run = _focusReply.value?.let {
+            if (_selectedTab.value is HomeTab.ReplyLater) it.absorb(_emails.value) else it
+        } ?: return
+        _focusReply.value = run
+        val next = run.current
+        val mailbox = selectedMailbox
+        if (next == null || mailbox == null || mailbox.isReadOnly) {
+            finishFocusReply()
+            return
+        }
+        val original = focusReplyPrefetch.remove(next.id) ?: db.getEmail(next.id) ?: next
+        _composeSession.value?.form?.cancelAutoSave()
+        val session = ComposeSession(newComposeForm(ComposeMode.Reply, mailbox, original, null), ComposePresentation.Expanded)
+        // Swap in place so compose stays up between threads.
+        _composeSession.value = session
+        _selectedEmail.value = null
+        if (original.body == null) enrichFocusReply(session, next.id, mailbox.id)
+        prefetchNextFocusReply()
+    }
+
+    private fun finishFocusReply() {
+        val run = _focusReply.value ?: return
+        _focusReply.value = null
+        focusReplyPrefetch.clear()
+        _focusReplyResult.value = run.result
+        _composeSession.value?.form?.cancelAutoSave()
+        _composeSession.value = null
+    }
+
+    private fun removeFromReplyLaterPile(id: String) {
+        val wasDue = _emails.value.firstOrNull { it.id == id }?.isReplyLaterDue == true
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            _emails.update { list -> list.filterNot { it.id == id } }
+        }
+        _replyLaterCount.update { (it - 1).coerceAtLeast(0) }
+        if (wasDue) _replyLaterDueCount.update { (it - 1).coerceAtLeast(0) }
+    }
+
+    private fun prefetchNextFocusReply() {
+        if (isDebugPreview) return
+        val run = _focusReply.value ?: return
+        val mailboxId = _selectedMailboxId.value ?: return
+        val next = run.remaining.drop(1).firstOrNull() ?: return
+        if (focusReplyPrefetch.containsKey(next.id)) return
+        scope.launch {
+            val full = runCatching { ApiClient.shared.getEmail(mailboxId, next.id) }.getOrNull() ?: return@launch
+            if (_focusReply.value != null) focusReplyPrefetch[next.id] = full
+        }
+    }
+
+    /** The next thread opened before its full copy arrived: swap it in if nothing was typed yet. */
+    private fun enrichFocusReply(session: ComposeSession, emailId: String, mailboxId: String) {
+        if (isDebugPreview) return
+        scope.launch {
+            val full = runCatching { ApiClient.shared.getEmail(mailboxId, emailId) }.getOrNull() ?: return@launch
+            val mailbox = selectedMailbox ?: return@launch
+            if (_composeSession.value !== session || session.form.hasTypedReply || mailbox.id != mailboxId) return@launch
+            session.form.cancelAutoSave()
+            _composeSession.value = ComposeSession(newComposeForm(ComposeMode.Reply, mailbox, full, null), ComposePresentation.Expanded)
+        }
     }
 
     fun openChatSession(existingId: String? = null, resumeActive: Boolean = true, forceNew: Boolean = false) {

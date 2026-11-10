@@ -16,7 +16,7 @@ import type { ParityRow } from "./types";
 const GMAIL = "RM#2; WEB#3 (Gmail names)";
 const HEY = "RM#3; WEB#2.1 (HEY names)";
 
-// Web-only rows (Focus & Reply) drop out while the web app isn't public.
+// Web-only rows drop out while the web app isn't public (none right now).
 type Row = ParityRow & { webOnly?: boolean };
 const shown = (rows: Row[]): ParityRow[] => rows.filter((r) => !r.webOnly || flags.webAppPublic).map(({ webOnly: _, ...r }) => r);
 
@@ -35,7 +35,7 @@ export const hey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "Reply Later", ours: "Reply Later", status: "available", note: "Leaves the pile when you reply.", src: HEY },
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", src: HEY },
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", src: HEY },
-	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "partly", note: "Web only.", webOnly: true, src: HEY },
+	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "available", note: "One thread at a time, with the reply open.", src: `${HEY}; AVE-193 (iOS, Android)` },
 	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later pile", status: "partly", note: "One pile so far.", src: HEY },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", note: "Next to Reply Later.", src: HEY },
@@ -62,7 +62,7 @@ export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Screener", ours: "Screener", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "The Imbox", ours: "Inbox, New and Seen", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Reply Later", ours: "Reply Later", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
-	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "partly", note: "Web only.", landing: true, webOnly: true, src: "RM#3; WEB#2.1 (HEY names)" },
+	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names); AVE-193 (iOS, Android)" },
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },

@@ -117,6 +117,15 @@ final class AppModel {
     }
     
     var pendingUndoAction: UndoableAction?
+    /// Focus & Reply run through the Reply Later pile (AVE-193); nil when not focusing.
+    var focusReply: FocusReplyRun?
+    /// How the last run ended; Reply Later shows "All done" from it until you leave the pile.
+    var focusReplyResult: FocusReplyResult?
+    /// Full copies of the next thread in the run, fetched while you write the current reply.
+    @ObservationIgnored private var focusReplyPrefetch: [String: Email] = [:]
+    /// Set while Focus & Reply swaps one reply for the next, so the close in between
+    /// doesn't end the run.
+    @ObservationIgnored private var isAdvancingFocusReply = false
     private var pendingUndoTask: Task<Void, Never>?
     /// Disk copy of a send in its undo window (kill safety). Swappable for tests.
     var pendingSendStore = PendingSendStore.shared
@@ -1524,6 +1533,7 @@ final class AppModel {
             },
             rollback: { [weak self] in
                 if persists { store.clear(id: record.id) }
+                self?.focusReplySendUndone(session)
                 self?.composeSession = session
                 self?.composeSession?.expand()
             },
@@ -1951,6 +1961,9 @@ final class AppModel {
         threadNotes = []
         threadNotesKey = nil
         composeSession = nil
+        focusReply = nil
+        focusReplyResult = nil
+        focusReplyPrefetch = [:]
         toastDismissTask?.cancel()
         toastDismissTask = nil
         toast = nil
@@ -2282,6 +2295,7 @@ final class AppModel {
     }
 
     func minimizeCompose() {
+        endFocusReply()
         composeSession?.minimize()
         if let form = composeSession?.form, !form.isEmpty && form.hasUnsavedChanges {
             Task { @MainActor in
@@ -2295,6 +2309,7 @@ final class AppModel {
     }
 
     func closeCompose() {
+        if !isAdvancingFocusReply { endFocusReply() }
         composeSession?.form.cancelAutoSave()
         // Sent or discarded: a restored message's disk record is no longer needed.
         if let restoredId = composeSession?.form.restoredPendingSendId {
@@ -2313,9 +2328,166 @@ final class AppModel {
         if let generation, generation != sessionGeneration { return }
         let reason = session.form.errorMessage ?? session.form.suppressionMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
+        if focusReply != nil, let current = composeSession, !current.form.isDirty {
+            // Focus & Reply moved on: bring the failed reply back in place of the
+            // untouched next one, so it can be fixed and sent again.
+            current.form.cancelAutoSave()
+            focusReplySendUndone(session)
+            composeSession = session
+            session.expand()
+            return
+        }
         guard composeSession == nil else { return }
         composeSession = session
         minimizeCompose()
+    }
+
+    // MARK: - Focus & Reply (AVE-193)
+    // Web twin: `app/routes/reply-later.tsx`. Android twin: `AppModel.startFocusReply`.
+
+    /// Opens the first thread in the Reply Later pile with a reply ready. Sending or
+    /// skipping moves on to the next; the run ends with "All done" on the pile.
+    func startFocusReply() async {
+        guard selectedTab == .replyLater else { return }
+        guard composeSession == nil else {
+            showToast("Send or close the open message first")
+            return
+        }
+        let run = FocusReplyRun(queue: emails)
+        guard let first = run.current else { return }
+        focusReplyResult = nil
+        focusReplyPrefetch = [:]
+        focusReply = run
+        await startCompose(mode: .reply, original: first)
+        // Read-only mailbox or no mailbox: compose didn't open, so there is nothing to focus.
+        guard composeSession != nil, focusReply != nil else {
+            focusReply = nil
+            return
+        }
+        prefetchNextFocusReply()
+    }
+
+    /// Focus & Reply "Send": the usual undoable send, then straight on to the next thread.
+    func sendFocusReply(_ session: ComposeSession) {
+        guard var run = focusReply, let id = session.form.originalEmailId else {
+            scheduleSend(session)
+            return
+        }
+        isAdvancingFocusReply = true
+        scheduleSend(session)
+        isAdvancingFocusReply = false
+        run.markReplied(id)
+        focusReply = run
+        // Replying takes it out of the pile; the server does the same when the send commits.
+        removeFromReplyLaterPile(id)
+        advanceFocusReply()
+    }
+
+    /// Focus & Reply "Skip": leave this thread in the pile and move on. Anything typed
+    /// is kept as a draft.
+    func skipFocusReply() {
+        guard var run = focusReply, let session = composeSession,
+              let id = session.form.originalEmailId else { return }
+        let form = session.form
+        form.commitPendingTokens()
+        if form.isDirty && !form.isEmpty {
+            Task { await form.saveDraft(explicit: false) }
+        }
+        form.cancelAutoSave()
+        run.markSkipped(id)
+        focusReply = run
+        advanceFocusReply()
+    }
+
+    /// Leaving the run (close, minimize, sign-out) without reaching the end.
+    func endFocusReply() {
+        guard focusReply != nil else { return }
+        focusReply = nil
+        focusReplyPrefetch = [:]
+    }
+
+    private func advanceFocusReply() {
+        guard var run = focusReply else { return }
+        // Rows that joined the pile since the start (a later page) join the end of the run.
+        if selectedTab == .replyLater { run.absorb(emails) }
+        focusReply = run
+        guard let next = run.current, let mailbox = selectedMailbox, !mailbox.isReadOnly else {
+            finishFocusReply()
+            return
+        }
+        let original = focusReplyPrefetch.removeValue(forKey: next.id) ?? db.getEmail(id: next.id) ?? next
+        let form = makeComposeForm(mode: .reply, mailbox: mailbox, original: original, draft: nil)
+        let session = ComposeSession(form: form, presentation: .expanded)
+        // Swap in place so the compose sheet stays up between threads.
+        composeSession = session
+        selectedEmail = nil
+        if original.body == nil {
+            enrichFocusReply(session, emailId: next.id, mailboxId: mailbox.id)
+        }
+        prefetchNextFocusReply()
+    }
+
+    private func finishFocusReply() {
+        guard let run = focusReply else { return }
+        focusReply = nil
+        focusReplyPrefetch = [:]
+        focusReplyResult = run.result
+        if composeSession != nil {
+            isAdvancingFocusReply = true
+            closeCompose()
+            isAdvancingFocusReply = false
+        }
+    }
+
+    /// Undo (or a failed send) puts the thread back where it was in the run and the pile.
+    private func focusReplySendUndone(_ session: ComposeSession) {
+        guard let id = session.form.originalEmailId else { return }
+        if var run = focusReply {
+            if let current = composeSession, current !== session { current.form.cancelAutoSave() }
+            run.undoReply(id)
+            focusReply = run
+        } else if focusReplyResult != nil {
+            focusReplyResult = nil
+        } else {
+            return
+        }
+        Task {
+            await loadEmailsForCurrentTab(showLoading: false)
+            await refreshReplyLaterCount()
+        }
+    }
+
+    private func removeFromReplyLaterPile(_ id: String) {
+        let wasDue = emails.first(where: { $0.id == id })?.isReplyLaterDue ?? false
+        if selectedTab == .replyLater {
+            emails.removeAll { $0.id == id }
+        }
+        replyLaterCount = max(0, replyLaterCount - 1)
+        if wasDue { replyLaterDueCount = max(0, replyLaterDueCount - 1) }
+    }
+
+    private func prefetchNextFocusReply() {
+        guard !isDebugPreview, let run = focusReply, let mailboxId = selectedMailboxId,
+              let next = run.remaining.dropFirst().first,
+              focusReplyPrefetch[next.id] == nil else { return }
+        Task { [weak self] in
+            guard let full = try? await APIClient.shared.getEmail(mailboxId: mailboxId, id: next.id) else { return }
+            guard self?.focusReply != nil else { return }
+            self?.focusReplyPrefetch[next.id] = full
+        }
+    }
+
+    /// The next thread opened before its full copy arrived: swap it in if nothing was typed yet.
+    private func enrichFocusReply(_ session: ComposeSession, emailId: String, mailboxId: String) {
+        guard !isDebugPreview else { return }
+        Task { [weak self] in
+            guard let full = try? await APIClient.shared.getEmail(mailboxId: mailboxId, id: emailId),
+                  let self, self.composeSession === session, !session.form.isDirty,
+                  let mailbox = self.selectedMailbox, mailbox.id == mailboxId else { return }
+            session.form.cancelAutoSave()
+            let form = self.makeComposeForm(mode: .reply, mailbox: mailbox, original: full, draft: nil)
+            self.composeSession = ComposeSession(form: form, presentation: .expanded)
+        }
     }
 
     func openChatSession(existingId: String? = nil, resumeActive: Bool = true, forceNew: Bool = false) {
@@ -2689,5 +2861,69 @@ struct LastMailboxStore {
             return remembered
         }
         return available.first
+    }
+}
+
+/// One Focus & Reply pass through the Reply Later pile (AVE-193): the pile as it stood
+/// when you started, minus what you've replied to or skipped. Android twin: `FocusReplyRun`.
+struct FocusReplyRun: Equatable {
+    /// The pile when the run started, in list order.
+    private(set) var queue: [Email]
+    private(set) var repliedIds: Set<String> = []
+    private(set) var skippedIds: Set<String> = []
+
+    init(queue: [Email]) {
+        self.queue = queue.filter(\.replyLater)
+    }
+
+    /// Threads still to do, current first.
+    var remaining: [Email] {
+        queue.filter { !repliedIds.contains($0.id) && !skippedIds.contains($0.id) }
+    }
+
+    /// The thread whose reply is open.
+    var current: Email? { remaining.first }
+    var total: Int { queue.count }
+    var position: Int { min(repliedIds.count + skippedIds.count + 1, max(total, 1)) }
+    /// "2 of 5".
+    var progressLabel: String { "\(position) of \(total)" }
+    var result: FocusReplyResult {
+        FocusReplyResult(replied: repliedIds.count, skipped: skippedIds.count)
+    }
+
+    mutating func markReplied(_ id: String) {
+        skippedIds.remove(id)
+        repliedIds.insert(id)
+    }
+
+    mutating func markSkipped(_ id: String) {
+        guard !repliedIds.contains(id) else { return }
+        skippedIds.insert(id)
+    }
+
+    /// Undo send: the thread is back in the pile and up next.
+    mutating func undoReply(_ id: String) {
+        repliedIds.remove(id)
+    }
+
+    /// Adds threads that joined the pile after the run started to the end.
+    mutating func absorb(_ emails: [Email]) {
+        let known = Set(queue.map(\.id))
+        queue.append(contentsOf: emails.filter { $0.replyLater && !known.contains($0.id) })
+    }
+}
+
+/// How a Focus & Reply run ended.
+struct FocusReplyResult: Equatable {
+    let replied: Int
+    let skipped: Int
+
+    /// Line on the pile after a run that left skipped threads behind.
+    var summary: String {
+        switch skipped {
+        case 0: return "Reached the end"
+        case 1: return "Reached the end · 1 skipped"
+        default: return "Reached the end · \(skipped) skipped"
+        }
     }
 }

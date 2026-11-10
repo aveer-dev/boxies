@@ -170,6 +170,10 @@ struct HomeShellView: View {
                 }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
+                    // `-previewReplyLater -previewFocusReply` (AVE-193): Focus & Reply on the first thread.
+                    if ProcessInfo.processInfo.arguments.contains("-previewFocusReply") {
+                        Task { await app.startFocusReply() }
+                    }
                     return
                 }
                 #endif
@@ -357,8 +361,12 @@ struct HomeShellView: View {
                 popScreeningRoom()
             }
         }
-        .onChange(of: app.selectedTab) { _, _ in
+        .onChange(of: app.selectedTab) { _, tab in
             showAllNew = false
+            // "All done" belongs to the visit to the pile that earned it (AVE-193).
+            if tab != .replyLater {
+                app.focusReplyResult = nil
+            }
         }
     }
 
@@ -394,6 +402,8 @@ struct HomeShellView: View {
     private var expandedComposeSheet: some View {
         if let session = app.composeSession {
             ComposeSheetView(session: session)
+                // Focus & Reply swaps sessions under an open sheet; start each one fresh.
+                .id(ObjectIdentifier(session))
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(AppTheme.background)
@@ -772,7 +782,10 @@ struct HomeShellView: View {
                     showsTags: false,
                     loadError: app.emailListError,
                     paging: app.visibleListPaging,
-                    onLoadMore: { await app.loadMoreEmails() }
+                    onLoadMore: { await app.loadMoreEmails() },
+                    focusReplyCount: app.replyLaterCount,
+                    focusReplyResult: app.focusReplyResult,
+                    onStartFocusReply: { Task { await app.startFocusReply() } }
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
