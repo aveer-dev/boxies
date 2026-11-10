@@ -4,6 +4,7 @@
 
 import type { EmailInvite, EmailOtp } from "shared/mail-cards";
 import type { BlockedTrackers } from "shared/tracking-pixels";
+import type { TagRef } from "shared/tags";
 
 export interface SignatureSettings {
 	enabled: boolean;
@@ -504,6 +505,11 @@ export interface Email {
 	/** Latest sticky note's markdown, trimmed to a short snippet. */
 	sticky_note_text?: string | null;
 	inline_note_count?: number;
+	/**
+	 * Tags (AVE-240): this message's, or on threaded list rows every tag in
+	 * the conversation. Sorted by name; absent from older Workers.
+	 */
+	tags?: TagRef[];
 }
 
 export interface Attachment {
