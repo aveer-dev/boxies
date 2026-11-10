@@ -56,6 +56,9 @@
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
 #   ./scripts/run-debug-preview.sh signature           # Settings → Outgoing mail → Signature (AVE-204)
 #   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
+#   ./scripts/run-debug-preview.sh domainAliasAdd      # Domain Admin → Aliases, Add alias sheet open (AVE-219)
+#   ./scripts/run-debug-preview.sh domainAliasConflict # Add alias sheet, "already a mailbox" error toast
+#   ./scripts/run-debug-preview.sh domainAliasDelete   # Domain Admin → Aliases, delete confirmation open
 #   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
 #   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
@@ -87,6 +90,9 @@ mode="${1:-domainAdmin}"
 # Normalize aliases
 case "$mode" in
   domainAdmin|DomainAdmin|admin|previewDomainAdmin) extra=previewDomainAdmin; label=domainAdmin ;;
+  domainAliasAdd|DomainAliasAdd|previewDomainAliasAdd) extra=previewDomainAliasAdd; label=domainAliasAdd ;;
+  domainAliasConflict|DomainAliasConflict|previewDomainAliasConflict) extra=previewDomainAliasConflict; label=domainAliasConflict ;;
+  domainAliasDelete|DomainAliasDelete|previewDomainAliasDelete) extra=previewDomainAliasDelete; label=domainAliasDelete ;;
   domainOnboarding|DomainOnboarding|onboarding|previewDomainOnboarding) extra=previewDomainOnboarding; label=domainOnboarding ;;
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
@@ -165,7 +171,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainAliasAdd | domainAliasConflict | domainAliasDelete | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

@@ -1050,6 +1050,13 @@ enum PreviewSupport {
         ),
     ]
 
+    /// Domain Admin → Aliases fixtures (AVE-219; Android `PreviewSupport.adminAliases`).
+    static let adminAliases: [DomainAliasItem] = [
+        DomainAliasItem(aliasLocal: "sales", aliasEmail: "sales@inboxies.email", targetMailboxId: "you@inboxies.email", createdAt: "2026-10-02T09:00:00.000Z"),
+        DomainAliasItem(aliasLocal: "support", aliasEmail: "support@inboxies.email", targetMailboxId: "ops@inboxies.email", createdAt: "2026-10-04T09:00:00.000Z"),
+        DomainAliasItem(aliasLocal: "billing", aliasEmail: "billing@inboxies.email", targetMailboxId: "you@inboxies.email", createdAt: "2026-10-06T09:00:00.000Z"),
+    ]
+
     @MainActor
     static func previewAdminModel() -> AppModel {
         let app = appModel()
@@ -1185,7 +1192,13 @@ struct PreviewAdminAuthRoot: View {
                 }
             } else {
                 NavigationStack {
-                    DomainAdminSettingsView(showsDismiss: false, previewRows: PreviewSupport.adminRows)
+                    // Add `-previewDomainAliasAdd`, `-previewDomainAliasConflict` or
+                    // `-previewDomainAliasDelete` for the Aliases sheet / dialog (AVE-219).
+                    DomainAdminSettingsView(
+                        showsDismiss: false,
+                        previewRows: PreviewSupport.adminRows,
+                        previewAliases: PreviewSupport.adminAliases
+                    )
                 }
             }
         }

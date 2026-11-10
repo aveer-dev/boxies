@@ -40,6 +40,7 @@ import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
 import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
+import co.inboxies.app.ui.settings.DomainAliasPreview
 import co.inboxies.app.ui.settings.SendersSettingsView
 import co.inboxies.app.ui.settings.SendersTab
 import co.inboxies.app.ui.settings.SecurityActivityPreview
@@ -93,6 +94,9 @@ object PreviewHarness {
             }
             PreviewMode.InviteAcceptSignedIn,
             PreviewMode.DomainAdmin,
+            PreviewMode.DomainAliasAdd,
+            PreviewMode.DomainAliasConflict,
+            PreviewMode.DomainAliasDelete,
             PreviewMode.DomainDns,
             PreviewMode.Sessions,
             PreviewMode.SecurityActivity,
@@ -269,7 +273,11 @@ fun PreviewRoot(
         PreviewMode.SendersBlocked -> SettingsPreviewSurface {
             SendersSettingsView(onBack = {}, initialTab = SendersTab.Blocked)
         }
-        PreviewMode.DomainAdmin -> {
+        PreviewMode.DomainAdmin,
+        PreviewMode.DomainAliasAdd,
+        PreviewMode.DomainAliasConflict,
+        PreviewMode.DomainAliasDelete,
+        -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 Column(
                     modifier = Modifier
@@ -278,6 +286,13 @@ fun PreviewRoot(
                 ) {
                     DomainAdminSettingsView(
                         previewRows = PreviewSupport.adminRows(),
+                        previewAliases = PreviewSupport.adminAliases(),
+                        previewAliasDialog = when (mode) {
+                            PreviewMode.DomainAliasAdd -> DomainAliasPreview.Add
+                            PreviewMode.DomainAliasConflict -> DomainAliasPreview.Conflict
+                            PreviewMode.DomainAliasDelete -> DomainAliasPreview.Delete
+                            else -> DomainAliasPreview.None
+                        },
                     )
                 }
             }

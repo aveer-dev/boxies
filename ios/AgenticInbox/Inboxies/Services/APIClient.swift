@@ -690,25 +690,25 @@ final class APIClient: @unchecked Sendable {
 
     func listDomainAliases(domain: String) async throws -> [DomainAliasItem] {
         let res: DomainAliasesResponse = try await request(
-            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/aliases"
+            path: DomainAliases.path(domain: domain)
         )
         return res.aliases
     }
 
-    func createDomainAlias(domain: String, aliasLocal: String, targetMailboxId: String) async throws {
-        let _: EmptyResponse = try await request(
-            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/aliases",
+    /// 201 `{ success, alias }`; 400 bad local part, 403 target not allowed, 409 address in use.
+    @discardableResult
+    func createDomainAlias(domain: String, aliasLocal: String, targetMailboxId: String) async throws -> DomainAliasItem? {
+        let res: DomainAliasCreateResponse = try await request(
+            path: DomainAliases.path(domain: domain),
             method: "POST",
-            body: [
-                "aliasLocal": aliasLocal,
-                "targetMailboxId": targetMailboxId
-            ]
+            body: DomainAliases.createBody(aliasLocal: aliasLocal, targetMailboxId: targetMailboxId)
         )
+        return res.alias
     }
 
     func deleteDomainAlias(domain: String, aliasLocal: String) async throws {
         let _: EmptyResponse = try await request(
-            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/aliases/\(aliasLocal.urlPathEncoded)",
+            path: DomainAliases.deletePath(domain: domain, aliasLocal: aliasLocal),
             method: "DELETE"
         )
     }

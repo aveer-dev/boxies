@@ -21,6 +21,7 @@ import co.inboxies.app.models.ChangePasswordResponse
 import co.inboxies.app.models.CloudflareDnsRecord
 import co.inboxies.app.models.DnsRecordMutationResponse
 import co.inboxies.app.models.DnsRecordsListResponse
+import co.inboxies.app.models.DomainAliasCreateResponse
 import co.inboxies.app.models.DomainAliasItem
 import co.inboxies.app.models.DomainAliasesResponse
 import co.inboxies.app.models.DomainAvailabilityResponse
@@ -802,8 +803,23 @@ class ApiClient private constructor() {
     )
 
     suspend fun listDomainAliases(domain: String): List<DomainAliasItem> {
-        val res = request<DomainAliasesResponse>("/api/v1/admin/domains/${pathEncode(domain)}/aliases")
+        val res = request<DomainAliasesResponse>(DomainAliases.path(domain))
         return res.aliases
+    }
+
+    /** 201 `{ success, alias }`; 400 bad local part, 403 target not allowed, 409 address in use. */
+    suspend fun createDomainAlias(domain: String, aliasLocal: String, targetMailboxId: String): DomainAliasItem? =
+        request<DomainAliasCreateResponse>(
+            DomainAliases.path(domain),
+            method = "POST",
+            body = DomainAliases.createBody(aliasLocal, targetMailboxId),
+        ).alias
+
+    suspend fun deleteDomainAlias(domain: String, aliasLocal: String) {
+        request<EmptyResponse>(
+            DomainAliases.deletePath(domain, aliasLocal),
+            method = "DELETE",
+        )
     }
 
     suspend fun setupDomainAliases(domain: String, aliases: List<Map<String, String>>) {

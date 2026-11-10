@@ -199,7 +199,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 
 | Mode | Intent (boolean extra) | `-e preview` value | Surface |
 | --- | --- | --- | --- |
-| Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
+| Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows + fixture Aliases, no network) |
+| Domain aliases | `previewDomainAliasAdd` · `previewDomainAliasConflict` · `previewDomainAliasDelete` | `domainAliasAdd` · `domainAliasConflict` · `domainAliasDelete` | Domain Admin → Aliases: Add alias sheet · the sheet trying `ops@` (already a mailbox) with the error toast · delete confirmation. In memory, no API. Peer of iOS `-previewDomainAdmin -previewDomainAlias{Add,Conflict,Delete}` (AVE-219) |
 | Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
 | 2FA code step | `previewTwoFactorChallenge` | `twoFactorChallenge` | Email sign-in at the authenticator / backup code step (fixture challenge, verify hits the network and fails) |
 | Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |

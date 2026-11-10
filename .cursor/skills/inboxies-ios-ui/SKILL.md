@@ -194,7 +194,8 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 
 | Arg | Surface |
 | --- | --- |
-| `-previewDomainAdmin` | Domain Admin console |
+| `-previewDomainAdmin` | Domain Admin console, with fixture Aliases (alias → mailbox) below the mailboxes |
+| `-previewDomainAdmin -previewDomainAliasAdd` / `-previewDomainAliasConflict` / `-previewDomainAliasDelete` | Domain Admin → Aliases: Add alias sheet · the sheet trying `ops@` (already a mailbox) with the error toast · delete confirmation. In memory, no API (AVE-219) |
 | `-previewPasswordSignIn` | Password sign-in |
 | `-previewPasswordSignIn -previewTwoFactorChallenge` | Two-factor code step after a password sign-in (fixture challenge, no API) |
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
