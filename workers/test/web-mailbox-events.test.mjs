@@ -54,8 +54,13 @@ const mb = "ada@inboxies.email";
 assert.deepEqual(queryKeysForTargets(mb, ["emails", "emails"]), [
 	["emails", mb],
 	["folders", mb],
+	["tags", mb],
 	["workflow-piles", mb],
 ]);
+// Tag edits (AVE-241): rows show tag names, the sidebar shows tag counts.
+for (const name of ["email_updated", "tags_changed"]) {
+	assert.ok(mailboxEventTargets(name).includes("emails"), name);
+}
 assert.deepEqual(queryKeysForTargets(mb, ["senderPreferences", "senderRules", "summaries", "aliases", "inboxDigest"]), [
 	["sender-preferences", mb],
 	["sender-rules", mb],
