@@ -940,4 +940,34 @@ export const mailboxMigrations: Migration[] = [
              WHERE sender_name LIKE '%,%';
         `),
 	},
+	{
+		// Tags (AVE-240, workers/lib/tags.ts, shared/tags.ts): a layer on top
+		// of folders, so one email can carry many tags while keeping its one
+		// folder_id. `name_key` is the trimmed, lower-cased name and makes
+		// names unique per mailbox regardless of case. Links go with their
+		// email or tag (ON DELETE CASCADE); deleting a tag never touches
+		// emails. Tags are read after the list query, so the conversation
+		// index (42) needs no trigger. Existing custom folders stay folders;
+		// tags start empty.
+		// Additive only: two new tables. Numbered 48, after
+		// 47_participants_unit_separator; the runner tracks by name, so an
+		// open PR that also uses 48_ can land in either order.
+		name: "48_email_tags",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                name_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS email_tags (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, tag_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_email_tags_tag ON email_tags(tag_id, email_id);
+        `),
+	},
 ];

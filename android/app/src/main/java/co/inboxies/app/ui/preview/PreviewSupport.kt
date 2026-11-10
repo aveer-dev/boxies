@@ -247,6 +247,7 @@ object PreviewSupport {
             PreviewMode.InviteCardAddress,
             PreviewMode.InviteCardAddressExpanded,
             PreviewMode.InviteCardCancelled,
+            PreviewMode.InviteCardClaimed,
             PreviewMode.InviteCardFree,
             PreviewMode.InviteCardConflict,
             PreviewMode.InviteCardAdded,
@@ -260,10 +261,12 @@ object PreviewSupport {
                         you = you,
                         cancelled = mode == PreviewMode.InviteCardCancelled,
                         inPerson = mode == PreviewMode.InviteCardAddress || mode == PreviewMode.InviteCardAddressExpanded,
+                        claimed = mode == PreviewMode.InviteCardClaimed,
                     )
                 }
                 MailCardDebug.startsExpanded =
-                    mode == PreviewMode.InviteCardExpanded || mode == PreviewMode.InviteCardAddressExpanded
+                    mode == PreviewMode.InviteCardExpanded || mode == PreviewMode.InviteCardAddressExpanded ||
+                    mode == PreviewMode.InviteCardClaimed
                 // AVE-206: fixture calendars for free/busy; other card modes keep the real (permissionless) path.
                 InviteCalendar.override = when (mode) {
                     PreviewMode.InviteCardFree -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Free)
@@ -843,15 +846,21 @@ object PreviewSupport {
 
     /**
      * AVE-177: calendar invite with a Meet link and a weekly repeat; [inPerson] drops the
-     * link (address only, Directions), [cancelled] is the cancelled variant. iOS twin:
+     * link (address only, Directions), [cancelled] is the cancelled variant, [claimed] comes
+     * from a stranger naming someone else as organizer (AVE-220). iOS twin:
      * `PreviewSupport.inviteEmail` (`-previewDetail -previewInvite …`).
      */
-    fun inviteEmail(you: String = addr("you"), cancelled: Boolean, inPerson: Boolean = false): Email = Email(
+    fun inviteEmail(
+        you: String = addr("you"),
+        cancelled: Boolean,
+        inPerson: Boolean = false,
+        claimed: Boolean = false,
+    ): Email = Email(
         id = "preview-invite",
         folderId = FolderIds.INBOX,
         subject = if (cancelled) "Canceled: Design review" else "Invitation: Design review @ Thu Nov 12",
-        sender = "pat@studio.example",
-        senderName = "Pat Lee",
+        sender = if (claimed) "mallory@stranger.example" else "pat@studio.example",
+        senderName = if (claimed) "Mallory" else "Pat Lee",
         recipient = you,
         date = "2026-11-06T13:30:00.000Z",
         read = false,
@@ -866,7 +875,7 @@ object PreviewSupport {
         },
         snippet = if (cancelled) "This event has been cancelled." else "Pat Lee has invited you to Design review.",
         hasAttachment = true,
-        authTier = "verified",
+        authTier = if (claimed) "unverified" else "verified",
         invite = EmailInvite(
             method = if (cancelled) "CANCEL" else "REQUEST",
             cancelled = cancelled,
@@ -877,7 +886,12 @@ object PreviewSupport {
             end = "2026-11-12T16:00:00.000Z",
             timezone = "America/New_York",
             location = "Room 4B, 200 Market St",
-            organizer = EmailInviteOrganizer(email = "pat@studio.example", name = "Pat Lee"),
+            organizer = if (claimed) {
+                EmailInviteOrganizer(email = "ceo@studio.example", name = "CEO")
+            } else {
+                EmailInviteOrganizer(email = "pat@studio.example", name = "Pat Lee")
+            },
+            organizerMatchesSender = !claimed,
             meetingUrl = if (inPerson) null else "https://meet.google.com/abc-defg-hij",
             recurrence = "FREQ=WEEKLY;BYDAY=TH",
         ),

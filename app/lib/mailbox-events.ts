@@ -32,6 +32,8 @@ export const MAILBOX_EVENT_TARGETS: Readonly<Record<string, readonly MailboxEven
 	emails_refiled: ["emails", "summaries"],
 	email_deleted: ["emails", "summaries"],
 	thread_read: ["emails"],
+	// A tag was created, renamed or deleted (AVE-240): rows show tag names.
+	tags_changed: ["emails"],
 	// A stored thread summary was regenerated elsewhere.
 	summary_updated: ["summaries"],
 	sender_preference_updated: SENDER_TARGETS,

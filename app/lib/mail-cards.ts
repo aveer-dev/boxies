@@ -22,11 +22,18 @@ import type { Email } from "~/types";
 
 // region Which card the reader shows
 
-type CardEmail = Pick<Email, "id" | "folder_id" | "auth" | "auth_tier" | "otp" | "invite">;
+type CardEmail = Pick<Email, "id" | "folder_id" | "auth" | "auth_tier" | "otp" | "invite"> &
+	Partial<Pick<Email, "sender" | "sender_name">>;
+
+/** Who actually sent the message carrying the invite (its From). */
+export interface InviteSender {
+	email: string | null;
+	name: string | null;
+}
 
 export type ReaderCard =
 	| { kind: "code"; code: string; emailId: string }
-	| { kind: "invite"; invite: EmailInvite; emailId: string };
+	| { kind: "invite"; invite: EmailInvite; emailId: string; sender: InviteSender };
 
 /**
  * Mirrors `mailCardsAllowed`: no card in Spam or for senders that failed
@@ -44,11 +51,49 @@ export function cardAllowed(email: Pick<Email, "folder_id" | "auth" | "auth_tier
 export function readerCard(messages: readonly CardEmail[], draftIds?: ReadonlySet<string>): ReaderCard | null {
 	for (const msg of messages) {
 		if (msg.folder_id === Folders.DRAFT || draftIds?.has(msg.id) || !cardAllowed(msg)) continue;
-		if (msg.invite && typeof msg.invite.start === "string") return { kind: "invite", invite: msg.invite, emailId: msg.id };
+		if (msg.invite && typeof msg.invite.start === "string") {
+			const sender = { email: msg.sender?.trim() || null, name: msg.sender_name?.trim() || null };
+			return { kind: "invite", invite: msg.invite, emailId: msg.id, sender };
+		}
 		const code = msg.otp?.code?.trim();
 		if (code) return { kind: "code", code, emailId: msg.id };
 	}
 	return null;
+}
+
+// endregion
+
+// region Organizer: who the invite says organized it vs. who sent it (AVE-220)
+
+function personLabel(name: string | null | undefined, email: string | null | undefined): string | null {
+	const n = name?.trim() || null;
+	const e = email?.trim() || null;
+	if (n && e && n.toLowerCase() !== e.toLowerCase()) return `${n} <${e}>`;
+	return n || e;
+}
+
+export type InviteOrganizerLine =
+	| { kind: "none" }
+	/** The organizer lines up with the From (or an older server didn't say): show it. */
+	| { kind: "organizer"; label: string }
+	/** It doesn't: show the real sender, and the organizer only as a claim. */
+	| { kind: "claimed"; sender: string | null; claimed: string };
+
+/**
+ * ORGANIZER is free text in the .ics. Shown as is only when the Worker says it
+ * matches the From (`organizerMatchesSender`); absent on older servers, which
+ * keep the old behavior.
+ */
+export function inviteOrganizerLine(invite: EmailInvite, sender?: InviteSender | null): InviteOrganizerLine {
+	const organizer = invite.organizer;
+	if (!organizer) return { kind: "none" };
+	if (invite.organizerMatchesSender !== false) {
+		const label = organizer.name?.trim() || organizer.email?.trim() || null;
+		return label ? { kind: "organizer", label } : { kind: "none" };
+	}
+	const claimed = personLabel(organizer.name, organizer.email);
+	if (!claimed) return { kind: "none" };
+	return { kind: "claimed", sender: personLabel(sender?.name, sender?.email), claimed };
 }
 
 // endregion

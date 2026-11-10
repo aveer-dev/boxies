@@ -836,18 +836,34 @@ class ApiClient private constructor() {
         )
     }
 
-    suspend fun setupDomainUsers(domain: String, users: List<Map<String, String>>) {
+    suspend fun setupDomainUsers(domain: String, users: List<SetupUser>) {
         request<EmptyResponse>(
             "/api/v1/admin/domains/${pathEncode(domain)}/setup-users",
             method = "POST",
-            body = buildJsonObject {
-                put("users", kotlinx.serialization.json.JsonArray(users.map { map ->
-                    buildJsonObject {
-                        map.forEach { (k, v) -> put(k, v) }
-                    }
-                }))
-            },
+            body = SetupUsersRequest.body(users),
         )
+    }
+
+    /**
+     * One teammate added during domain onboarding. [contactEmail] (may be empty) is where their
+     * mailbox invite goes; the Worker falls back to [username] when [fullName] is empty.
+     */
+    data class SetupUser(val fullName: String, val contactEmail: String, val username: String)
+
+    internal object SetupUsersRequest {
+        /**
+         * Onboarding `setup-users` body. The Worker reads `fullName`, `contactEmail` and
+         * `username` (matches web `api.setupDomainUsers`).
+         */
+        fun body(users: List<SetupUser>): JsonObject = buildJsonObject {
+            put("users", kotlinx.serialization.json.JsonArray(users.map { user ->
+                buildJsonObject {
+                    put("fullName", user.fullName)
+                    put("contactEmail", user.contactEmail)
+                    put("username", user.username)
+                }
+            }))
+        }
     }
 
     // MARK: - Admin DNS Suite
