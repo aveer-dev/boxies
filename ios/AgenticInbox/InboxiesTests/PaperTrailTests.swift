@@ -1,7 +1,7 @@
 import XCTest
 @testable import Inboxies
 
-/// Updates as a quiet receipts view (AVE-192): month grouping and labels.
+/// Paper Trail, a quiet receipts folder (AVE-192): which folder it is, month grouping and labels.
 /// Mirrors workers/test/paper-trail.test.mjs and Android PaperTrailTest.
 final class PaperTrailTests: XCTestCase {
     private var calendar: Calendar {
@@ -16,14 +16,25 @@ final class PaperTrailTests: XCTestCase {
     }
 
     private func email(_ id: String, _ date: String) -> Email {
-        Email(id: id, folderId: "updates", subject: id, sender: "s@example.com", recipient: "you@example.com", date: date, read: true, starred: false)
+        Email(id: id, folderId: "paper_trail", subject: id, sender: "s@example.com", recipient: "you@example.com", date: date, read: true, starred: false)
     }
 
-    func testOnlyUpdatesIsPaperTrail() {
-        XCTAssertTrue(PaperTrail.isPaperTrail(folderId: "updates"))
+    func testOnlyPaperTrailIsPaperTrail() {
+        XCTAssertEqual(PaperTrail.folderId, "paper_trail")
+        XCTAssertTrue(PaperTrail.isPaperTrail(folderId: "paper_trail"))
+        XCTAssertFalse(PaperTrail.isPaperTrail(folderId: "updates"))
         XCTAssertFalse(PaperTrail.isPaperTrail(folderId: "inbox"))
         XCTAssertFalse(PaperTrail.isPaperTrail(folderId: "promotions"))
         XCTAssertFalse(PaperTrail.isPaperTrail(folderId: nil))
+    }
+
+    /// Paper Trail is a system folder and a sender destination, next to Updates
+    /// (`shared/folders.ts` SYSTEM_FOLDER_IDS / SCREENER_DESTINATION_IDS).
+    func testPaperTrailIsASystemFolderAndDestination() {
+        XCTAssertTrue(CustomFolders.systemFolderIds.contains("paper_trail"))
+        XCTAssertEqual(HomeTab.folder("paper_trail").title, "Paper Trail")
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: "paper_trail"), "Accepted · future mail goes to Paper Trail")
+        XCTAssertEqual(ComposeActionItem.paperTrail.folderTab, .folder("paper_trail"))
     }
 
     func testLabelsDropTheCurrentYear() {

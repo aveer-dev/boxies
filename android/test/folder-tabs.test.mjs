@@ -1,5 +1,5 @@
 /**
- * Android swipe tabs must expose Promotions, Updates, and Spam in the same
+ * Android swipe tabs must expose Promotions, Updates, Paper Trail and Spam in the same
  * order as iOS HomeShellView.folderTabs. Screener is not a tab: it's the
  * Screening room, opened from the Inbox row (AVE-136).
  * Run: node android/test/folder-tabs.test.mjs
@@ -36,6 +36,7 @@ const expectedSwipe = [
 	"INBOX",
 	"PROMOTIONS",
 	"UPDATES",
+	"PAPER_TRAIL",
 	"SENT",
 	"DRAFT",
 	"ARCHIVE",
@@ -47,7 +48,7 @@ const swipeBlock = models.match(
 	/val swipeFolderIds: List<String> = listOf\(([\s\S]*?)\)/,
 );
 assert.ok(swipeBlock, "FolderIds.swipeFolderIds is defined");
-const swipeIds = [...swipeBlock[1].matchAll(/\b([A-Z]+)\b/g)].map((m) => m[1]);
+const swipeIds = [...swipeBlock[1].matchAll(/\b([A-Z_]+)\b/g)].map((m) => m[1]);
 assert.deepEqual(swipeIds, expectedSwipe);
 
 assert.match(shell, /FolderIds\.swipeFolderIds\.map \{ HomeTab\.Folder\(it\) \}/);
@@ -57,6 +58,7 @@ for (const [id, title] of [
 	["SCREENER", "Screening room"],
 	["PROMOTIONS", "Promotions"],
 	["UPDATES", "Updates"],
+	["PAPER_TRAIL", "Paper Trail"],
 	["SPAM", "Spam"],
 ]) {
 	assert.match(
@@ -68,7 +70,7 @@ for (const [id, title] of [
 
 assert.match(
 	overlay,
-	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Spam,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
+	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Spam,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*PaperTrail,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
 	"long-press overlay lists every folder except Screener, Spam between Trash and Archive",
 );
 assert.doesNotMatch(overlay, /^\s*Screener,/m, "Screener is not in the long-press overlay");

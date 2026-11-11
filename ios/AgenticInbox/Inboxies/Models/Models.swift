@@ -697,6 +697,7 @@ enum SpamVerdictToast {
         "inbox": "Inbox",
         "promotions": "Promotions",
         "updates": "Updates",
+        "paper_trail": "Paper Trail",
         "archive": "Archive",
     ]
 
@@ -739,10 +740,11 @@ enum ScreenerDecision {
     private static let folderNames: [String: String] = [
         "promotions": "Promotions",
         "updates": "Updates",
+        "paper_trail": "Paper Trail",
     ]
 
     /// Toast after the decision. `destinationFolderId` nil means Decline.
-    /// Inbox is the plain Accept (pins nothing, AVE-139); Promotions / Updates stick.
+    /// Inbox is the plain Accept (pins nothing, AVE-139); Promotions / Updates / Paper Trail stick.
     static func toastTitle(destinationFolderId: String?) -> String {
         guard let destinationFolderId else { return "Declined" }
         if let name = folderNames[destinationFolderId] {

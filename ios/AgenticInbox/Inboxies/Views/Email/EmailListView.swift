@@ -129,8 +129,8 @@ struct EmailListView: View {
                     .padding(.top, 32)
                 } else if showsPaperTrail {
                     ContentUnavailableView(
-                        "No updates",
-                        systemImage: "newspaper",
+                        PaperTrail.emptyTitle,
+                        systemImage: PaperTrail.systemImage,
                         description: Text(PaperTrail.emptyDescription)
                     )
                     .padding(.top, 48)
@@ -312,7 +312,7 @@ struct EmailListView: View {
         }
     }
 
-    /// Updates as a quiet receipts view (AVE-192): compact rows under month headers.
+    /// Paper Trail, a quiet receipts folder (AVE-192): compact rows under month headers.
     private var showsPaperTrail: Bool {
         PaperTrail.isPaperTrail(folderId: fallbackFolderId)
     }
@@ -822,7 +822,7 @@ struct EmailRowView: View {
     var showsSeparator: Bool = true
     /// Fill behind the row; the two-pane list tints the row open in the reading pane.
     var rowBackground: Color = AppTheme.background
-    /// Updates receipt row (AVE-192): sender, subject, date; no preview line, tighter padding.
+    /// Paper Trail receipt row (AVE-192): sender, subject, date; no preview line, tighter padding.
     var compact: Bool = false
 
     private var verticalPadding: CGFloat {
@@ -1107,6 +1107,7 @@ struct ScreenerActionButtons: View {
         ("inbox", "Inbox", "tray"),
         ("promotions", "Promotions", "tag"),
         ("updates", "Updates", "bell"),
+        (PaperTrail.folderId, PaperTrail.title, PaperTrail.systemImage),
     ]
 
     var body: some View {

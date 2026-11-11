@@ -11,7 +11,7 @@ import Foundation
 enum CustomFolders {
     /// `SYSTEM_FOLDER_IDS` in `shared/folders.ts`. These can't be renamed or deleted.
     static let systemFolderIds: Set<String> = [
-        "inbox", "screener", "promotions", "updates", "sent",
+        "inbox", "screener", "promotions", "updates", "paper_trail", "sent",
         "draft", "archive", "spam", "screened_out", "trash",
     ]
 

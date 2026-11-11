@@ -148,6 +148,7 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 2),
             Folder(id = FolderIds.PROMOTIONS, name = "Promotions", unreadCount = 0),
             Folder(id = FolderIds.UPDATES, name = "Updates", unreadCount = 0),
+            Folder(id = FolderIds.PAPER_TRAIL, name = "Paper Trail", unreadCount = 2),
             Folder(id = FolderIds.SENT, name = "Sent", unreadCount = 0),
             Folder(id = FolderIds.ARCHIVE, name = "Archive", unreadCount = 0),
             Folder(id = FolderIds.SPAM, name = "Spam", unreadCount = 1),
@@ -227,15 +228,15 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.Updates -> {
-                // AVE-192: Updates as a quiet receipts view (compact rows by month).
-                val updates = updatesEmails(you)
+            PreviewMode.PaperTrail -> {
+                // AVE-192: Paper Trail, a quiet receipts folder (compact rows by month).
+                val receipts = paperTrailEmails(you)
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
                     folders = folders,
-                    emails = updates,
-                    selectedTab = HomeTab.Folder(FolderIds.UPDATES),
+                    emails = receipts,
+                    selectedTab = HomeTab.Folder(FolderIds.PAPER_TRAIL),
                     selectedEmail = null,
                     threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
@@ -958,17 +959,11 @@ object PreviewSupport {
         ),
     )
 
-    /**
-     * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
-     * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
-     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
-     * "Blocked tracking from Mailchimp" note above the body (AVE-195).
-     */
-    /** `updates` (AVE-192): receipts across this month, last month and last year (iOS `-previewMailbox -previewUpdates`). */
-    fun updatesEmails(you: String = addr("you")): List<Email> = listOf(
+    /** `paperTrail` (AVE-192): receipts across this month, last month and last year (iOS `-previewMailbox -previewPaperTrail`). */
+    fun paperTrailEmails(you: String = addr("you")): List<Email> = listOf(
         Email(
-            id = "preview-updates-1",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-1",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Your receipt from Lumen Coffee",
             sender = "receipts@lumen.example",
             senderName = "Lumen Coffee",
@@ -979,8 +974,8 @@ object PreviewSupport {
             snippet = "Order #4821 · \$6.40 · Thanks for stopping by.",
         ),
         Email(
-            id = "preview-updates-2",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-2",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Your package has shipped",
             sender = "ship@parcel.example",
             senderName = "Parcel",
@@ -991,8 +986,8 @@ object PreviewSupport {
             snippet = "Arriving Thursday. Track it any time.",
         ),
         Email(
-            id = "preview-updates-3",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-3",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Payment received",
             sender = "billing@studio.example",
             senderName = "Studio Billing",
@@ -1003,8 +998,8 @@ object PreviewSupport {
             snippet = "We received your payment of \$24.00. Thank you.",
         ),
         Email(
-            id = "preview-updates-4",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-4",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Your October statement is ready",
             sender = "statements@bank.example",
             senderName = "Northwind Bank",
@@ -1015,8 +1010,8 @@ object PreviewSupport {
             snippet = "Your statement for October is ready to view.",
         ),
         Email(
-            id = "preview-updates-5",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-5",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Booking confirmed: Lisbon, Dec 12",
             sender = "trips@stay.example",
             senderName = "Stay",
@@ -1027,8 +1022,8 @@ object PreviewSupport {
             snippet = "Check-in from 3 PM. Your host will message you before you arrive.",
         ),
         Email(
-            id = "preview-updates-6",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-6",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Password changed",
             sender = "security@accounts.example",
             senderName = "Accounts",
@@ -1039,8 +1034,8 @@ object PreviewSupport {
             snippet = "Your password was changed. If this wasn’t you, reset it now.",
         ),
         Email(
-            id = "preview-updates-7",
-            folderId = FolderIds.UPDATES,
+            id = "preview-paper-trail-7",
+            folderId = FolderIds.PAPER_TRAIL,
             subject = "Your 2025 annual summary",
             sender = "hello@ride.example",
             senderName = "Ride",
@@ -1052,6 +1047,12 @@ object PreviewSupport {
         ),
     )
 
+    /**
+     * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
+     * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
+     * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`). Carries the
+     * "Blocked tracking from Mailchimp" note above the body (AVE-195).
+     */
     fun newsletterEmail(you: String = addr("you")): Email = Email(
         id = "preview-newsletter",
         folderId = FolderIds.INBOX,

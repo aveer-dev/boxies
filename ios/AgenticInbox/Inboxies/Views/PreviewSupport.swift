@@ -25,6 +25,7 @@ enum PreviewSupport {
             Folder(id: "screener", name: "Screener", unreadCount: 2),
             Folder(id: "promotions", name: "Promotions", unreadCount: 0),
             Folder(id: "updates", name: "Updates", unreadCount: 0),
+            Folder(id: "paper_trail", name: "Paper Trail", unreadCount: 0),
             Folder(id: "sent", name: "Sent", unreadCount: 0),
             Folder(id: "archive", name: "Archive", unreadCount: 0),
             Folder(id: "spam", name: "Spam", unreadCount: 1),
@@ -274,12 +275,12 @@ enum PreviewSupport {
         deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
     )
 
-    /// `-previewMailbox -previewUpdates` (AVE-192): Updates as a quiet receipts view, with
-    /// receipts across this month, last month and last year (compact rows, month headers).
-    static let updatesEmails: [Email] = [
+    /// `-previewMailbox -previewPaperTrail` (AVE-192): Paper Trail, a quiet receipts folder,
+    /// with receipts across this month, last month and last year (compact rows, month headers).
+    static let paperTrailEmails: [Email] = [
         Email(
-            id: "preview-updates-1",
-            folderId: "updates",
+            id: "preview-paper-trail-1",
+            folderId: "paper_trail",
             subject: "Your receipt from Lumen Coffee",
             sender: "receipts@lumen.example",
             senderName: "Lumen Coffee",
@@ -290,8 +291,8 @@ enum PreviewSupport {
             snippet: "Order #4821 · $6.40 · Thanks for stopping by."
         ),
         Email(
-            id: "preview-updates-2",
-            folderId: "updates",
+            id: "preview-paper-trail-2",
+            folderId: "paper_trail",
             subject: "Your package has shipped",
             sender: "ship@parcel.example",
             senderName: "Parcel",
@@ -302,8 +303,8 @@ enum PreviewSupport {
             snippet: "Arriving Thursday. Track it any time."
         ),
         Email(
-            id: "preview-updates-3",
-            folderId: "updates",
+            id: "preview-paper-trail-3",
+            folderId: "paper_trail",
             subject: "Payment received",
             sender: "billing@studio.example",
             senderName: "Studio Billing",
@@ -314,8 +315,8 @@ enum PreviewSupport {
             snippet: "We received your payment of $24.00. Thank you."
         ),
         Email(
-            id: "preview-updates-4",
-            folderId: "updates",
+            id: "preview-paper-trail-4",
+            folderId: "paper_trail",
             subject: "Your October statement is ready",
             sender: "statements@bank.example",
             senderName: "Northwind Bank",
@@ -326,8 +327,8 @@ enum PreviewSupport {
             snippet: "Your statement for October is ready to view."
         ),
         Email(
-            id: "preview-updates-5",
-            folderId: "updates",
+            id: "preview-paper-trail-5",
+            folderId: "paper_trail",
             subject: "Booking confirmed: Lisbon, Dec 12",
             sender: "trips@stay.example",
             senderName: "Stay",
@@ -338,8 +339,8 @@ enum PreviewSupport {
             snippet: "Check-in from 3 PM. Your host will message you before you arrive."
         ),
         Email(
-            id: "preview-updates-6",
-            folderId: "updates",
+            id: "preview-paper-trail-6",
+            folderId: "paper_trail",
             subject: "Password changed",
             sender: "security@accounts.example",
             senderName: "Accounts",
@@ -350,8 +351,8 @@ enum PreviewSupport {
             snippet: "Your password was changed. If this wasn’t you, reset it now."
         ),
         Email(
-            id: "preview-updates-7",
-            folderId: "updates",
+            id: "preview-paper-trail-7",
+            folderId: "paper_trail",
             subject: "Your 2025 annual summary",
             sender: "hello@ride.example",
             senderName: "Ride",
@@ -674,10 +675,10 @@ enum PreviewSupport {
             app.emails = app.emails.filter { $0.folderId == "spam" }
             app.selectedEmail = spam
             app.threadEmails = [spam]
-        } else if args.contains("-previewUpdates") {
-            // AVE-192: Updates as a quiet receipts view.
-            app.selectedTab = .folder("updates")
-            app.emails = updatesEmails
+        } else if args.contains("-previewPaperTrail") {
+            // AVE-192: Paper Trail, a quiet receipts folder.
+            app.selectedTab = .folder(PaperTrail.folderId)
+            app.emails = paperTrailEmails
         } else if args.contains("-previewReplyLater") {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)

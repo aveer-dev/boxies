@@ -60,7 +60,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.Inbox
-import androidx.compose.material.icons.outlined.Newspaper
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.MarkEmailRead
@@ -108,7 +108,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -253,7 +252,7 @@ fun EmailListView(
                 bottomInset = bottomInset,
                 topRow = screeningRoomRow,
                 allDone = focusReplyResult != null && onStartFocusReply != null,
-                copy = emptyState,
+                copy = emptyState ?: paperTrailEmptyState(fallbackFolderId),
                 title = emptyTitle,
                 message = emptyMessage,
             )
@@ -462,7 +461,7 @@ private fun EmailRows(
                 }
             }
         } else if (PaperTrail.isPaperTrail(fallbackFolderId)) {
-            // Updates as a quiet receipts view (AVE-192): compact rows under month headers.
+            // Paper Trail, a quiet receipts folder (AVE-192): compact rows under month headers.
             PaperTrail.monthSections(emails).forEach { section ->
                 item(key = section.id) {
                     ListSectionHeader(title = section.label)
@@ -670,7 +669,7 @@ private fun EmailRowItem(
     fallbackFolderId: String?,
     swipePreferences: SwipeActionPreferences,
     showsTags: Boolean = true,
-    /** Updates receipt row (AVE-192): no preview line, tighter padding. */
+    /** Paper Trail receipt row (AVE-192): no preview line, tighter padding. */
     compact: Boolean = false,
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
@@ -1322,7 +1321,7 @@ fun EmailRowView(
     modifier: Modifier = Modifier,
     /** Fill behind the row; the two-pane list tints the row open in the reading pane. */
     rowBackground: Color = inboxiesColors().background,
-    /** Updates receipt row (AVE-192): sender, subject, date; no preview line, tighter padding. */
+    /** Paper Trail receipt row (AVE-192): sender, subject, date; no preview line, tighter padding. */
     compact: Boolean = false,
 ) {
     val colors = inboxiesColors()
@@ -1657,6 +1656,7 @@ fun ScreenerActionButtons(
             Triple(FolderIds.INBOX, "Inbox", Icons.Outlined.Inbox),
             Triple(FolderIds.PROMOTIONS, "Promotions", Icons.Outlined.LocalOffer),
             Triple(FolderIds.UPDATES, "Updates", Icons.Outlined.Notifications),
+            Triple(FolderIds.PAPER_TRAIL, "Paper Trail", Icons.AutoMirrored.Outlined.ReceiptLong),
         )
     }
 
@@ -1836,6 +1836,18 @@ private fun ReplyLaterReminderChip(email: Email) {
         }
     }
 }
+
+/** Empty Paper Trail: says what lands there (AVE-192); same copy as the web and iOS. */
+private fun paperTrailEmptyState(folderId: String?): EmptyStateCopy? =
+    if (PaperTrail.isPaperTrail(folderId)) {
+        EmptyStateCopy(
+            icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+            title = PaperTrail.EMPTY_TITLE,
+            message = PaperTrail.EMPTY_DESCRIPTION,
+        )
+    } else {
+        null
+    }
 
 /** Empty-state icon + title + message for a list that isn't a folder (AVE-201). */
 data class EmptyStateCopy(

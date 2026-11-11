@@ -240,7 +240,7 @@ extension AppModel {
 
     /// Move to Spam and reject the sender: their future mail is screened out.
     /// With `unsubscribe`, the Worker also sends the RFC 8058 one-click POST;
-    /// with `refileSender` (the default), their Inbox / Promotions / Updates
+    /// with `refileSender` (the default), their Inbox / Promotions / Updates / Paper Trail
     /// mail moves to Spam too (AVE-98).
     func reportSpam(_ email: Email, fromList: Bool = false, unsubscribe: Bool = false, refileSender: Bool = true) async {
         await applySpamVerdict(email, to: "spam", fromList: fromList, unsubscribe: unsubscribe, refileSender: refileSender)

@@ -15,7 +15,7 @@ import co.inboxies.app.models.Folder
 object CustomFolders {
     /** `SYSTEM_FOLDER_IDS` in `shared/folders.ts`. These can't be renamed or deleted. */
     val systemFolderIds: Set<String> = setOf(
-        "inbox", "screener", "promotions", "updates", "sent",
+        "inbox", "screener", "promotions", "updates", "paper_trail", "sent",
         "draft", "archive", "spam", "screened_out", "trash",
     )
 

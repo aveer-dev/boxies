@@ -10,6 +10,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     case archive
     case drafts
     case sent
+    case paperTrail
     case updates
     case promotions
     // No Screener here: it's the Screening room, reached from the Inbox row (AVE-136).
@@ -28,6 +29,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .archive: return "Archive"
         case .drafts: return "Drafts"
         case .sent: return "Sent"
+        case .paperTrail: return PaperTrail.title
         case .updates: return "Updates"
         case .promotions: return "Promotions"
         case .inbox: return "Inbox"
@@ -45,6 +47,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .archive: return HomeTab.folder("archive").systemImage
         case .drafts: return HomeTab.folder("draft").systemImage
         case .sent: return HomeTab.folder("sent").systemImage
+        case .paperTrail: return HomeTab.folder(PaperTrail.folderId).systemImage
         case .updates: return HomeTab.folder("updates").systemImage
         case .promotions: return HomeTab.folder("promotions").systemImage
         case .inbox: return HomeTab.folder("inbox").systemImage
@@ -59,6 +62,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .inbox: return .folder("inbox")
         case .promotions: return .folder("promotions")
         case .updates: return .folder("updates")
+        case .paperTrail: return .folder(PaperTrail.folderId)
         case .sent: return .folder("sent")
         case .drafts: return .folder("draft")
         case .archive: return .folder("archive")

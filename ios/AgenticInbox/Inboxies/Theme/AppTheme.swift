@@ -181,7 +181,7 @@ enum AppTheme {
         /// Consistent letter-tracking across list text.
         static let tracking: CGFloat = 0.25
         static let rowVerticalPadding: CGFloat = 18
-        /// Updates receipt rows (AVE-192): sender, subject, date; no preview line.
+        /// Paper Trail receipt rows (AVE-192): sender, subject, date; no preview line.
         static let compactRowVerticalPadding: CGFloat = 12
         static let rowTextSpacing: CGFloat = 6
         static let rowHorizontalPadding: CGFloat = 20

@@ -1,15 +1,20 @@
 import Foundation
 
-/// Updates as a quiet receipts view (AVE-192, HEY's Paper Trail): compact rows
-/// (sender, subject, date; no preview line) grouped by month. Mail filed here
-/// never sends a push (the Worker skips it), and opening a message marks it
-/// read like any other folder. Mirrors `shared/paper-trail.ts` and Android
+/// Paper Trail, a quiet receipts folder (AVE-192, HEY's Paper Trail). Its own system
+/// folder (`paper_trail`) next to Updates: only senders you send there land in it (a
+/// Screener destination, or a move with "Put future mail here"). Compact rows (sender,
+/// subject, date; no preview line) grouped by month. Mail filed here never sends a
+/// push (the Worker skips it), and opening a message marks it read like any other
+/// folder. Updates stays a normal folder. Mirrors `shared/paper-trail.ts` and Android
 /// `PaperTrail.kt`.
 enum PaperTrail {
-    static let folderId = "updates"
+    static let folderId = "paper_trail"
+    static let title = "Paper Trail"
+    static let systemImage = "doc.plaintext"
 
-    /// Empty Updates; same copy as the web.
-    static let emptyDescription = "Receipts, confirmations and notifications, grouped by month. Mail here doesn’t send notifications."
+    /// Empty Paper Trail; same copy as the web.
+    static let emptyTitle = "No paper trail"
+    static let emptyDescription = "Receipts and confirmations from senders you send here, grouped by month. Mail here never sends a notification."
 
     static func isPaperTrail(folderId: String?) -> Bool {
         folderId == Self.folderId

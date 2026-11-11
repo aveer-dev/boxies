@@ -7,15 +7,18 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * Updates as a quiet receipts view (AVE-192, HEY's Paper Trail): compact rows
- * (sender, subject, date; no preview line) grouped by month. Mail filed here
- * never sends a push (the Worker skips it), and opening a message marks it read
- * like any other folder. Mirrors `shared/paper-trail.ts` and iOS `PaperTrail.swift`.
+ * Paper Trail, a quiet receipts folder (AVE-192, HEY's Paper Trail): its own
+ * system folder (`paper_trail`) that only senders you send there land in (a
+ * Screener destination and a sender default). Compact rows (sender, subject,
+ * date; no preview line) grouped by month. Mail filed here never sends a push
+ * (the Worker skips it), and opening a message marks it read like any other
+ * folder. Updates stays a normal folder. Mirrors `shared/paper-trail.ts` and iOS `PaperTrail.swift`.
  */
 object PaperTrail {
-    /** Empty Updates; same copy as the web and iOS. */
+    /** Empty Paper Trail; same copy as the web and iOS. */
+    const val EMPTY_TITLE = "No paper trail"
     const val EMPTY_DESCRIPTION =
-        "Receipts, confirmations and notifications, grouped by month. Mail here doesn’t send notifications."
+        "Receipts and confirmations from senders you send here, grouped by month. Mail here never sends a notification."
 
     data class MonthSection(
         /** "month-2026-11"; "month-undated" for mail without a usable date. */
@@ -29,7 +32,7 @@ object PaperTrail {
         "July", "August", "September", "October", "November", "December",
     )
 
-    fun isPaperTrail(folderId: String?): Boolean = folderId == FolderIds.UPDATES
+    fun isPaperTrail(folderId: String?): Boolean = folderId == FolderIds.PAPER_TRAIL
 
     /** "November" in the current year, "November 2025" otherwise, "Earlier" without a date. */
     fun label(date: Instant?, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): String {

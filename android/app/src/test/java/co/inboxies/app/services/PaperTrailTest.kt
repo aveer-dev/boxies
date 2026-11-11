@@ -1,6 +1,7 @@
 package co.inboxies.app.services
 
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.FolderIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,7 +9,7 @@ import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
 
-/** AVE-192: Updates groups receipts by month (iOS twin: PaperTrailTests; web: paper-trail.test.mjs). */
+/** AVE-192: Paper Trail groups receipts by month (iOS twin: PaperTrailTests; web: paper-trail.test.mjs). */
 class PaperTrailTest {
     private val zone = ZoneId.of("America/New_York")
     private val now = Instant.parse("2026-11-10T17:00:00Z")
@@ -16,8 +17,11 @@ class PaperTrailTest {
     private fun email(id: String, date: String) = Email(id = id, subject = id, date = date)
 
     @Test
-    fun onlyUpdatesIsPaperTrail() {
-        assertTrue(PaperTrail.isPaperTrail("updates"))
+    fun onlyPaperTrailIsPaperTrail() {
+        assertEquals("paper_trail", FolderIds.PAPER_TRAIL)
+        assertTrue(PaperTrail.isPaperTrail("paper_trail"))
+        // Updates is a normal folder again: preview lines, no month headers.
+        assertFalse(PaperTrail.isPaperTrail("updates"))
         assertFalse(PaperTrail.isPaperTrail("inbox"))
         assertFalse(PaperTrail.isPaperTrail("promotions"))
         assertFalse(PaperTrail.isPaperTrail(null))
