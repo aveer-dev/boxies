@@ -577,11 +577,130 @@ final class ClientContractTests: XCTestCase {
         XCTAssertNil(CustomFolders.validateRename("Bills", folder: receipts, existing: existing))
     }
 
-    func testTagCopy() {
-        let tag = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
-        XCTAssertEqual(CustomFolders.displayName(tag), "#Receipts")
+    /// Custom folders read as Folders, no "#" (web relabel, AVE-241/242).
+    func testFolderCopy() {
+        let folder = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
+        XCTAssertEqual(CustomFolders.displayName(folder), "Receipts")
         XCTAssertEqual(CustomFolders.normalizedName("  #Receipts "), "Receipts")
-        XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
+        XCTAssertEqual(CustomFolders.deleteConfirmTitle(folder), "Delete Receipts?")
+        XCTAssertEqual(CustomFolders.pageTitle, "Folders")
+        XCTAssertEqual(CustomFolders.createFailed, "Failed to create folder")
+    }
+
+    // MARK: - Tags (AVE-240 / AVE-242)
+
+    func testEmailDecodesTagsAndToleratesOlderWorkers() throws {
+        let tagged = try decode(Email.self, """
+        {"id":"e1","thread_id":"t1","folder_id":"inbox","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-10T10:00:00Z","read":0,"starred":0,
+         "tags":[{"id":"tag_a","name":"Clients"},{"id":"tag_b","name":"Q3 planning"}]}
+        """)
+        XCTAssertEqual(tagged.tags, [TagRef(id: "tag_a", name: "Clients"), TagRef(id: "tag_b", name: "Q3 planning")])
+
+        let older = try decode(Email.self, #"{"id":"e2","subject":"Hi","sender":"a@x.com","recipient":"b@x.com","date":"","read":true,"starred":false}"#)
+        XCTAssertNil(older.tags)
+        // A malformed list never fails the email.
+        let malformed = try decode(Email.self, #"{"id":"e3","subject":"","sender":"","recipient":"","date":"","read":true,"starred":false,"tags":"oops"}"#)
+        XCTAssertNil(malformed.tags)
+    }
+
+    func testTagRouteShapesDecode() throws {
+        // GET /tags (`Tag` in shared/tags.ts).
+        let list = try decode(TagListResponse.self, """
+        {"tags":[{"id":"tag_a","name":"Clients","emailCount":3,"unreadCount":1,
+                  "createdAt":"2026-11-10T00:00:00Z","updatedAt":"2026-11-10T00:00:00Z"}]}
+        """)
+        XCTAssertEqual(list.tags, [MailTag(id: "tag_a", name: "Clients", emailCount: 3, unreadCount: 1)])
+        // PUT / DELETE /threads/:threadId/tags/:tagId.
+        let thread = try decode(ThreadTagsResponse.self, #"{"threadId":"t1","tags":[{"id":"tag_a","name":"Clients"}],"emailIds":["e1","e2"]}"#)
+        XCTAssertEqual(thread.threadId, "t1")
+        XCTAssertEqual(thread.tags.map(\.id), ["tag_a"])
+        XCTAssertEqual(thread.emailIds, ["e1", "e2"])
+    }
+
+    func testTagPathsEncodeSegments() {
+        XCTAssertEqual(APIClient.tagsPath(mailboxId: "me@acme.com"), "/api/v1/mailboxes/me@acme.com/tags")
+        XCTAssertEqual(APIClient.tagsPath(mailboxId: "me@acme.com", tagId: "tag_1"), "/api/v1/mailboxes/me@acme.com/tags/tag_1")
+        XCTAssertEqual(
+            APIClient.threadTagPath(mailboxId: "me@acme.com", threadId: "a/b", tagId: "tag_1"),
+            "/api/v1/mailboxes/me@acme.com/threads/a%2Fb/tags/tag_1"
+        )
+    }
+
+    /// `normalizeTagName` in shared/tags.ts: same names, same sentences.
+    func testTagNameNormalizationMatchesWorker() {
+        XCTAssertEqual(MailTags.normalizeName("  Q3   planning \n"), .ok(name: "Q3 planning", key: "q3 planning"))
+        XCTAssertEqual(MailTags.normalizeName("   "), .invalid("Tag name is required"))
+        XCTAssertEqual(MailTags.normalizeName("bad\u{0007}name"), .invalid("Tag name contains invalid characters"))
+        XCTAssertEqual(MailTags.normalizeName("rtl\u{202E}trick"), .invalid("Tag name contains invalid characters"))
+        XCTAssertEqual(MailTags.normalizeName(String(repeating: "a", count: 65)), .invalid("Tag name must be at most 64 characters"))
+        if case .ok = MailTags.normalizeName(String(repeating: "é", count: 64)) {} else { XCTFail("64 characters is allowed") }
+        // Emoji sequences keep their zero-width joiners.
+        if case .ok = MailTags.normalizeName("👩‍💻 Work") {} else { XCTFail("ZWJ emoji is allowed") }
+    }
+
+    func testTagValidationIsCaseInsensitiveAndIgnoresTheRenamedTag() {
+        let clients = MailTag(id: "tag_a", name: "Clients")
+        let existing = [clients, MailTag(id: "tag_b", name: "Travel")]
+        XCTAssertEqual(MailTags.validate("clients", existing: existing), MailTags.duplicateName)
+        XCTAssertNil(MailTags.validate("CLIENTS", existing: existing, renaming: clients))
+        XCTAssertEqual(MailTags.validate("travel", existing: existing, renaming: clients), MailTags.duplicateName)
+        XCTAssertNil(MailTags.validate("Receipts", existing: existing))
+    }
+
+    /// Web `tagPickerOptions`.
+    func testTagPickerOptions() {
+        let tags = [MailTag(id: "a", name: "Clients"), MailTag(id: "b", name: "Client calls"), MailTag(id: "c", name: "Travel")]
+        let all = MailTags.pickerOptions(tags, query: "")
+        XCTAssertEqual(all.matches.map(\.id), ["a", "b", "c"])
+        XCTAssertNil(all.create)
+
+        let partial = MailTags.pickerOptions(tags, query: "  client ")
+        XCTAssertEqual(partial.matches.map(\.id), ["a", "b"])
+        XCTAssertEqual(partial.create, "client")
+
+        XCTAssertNil(MailTags.pickerOptions(tags, query: "CLIENTS").create)
+        XCTAssertEqual(MailTags.pickerOptions(tags, query: "New   one").create, "New one")
+    }
+
+    func testThreadTagPatchTouchesOnlyThatConversation() {
+        let clients = TagRef(id: "a", name: "Clients")
+        let zed = TagRef(id: "z", name: "zed")
+        func email(_ id: String, thread: String?, tags: [TagRef]?) -> Email {
+            Email(id: id, threadId: thread, folderId: "inbox", subject: "", sender: "", recipient: "", date: "", read: true, starred: false, tags: tags)
+        }
+        let rows = [email("1", thread: "t1", tags: [zed]), email("2", thread: "t2", tags: nil), email("3", thread: nil, tags: nil)]
+
+        let tagged = MailTags.patchThread(rows, threadId: "t1", tag: clients, on: true)
+        XCTAssertEqual(tagged[0].tags, [clients, zed])
+        XCTAssertNil(tagged[1].tags)
+        // Mail stored without a thread id is its own conversation.
+        XCTAssertEqual(MailTags.threadKey(rows[2]), "3")
+        XCTAssertEqual(MailTags.patchThread(rows, threadId: "3", tag: clients, on: true)[2].tags, [clients])
+
+        let untagged = MailTags.patchThread(tagged, threadId: "t1", tag: clients, on: false)
+        XCTAssertEqual(untagged[0].tags, [zed])
+        XCTAssertEqual(MailTags.union(tagged + [email("4", thread: "t1", tags: [clients])]), [clients, zed])
+        XCTAssertEqual(MailTags.replacing(tagged, tagId: "a", with: "Accounts")[0].tags?.map(\.name), ["Accounts", "zed"])
+        XCTAssertEqual(MailTags.replacing(tagged, tagId: "a", with: nil)[0].tags, [zed])
+    }
+
+    func testCacheRoundTripsTagsAndKeepsThemForTaglessPayloads() throws {
+        let db = DatabaseService(inMemory: true)
+        var email = try decode(Email.self, """
+        {"id":"e9","thread_id":"t9","folder_id":"inbox","subject":"S","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-10T10:00:00Z","read":false,"starred":false,"tags":[{"id":"tag_a","name":"Clients"}]}
+        """)
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [email])
+        XCTAssertEqual(db.getEmails(mailboxId: "mb@x.com", folderId: "inbox").first?.tags, [TagRef(id: "tag_a", name: "Clients")])
+
+        // An older Worker's payload (no `tags`) keeps the cached ones.
+        email.tags = nil
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [email])
+        XCTAssertEqual(db.getEmail(id: "e9")?.tags, [TagRef(id: "tag_a", name: "Clients")])
+
+        db.updateEmailTags(["e9": []])
+        XCTAssertEqual(db.getEmail(id: "e9")?.tags, [])
     }
 
     // MARK: - Onboarding setup-users (AVE-243)

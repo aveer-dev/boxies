@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Key
@@ -75,7 +76,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.services.CustomFolders
-import androidx.compose.material.icons.outlined.Tag
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.services.BounceSuppression
@@ -485,10 +485,10 @@ private fun SettingsRootPage(
                     icon = Icons.Outlined.FilterList,
                     onClick = onOpenFilters,
                 )
-                // Custom folders, shown as tags like web (AVE-158).
+                // Custom folders (AVE-158), labelled Folders like web since AVE-241/242.
                 SettingsNavRow(
                     title = CustomFolders.PAGE_TITLE,
-                    icon = Icons.Outlined.Tag,
+                    icon = Icons.Outlined.Folder,
                     onClick = onOpenTags,
                 )
                 SettingsNavRow(

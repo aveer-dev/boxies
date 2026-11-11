@@ -930,6 +930,53 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: Tags (AVE-240, `shared/tags.ts`): many per email, on top of its one folder
+
+    static func tagsPath(mailboxId: String, tagId: String? = nil) -> String {
+        let base = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/tags"
+        guard let tagId else { return base }
+        return "\(base)/\(tagId.urlPathEncoded)"
+    }
+
+    static func threadTagPath(mailboxId: String, threadId: String, tagId: String) -> String {
+        "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/tags/\(tagId.urlPathEncoded)"
+    }
+
+    func listTags(mailboxId: String) async throws -> [MailTag] {
+        let response: TagListResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId))
+        return response.tags
+    }
+
+    /// 409 when the name is taken (ignoring case), 400 when invalid or over the limit.
+    func createTag(mailboxId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId), method: "POST", body: ["name": name])
+    }
+
+    func renameTag(mailboxId: String, tagId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "PATCH", body: ["name": name])
+    }
+
+    /// 204. The tag comes off every email; the emails stay.
+    func deleteTag(mailboxId: String, tagId: String) async throws {
+        let _: EmptyResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "DELETE")
+    }
+
+    /// One row per conversation with a tagged message, outside Trash, Spam and Drafts.
+    func listTaggedEmails(mailboxId: String, tagId: String, page: Int = 1) async throws -> EmailListResponse {
+        try await request(
+            path: "\(Self.tagsPath(mailboxId: mailboxId, tagId: tagId))/emails",
+            query: ["threaded": "true", "page": String(page), "limit": String(EmailListPaging.pageSize)]
+        )
+    }
+
+    /// Tags (`on`) or untags every message of the conversation `threadId`. Idempotent.
+    func setThreadTag(mailboxId: String, threadId: String, tagId: String, on: Bool) async throws -> ThreadTagsResponse {
+        try await request(
+            path: Self.threadTagPath(mailboxId: mailboxId, threadId: threadId, tagId: tagId),
+            method: on ? "PUT" : "DELETE"
+        )
+    }
+
     func getInboxDigest(mailboxId: String) async throws -> InboxDigest {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest")
     }

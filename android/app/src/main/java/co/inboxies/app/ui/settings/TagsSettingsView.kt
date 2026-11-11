@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,14 +67,14 @@ import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import kotlinx.coroutines.launch
 
-/** Which dialog a DEBUG preview opens on the first tag (`tagsRename` / `tagsDelete`). */
+/** Which dialog a DEBUG preview opens on the first folder (`tagsRename` / `tagsDelete`). */
 enum class TagsPreviewDialog { None, Rename, Delete }
 
 /**
- * Settings → Tags (AVE-158): create, rename and delete the mailbox's custom folders. Web
- * shows them as tags in the Folders column (`FoldersColumn.tsx`); names, validation and
- * error copy follow web and the Worker ([CustomFolders]). Deleting a tag moves its mail to
- * the Inbox. iOS twin: `TagsSettingsView.swift`.
+ * Settings → Folders (AVE-158; titled "Tags" until AVE-242): create, rename and delete the
+ * mailbox's custom folders, like web's Folders group (`FoldersColumn.tsx`); names,
+ * validation and error copy follow web and the Worker ([CustomFolders]). Deleting a folder
+ * moves its mail to the Inbox. Real tags live in `ui/tags/`. iOS twin: `TagsSettingsView.swift`.
  */
 @Composable
 fun TagsSettingsView(
@@ -226,7 +227,7 @@ fun TagsSettingsView(
                                 if (createError == null) colors.line else colors.deepDarkRed,
                                 fieldShape,
                             )
-                            .semantics { contentDescription = "Tag name" },
+                            .semantics { contentDescription = "Folder name" },
                         decorationBox = { inner ->
                             Box(
                                 modifier = Modifier.padding(horizontal = 14.dp),
@@ -255,7 +256,7 @@ fun TagsSettingsView(
                                 RoundedCornerShape(10.dp),
                             )
                             .clickable(enabled = canCreate, role = Role.Button) { create() }
-                            .semantics { contentDescription = "Create tag" },
+                            .semantics { contentDescription = "Create folder" },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (isCreating) {
@@ -350,7 +351,7 @@ fun TagsSettingsView(
                             renameDraft = it
                             renameError = null
                         },
-                        label = { Text("Tag name", fontFamily = InterFontFamily) },
+                        label = { Text("Folder name", fontFamily = InterFontFamily) },
                         singleLine = true,
                         isError = renameError != null,
                         supportingText = renameError?.let { message ->
@@ -399,7 +400,7 @@ fun TagsSettingsView(
             },
             confirmButton = {
                 TextButton(onClick = { delete(tag) }) {
-                    Text("Delete tag", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                    Text("Delete folder", fontFamily = InterFontFamily, color = colors.deepDarkRed)
                 }
             },
             dismissButton = {
@@ -428,13 +429,11 @@ private fun TagRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            "#",
-            modifier = Modifier.width(18.dp),
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 15.sp,
-            color = colors.muted,
+        Icon(
+            Icons.Outlined.Folder,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(18.dp),
         )
         Text(
             CustomFolders.bareName(tag.name),

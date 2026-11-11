@@ -272,6 +272,9 @@ struct EmailActionAvailability {
 
     var showsMove: Bool { !readOnly }
 
+    /// Tags (AVE-242): any received or sent conversation, not drafts; never read-only.
+    var showsTags: Bool { !readOnly && !email.isDraft }
+
     var showsReplyActions: Bool {
         !readOnly && !email.isDraft
     }

@@ -1,9 +1,11 @@
 import Foundation
 
-/// Custom folders, shown as "tags" (AVE-158). A message carries one tag: the folder it's in.
+/// Custom folders (AVE-158). A message lives in one: the folder it's in. Once labelled
+/// "tags"; since AVE-241/242 they read as Folders on every client, and Tags are the
+/// separate many-per-email layer (`MailTags`).
 ///
 /// Mirrors the Worker's folder routes (`workers/index.ts` POST / PUT / DELETE
-/// `/api/v1/mailboxes/:id/folders`) and the web tag UI
+/// `/api/v1/mailboxes/:id/folders`) and the web Folders group
 /// (`app/components/columns/FoldersColumn.tsx`), so a name the Worker would refuse is
 /// caught before the request with the same sentence. Android twin: `CustomFolders.kt`.
 enum CustomFolders {
@@ -15,16 +17,19 @@ enum CustomFolders {
 
     // MARK: Copy (web + Worker)
 
-    static let pageTitle = "Tags"
-    static let introText = "Tags are folders you create. File mail into one with Move to Folder on any email."
-    static let emptyTitle = "No tags yet"
-    /// Web: "No tags yet. Tags are folders you create."
-    static let emptyMessage = "Tags are folders you create."
+    static let pageTitle = "Folders"
+    static let introText = "Folders you create. A message lives in one; file mail into it with Move to Folder."
+    static let emptyTitle = "No folders yet"
+    /// Web: "No folders yet. A message lives in one folder."
+    static let emptyMessage = "A message lives in one folder."
     static let namePlaceholder = "e.g. Engineering-PRs"
-    static let createFailed = "Failed to create tag"
-    static let renameFailed = "Failed to rename tag"
-    static let deleteFailed = "Failed to delete tag"
-    static let renameTitle = "Rename tag"
+    static let nameField = "Folder name"
+    static let createLabel = "Create folder"
+    static let deleteButton = "Delete folder"
+    static let createFailed = "Failed to create folder"
+    static let renameFailed = "Failed to rename folder"
+    static let deleteFailed = "Failed to delete folder"
+    static let renameTitle = "Rename folder"
     static let deleteConfirmMessage = "Its mail moves to your Inbox. This can't be undone."
     static let noMailbox = "Select a mailbox first"
 
@@ -54,9 +59,10 @@ enum CustomFolders {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// "#Receipts" for a folder named "Receipts" (web strips one leading "#" and draws its own).
+    /// "Receipts" for a folder named "#Receipts" (web strips one leading "#" and, since
+    /// the Folders relabel, draws no "#" of its own).
     static func displayName(_ folder: Folder) -> String {
-        "#\(bareName(folder.name))"
+        bareName(folder.name)
     }
 
     static func bareName(_ name: String) -> String {
@@ -81,7 +87,7 @@ enum CustomFolders {
         return s
     }
 
-    /// Error sentence for a new tag name, or nil when the Worker would accept it.
+    /// Error sentence for a new folder name, or nil when the Worker would accept it.
     static func validateCreate(_ raw: String, existing: [Folder]) -> String? {
         let name = normalizedName(raw)
         guard !name.isEmpty else { return nameRequired }

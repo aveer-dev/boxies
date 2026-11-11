@@ -163,6 +163,42 @@ class DatabaseService private constructor() {
         }
     }
 
+    /**
+     * Cached rows carrying [tagId] outside Trash, Spam and Drafts, one per conversation,
+     * newest first: what a tag view shows before its server list lands (AVE-242).
+     */
+    fun getTaggedEmails(mailboxId: String, tagId: String): List<Email> =
+        EmailPaging.collapseThreads(
+            emailsIn(mailboxId)
+                .filter { email ->
+                    email.folderId !in setOf("trash", "spam", "draft", "drafts") &&
+                        email.tags.orEmpty().any { it.id == tagId }
+                }
+                .sortedByDescending { it.date }
+                .toList(),
+        )
+
+    /** Rewrites the tags of every cached message of conversation [threadKey]. */
+    fun updateThreadTags(mailboxId: String, threadKey: String, transform: (List<co.inboxies.app.models.TagRef>?) -> List<co.inboxies.app.models.TagRef>) {
+        emailsIn(mailboxId).filter { MailTags.threadKey(it) == threadKey }.toList().forEach { email ->
+            emails[email.id] = email.copy(tags = transform(email.tags))
+        }
+    }
+
+    /** A tag was renamed or deleted: every cached row follows (`name` null drops it). */
+    fun updateTagEverywhere(mailboxId: String, tagId: String, name: String?) {
+        emailsIn(mailboxId).filter { e -> e.tags.orEmpty().any { it.id == tagId } }.toList().forEach { email ->
+            val next = email.tags.orEmpty().mapNotNull { tag ->
+                when {
+                    tag.id != tagId -> tag
+                    name == null -> null
+                    else -> tag.copy(name = name)
+                }
+            }.sortedWith(MailTags.order)
+            emails[email.id] = email.copy(tags = next)
+        }
+    }
+
     fun updateEmailFlags(
         id: String,
         read: Boolean? = null,

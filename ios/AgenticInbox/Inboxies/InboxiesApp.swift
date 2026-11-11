@@ -50,6 +50,7 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewScreenerList")
                 || ProcessInfo.processInfo.arguments.contains("-previewSpam")
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater")
+                || PreviewSupport.isTagPreview
                 || PreviewSupport.isServiceMailboxPreview {
                 PreviewMailboxRoot()
                     .applyThemeController()

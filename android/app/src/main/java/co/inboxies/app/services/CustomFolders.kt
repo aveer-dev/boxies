@@ -3,10 +3,12 @@ package co.inboxies.app.services
 import co.inboxies.app.models.Folder
 
 /**
- * Custom folders, shown as "tags" (AVE-158). A message carries one tag: the folder it's in.
+ * Custom folders (AVE-158): a message lives in one. Until AVE-242 the app called them
+ * "tags"; real tags (many per message) are [MailTags], so these are labelled Folders now,
+ * like web (AVE-241). Ids and routes are unchanged.
  *
  * Mirrors the Worker's folder routes (`workers/index.ts` POST / PUT / DELETE
- * `/api/v1/mailboxes/:id/folders`) and the web tag UI
+ * `/api/v1/mailboxes/:id/folders`) and the web folder UI
  * (`app/components/columns/FoldersColumn.tsx`), so a name the Worker would refuse is caught
  * before the request with the same sentence. iOS twin: `CustomFolders.swift`.
  */
@@ -18,16 +20,16 @@ object CustomFolders {
     )
 
     // Copy (web + Worker)
-    const val PAGE_TITLE = "Tags"
-    const val INTRO_TEXT = "Tags are folders you create. File mail into one with Move to Folder on any email."
-    const val EMPTY_TITLE = "No tags yet"
-    /** Web: "No tags yet. Tags are folders you create." */
-    const val EMPTY_MESSAGE = "Tags are folders you create."
+    const val PAGE_TITLE = "Folders"
+    const val INTRO_TEXT = "Folders you create. A message lives in one; file mail into it with Move to Folder."
+    const val EMPTY_TITLE = "No folders yet"
+    /** Web: "No folders yet. A message lives in one folder." */
+    const val EMPTY_MESSAGE = "A message lives in one folder."
     const val NAME_PLACEHOLDER = "e.g. Engineering-PRs"
-    const val CREATE_FAILED = "Failed to create tag"
-    const val RENAME_FAILED = "Failed to rename tag"
-    const val DELETE_FAILED = "Failed to delete tag"
-    const val RENAME_TITLE = "Rename tag"
+    const val CREATE_FAILED = "Failed to create folder"
+    const val RENAME_FAILED = "Failed to rename folder"
+    const val DELETE_FAILED = "Failed to delete folder"
+    const val RENAME_TITLE = "Rename folder"
     const val DELETE_CONFIRM_MESSAGE = "Its mail moves to your Inbox. This can't be undone."
     const val NO_MAILBOX = "Select a mailbox first"
 
@@ -48,12 +50,12 @@ object CustomFolders {
     fun custom(folders: List<Folder>): List<Folder> =
         folders.filter(::isCustom).sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
 
-    /** "#Receipts" for a folder named "Receipts" (web strips one leading "#" and draws its own). */
-    fun displayName(folder: Folder): String = "#${bareName(folder.name)}"
+    /** "Receipts" for a folder named "Receipts" or "#Receipts" (web drops the "#", AVE-241). */
+    fun displayName(folder: Folder): String = bareName(folder.name)
 
     fun bareName(name: String): String = name.removePrefix("#")
 
-    /** What we send: trimmed, one leading "#" dropped (web `handleCreateTag`). */
+    /** What we send: trimmed, one leading "#" dropped (web `handleCreateFolder`). */
     fun normalizedName(raw: String): String = bareName(raw.trim()).trim()
 
     /**
@@ -67,7 +69,7 @@ object CustomFolders {
         .replace(Regex("^-+"), "")
         .replace(Regex("-+$"), "")
 
-    /** Error sentence for a new tag name, or null when the Worker would accept it. */
+    /** Error sentence for a new folder name, or null when the Worker would accept it. */
     fun validateCreate(raw: String, existing: List<Folder>): String? {
         val name = normalizedName(raw)
         if (name.isEmpty()) return NAME_REQUIRED

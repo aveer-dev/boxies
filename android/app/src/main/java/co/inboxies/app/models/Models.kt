@@ -676,6 +676,11 @@ data class Email(
     @SerialName("blocked_trackers")
     @Serializable(with = LenientBlockedTrackersSerializer::class)
     val blockedTrackers: BlockedTrackers? = null,
+    /**
+     * Tags (AVE-240/242): this message's, or on threaded list rows every tag in the
+     * conversation. Sorted by name; absent from older Workers (read as none).
+     */
+    val tags: List<TagRef>? = null,
 ) {
     /** A pending reminder on a mail still in Reply Later (AVE-86). */
     val hasPendingReplyLaterReminder: Boolean
@@ -1062,6 +1067,40 @@ data class ThreadNotesResponse(
     val notes: List<ThreadNote> = emptyList(),
 )
 
+/** The short tag form on email and thread payloads (`shared/tags.ts` `TagRef`). */
+@Serializable
+data class TagRef(
+    val id: String,
+    val name: String,
+)
+
+/** A tag as the tag routes list and return it (`shared/tags.ts` `Tag`). */
+@Serializable
+data class MailTag(
+    val id: String,
+    val name: String,
+    /** Tagged messages outside Trash, Spam and Drafts. */
+    val emailCount: Int = 0,
+    /** Unread tagged messages outside Trash, Spam and Drafts. */
+    val unreadCount: Int = 0,
+) {
+    val ref: TagRef get() = TagRef(id, name)
+}
+
+/** `GET /tags`. */
+@Serializable
+data class TagListResponse(val tags: List<MailTag> = emptyList())
+
+/** `PUT` / `DELETE /threads/:threadId/tags/:tagId`. */
+@Serializable
+data class ThreadTagsResponse(
+    val threadId: String,
+    /** Every tag on any message of the thread, after the change. */
+    val tags: List<TagRef> = emptyList(),
+    /** Messages whose tags changed. */
+    val emailIds: List<String> = emptyList(),
+)
+
 @Serializable
 data class EmailListResponse(
     val emails: List<Email> = emptyList(),
@@ -1265,12 +1304,14 @@ sealed class HomeTab {
     data object Chats : HomeTab()
     data object AiInbox : HomeTab()
     data object ReplyLater : HomeTab()
+    /** Everything with one tag (AVE-242): pushed like Reply Later; the UI names it. */
+    data class Tag(val id: String) : HomeTab()
 
     val syncFolderId: String?
         get() = when (this) {
             is Folder -> id
             AiInbox -> "inbox"
-            Chats, ReplyLater -> null
+            Chats, ReplyLater, is Tag -> null
         }
 
     val title: String
@@ -1291,6 +1332,7 @@ sealed class HomeTab {
             Chats -> "AI"
             AiInbox -> "For you"
             ReplyLater -> "Reply Later"
+            is Tag -> "Tag"
         }
 
     companion object {
