@@ -41,6 +41,16 @@ export function taggedPath(mailboxRef: string, tagId: string) {
 }
 
 /**
+ * A pile (AVE-194): Reply Later and Set Aside by name, custom piles by their
+ * random id (`p_…`), never their name.
+ */
+export function pilePath(mailboxRef: string, pileId: string) {
+	if (pileId === "reply_later") return `${mailboxPath(mailboxRef)}/reply-later`;
+	if (pileId === "set_aside") return `${mailboxPath(mailboxRef)}/set-aside`;
+	return `${mailboxPath(mailboxRef)}/piles/${encodeURIComponent(pileId)}`;
+}
+
+/**
  * The list for any folder id: built-in folders by name, tags by index in
  * `folderIds` (the mailbox's folders). Null for a tag `folderIds` lacks.
  */
@@ -67,6 +77,7 @@ export function searchPath(mailboxRef: string, query: string) {
  *   /mailbox/:ref/tagged/:tagId/:emailId?    everything with a tag → reader
  *   /mailbox/:ref/reply-later/:emailId?      Reply Later → reader
  *   /mailbox/:ref/set-aside/:emailId?        Set Aside → reader
+ *   /mailbox/:ref/piles/:pileId/:emailId?    a pile people made → reader
  *   /mailbox/:ref/new/:emailId?              all New Inbox mail → reader
  *   /mailbox/:ref/search/:emailId?q=…        results → reader
  *

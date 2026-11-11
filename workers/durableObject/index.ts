@@ -233,10 +233,15 @@ import {
 	UNKNOWN_PILE_ERROR,
 	clearOtherPilesInThread,
 	countPile,
+	createPile,
+	deletePile,
 	isPileId,
 	listPiles,
+	renamePile,
 	setEmailPile,
+	type CreatePileResult,
 	type PileChange,
+	type RenamePileResult,
 } from "../lib/piles";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
 import type { AiQuotaExceededError, AiUsageSnapshot } from "../../shared/ai-quota";
@@ -1421,6 +1426,39 @@ export class MailboxDO extends DurableObject<Env> {
 			// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
 			due_count: pile.id === PILE_REPLY_LATER ? countDueReplyLater(sql) : 0,
 		}));
+	}
+
+	// ── Custom piles (AVE-194; see shared/piles) ──────────────────
+	// Shared by the whole mailbox: `piles_changed` after a pile is created,
+	// renamed or deleted; deleting also sends `email_updated` per message
+	// that came out of it.
+
+	async createPile(name: unknown): Promise<CreatePileResult> {
+		await this.#assertMailboxWritable();
+		const result = createPile(this.ctx.storage.sql, name);
+		if (result.ok) this.broadcastEvent("piles_changed", {});
+		return result;
+	}
+
+	async renamePile(pileId: string, name: unknown): Promise<RenamePileResult> {
+		await this.#assertMailboxWritable();
+		const result = renamePile(this.ctx.storage.sql, pileId, name);
+		if (result.ok && result.changed) this.broadcastEvent("piles_changed", {});
+		return result;
+	}
+
+	/** Delete a custom pile; its mail comes out of it and is otherwise untouched. */
+	async deletePile(pileId: string): Promise<"ok" | "not_found" | "builtin"> {
+		const result = this.ctx.storage.transactionSync(() => deletePile(this.ctx.storage.sql, pileId));
+		if (!result.ok) return result.error;
+		// A big pile is left to `piles_changed` (clients refetch) rather than one event per message.
+		if (result.emailIds.length <= 100) {
+			for (const id of result.emailIds) {
+				this.broadcastEvent("email_updated", { id, pile_id: null, reply_later: false });
+			}
+		}
+		this.broadcastEvent("piles_changed", {});
+		return "ok";
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──

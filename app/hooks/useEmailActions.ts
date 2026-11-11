@@ -40,6 +40,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 	const startCompose = useUIStore((s) => s.startCompose);
 	const openReader = useUIStore((s) => s.openReader);
 	const openPopOut = useUIStore((s) => s.openPopOut);
+	const openPileCreator = useUIStore((s) => s.openPileCreator);
 
 	const setRead = useCallback(
 		(email: Email, read: boolean) => {
@@ -64,6 +65,10 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 			toggleReplyLater: replyLater.toggleReplyLater,
 			/** Set Aside pile (AVE-201): in or out; Reply Later mail moves over. */
 			toggleSetAside: replyLater.toggleSetAside,
+			/** Any pile, including custom ones (AVE-194); null takes it out of its pile. */
+			setPile: replyLater.setPile,
+			/** "New pile…": name a pile, then put the message in it (AVE-194). */
+			newPile: (email: Email) => openPileCreator(email),
 			/** Opens the Reply Later reminder picker (AVE-86). */
 			remindMe: replyLater.openReminderPicker,
 			archive: (email: Email) => {
@@ -112,7 +117,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 				if (hasUnread(email)) setRead(email, true);
 			},
 		}),
-		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager, showSpamVerdictToast, replyLater],
+		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, openPileCreator, onGone, toastManager, showSpamVerdictToast, replyLater],
 	);
 }
 

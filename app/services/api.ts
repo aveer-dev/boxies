@@ -42,6 +42,7 @@ import type {
 	UpdateThreadNoteRequest,
 } from "~/types";
 import type { Tag, ThreadTagsResponse } from "shared/tags";
+import type { WorkflowPile } from "shared/piles";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
 import { reauthChallenge, requestReauth, type ReauthChallenge } from "~/lib/reauth";
 import type { AiUsageSnapshot } from "../../shared/ai-quota";
@@ -708,18 +709,14 @@ const api = {
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
 	listWorkflowPiles: (mailboxId: string) =>
-		get<{
-			piles: {
-				id: string;
-				name?: string;
-				builtin?: boolean;
-				clears_on_reply?: boolean;
-				count: number;
-				due_count?: number;
-			}[];
-		}>(
-			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
-		),
+		get<{ piles: WorkflowPile[] }>(`/api/v1/mailboxes/${mailboxId}/workflow-piles`),
+	// Custom piles (AVE-194, shared/piles.ts): built-in piles can't be renamed or deleted
+	createPile: (mailboxId: string, name: string) =>
+		post<WorkflowPile>(`/api/v1/mailboxes/${mailboxId}/piles`, { name }),
+	renamePile: (mailboxId: string, pileId: string, name: string) =>
+		patch<WorkflowPile>(`/api/v1/mailboxes/${mailboxId}/piles/${encodeURIComponent(pileId)}`, { name }),
+	deletePile: (mailboxId: string, pileId: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/piles/${encodeURIComponent(pileId)}`),
 	createFolder: (mailboxId: string, name: string) =>
 		post<Folder>(`/api/v1/mailboxes/${mailboxId}/folders`, { name }),
 	updateFolder: (mailboxId: string, id: string, name: string) =>
