@@ -20,6 +20,7 @@ import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.PileIds
+import co.inboxies.app.models.WorkflowPile
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
@@ -191,6 +192,22 @@ class AppModel {
     /** Phone home's Tags sheet (folders menu → Tags). */
     private val _showsTagList = MutableStateFlow(false)
     val showsTagList: StateFlow<Boolean> = _showsTagList.asStateFlow()
+
+    /** Piles people made (AVE-194), in the Worker's order, with their counts. */
+    private val _customPiles = MutableStateFlow<List<WorkflowPile>>(emptyList())
+    val customPiles: StateFlow<List<WorkflowPile>> = _customPiles.asStateFlow()
+
+    /** Mail the Move to pile picker is open for (row menu, actions sheet). */
+    private val _pilePickerEmail = MutableStateFlow<Email?>(null)
+    val pilePickerEmail: StateFlow<Email?> = _pilePickerEmail.asStateFlow()
+
+    /** Phone home's Piles sheet (folders menu → Piles). */
+    private val _showsPileList = MutableStateFlow(false)
+    val showsPileList: StateFlow<Boolean> = _showsPileList.asStateFlow()
+
+    /** A pile view asked for from outside home's tab state (reader chip); home opens it. */
+    private val _pileViewRequest = MutableStateFlow<String?>(null)
+    val pileViewRequest: StateFlow<String?> = _pileViewRequest.asStateFlow()
 
     private val _identities = MutableStateFlow<List<LinkedIdentity>?>(null)
     val identities: StateFlow<List<LinkedIdentity>?> = _identities.asStateFlow()
@@ -674,6 +691,166 @@ class AppModel {
         db.updateTagEverywhere(mailboxId, tagId, name)
     }
 
+    // Piles people make (AVE-194), beside Reply Later and Set Aside. API: shared/piles.ts.
+    // They work like Set Aside: the mail stays until taken out, replying leaves it, and a
+    // mail is in one pile at a time (joining moves it out of Reply Later).
+
+    fun customPile(id: String): WorkflowPile? = _customPiles.value.firstOrNull { it.id == id }
+
+    /** The custom pile [email] is in, if any. */
+    fun customPileOf(email: Email): WorkflowPile? =
+        email.currentPileId?.takeUnless { PileIds.isBuiltin(it) }?.let { customPile(it) }
+
+    /** A custom pile view's title: its name, or "Pile" while the list loads. */
+    fun pileTitle(id: String): String = customPile(id)?.let(MailPiles::displayName) ?: HomeTab.Pile(id).title
+
+    fun openPilePicker(email: Email) {
+        hideToast()
+        _pilePickerEmail.value = email
+    }
+
+    fun dismissPilePicker() {
+        _pilePickerEmail.value = null
+    }
+
+    /** DEBUG previews: fixture custom piles (no network). */
+    fun setCustomPilesForPreview(piles: List<WorkflowPile>) {
+        _customPiles.value = piles
+    }
+
+    fun setPileListVisible(visible: Boolean) {
+        _showsPileList.value = visible
+    }
+
+    fun requestPileView(pileId: String) {
+        _pileViewRequest.value = pileId
+    }
+
+    fun consumePileViewRequest() {
+        _pileViewRequest.value = null
+    }
+
+    /** Fresh pile list and counts (Set Aside and custom piles); previews keep fixtures. */
+    suspend fun refreshPiles() {
+        if (isDebugPreview) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        val piles = runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull() ?: return
+        ifStillSelected(mailboxId) {
+            _customPiles.value = MailPiles.custom(piles.piles)
+            piles.pile(PileIds.SET_ASIDE)?.let { _setAsideCount.value = it.count }
+        }
+    }
+
+    /**
+     * Put [email] in a pile people made, or take it out of its pile with `null`. Reply Later
+     * and Set Aside keep their own flows. Optimistic like [toggleSetAside]; rolled back with
+     * a toast when the Worker refuses.
+     */
+    suspend fun setPile(email: Email, pileId: String?) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = _emails.value.firstOrNull { it.id == email.id } ?: email
+        val previous = target.currentPileId
+        if (previous == pileId) return
+        when {
+            pileId == PileIds.REPLY_LATER || (pileId == null && previous == PileIds.REPLY_LATER) -> {
+                toggleReplyLater(target)
+                return
+            }
+            pileId == PileIds.SET_ASIDE || (pileId == null && previous == PileIds.SET_ASIDE) -> {
+                toggleSetAside(target)
+                return
+            }
+        }
+        db.updateEmailPile(target.id, pileId)
+        applyEmailUpdate(target.inPile(pileId))
+        previous?.let { adjustPileCount(it, -1) }
+        pileId?.let { adjustPileCount(it, +1) }
+        val ok = isDebugPreview ||
+            runCatching { ApiClient.shared.setEmailPile(mailboxId, target.id, pileId) }.isSuccess
+        if (ok) {
+            val name = (pileId ?: previous)?.let { customPile(it) }?.let(MailPiles::displayName) ?: "pile"
+            showToast(if (pileId != null) MailPiles.movedToast(name) else MailPiles.removedToast(name))
+        } else {
+            db.upsertEmails(mailboxId, listOf(target))
+            applyEmailUpdate(target)
+            pileId?.let { adjustPileCount(it, -1) }
+            previous?.let { adjustPileCount(it, +1) }
+            showToast(MailPiles.UPDATE_FAILED, isError = true)
+        }
+        if (!isDebugPreview) refreshReplyLaterCount()
+    }
+
+    private fun adjustPileCount(pileId: String, delta: Int) {
+        when (pileId) {
+            PileIds.REPLY_LATER -> _replyLaterCount.update { maxOf(0, it + delta) }
+            PileIds.SET_ASIDE -> _setAsideCount.update { maxOf(0, it + delta) }
+            else -> setCustomPileCount(pileId) { it + delta }
+        }
+    }
+
+    /** Makes a pile; names the Worker would refuse throw [TagException] before any request. */
+    suspend fun createPile(raw: String): WorkflowPile {
+        MailPiles.validate(raw, _customPiles.value)?.let { throw TagException(it) }
+        val name = (MailPiles.normalizeName(raw) as MailPiles.NameResult.Ok).name
+        val created = if (isDebugPreview) {
+            WorkflowPile(id = "p_" + UUID.randomUUID().toString().take(8), name = name, builtin = false, clearsOnReply = false)
+        } else {
+            val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+            try {
+                ApiClient.shared.createPile(mailboxId, name)
+            } catch (e: ApiException.Http) {
+                throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailPiles.CREATE_FAILED)
+            }
+        }
+        _customPiles.update { list -> list.filterNot { it.id == created.id } + created }
+        return created
+    }
+
+    /** Makes [raw] and puts [email] in it (the picker's New pile row). */
+    suspend fun createPile(raw: String, applyingTo: Email) {
+        val created = createPile(raw)
+        setPile(applyingTo, created.id)
+    }
+
+    suspend fun renamePile(pile: WorkflowPile, raw: String) {
+        MailPiles.validate(raw, _customPiles.value, renaming = pile)?.let { throw TagException(it) }
+        val name = (MailPiles.normalizeName(raw) as MailPiles.NameResult.Ok).name
+        if (name == pile.name) return
+        val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+        if (!isDebugPreview) {
+            try {
+                ApiClient.shared.renamePile(mailboxId, pile.id, name)
+            } catch (e: ApiException.Http) {
+                throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailPiles.RENAME_FAILED)
+            }
+        }
+        ifStillSelected(mailboxId) {
+            _customPiles.update { list -> list.map { if (it.id == pile.id) it.copy(name = name) else it } }
+        }
+    }
+
+    /** Deletes a pile: its mail comes out of it and stays put. Its open view goes to Inbox. */
+    suspend fun deletePile(pile: WorkflowPile) {
+        val mailboxId = _selectedMailboxId.value ?: throw TagException(CustomFolders.NO_MAILBOX)
+        if (!isDebugPreview) {
+            try {
+                ApiClient.shared.deletePile(mailboxId, pile.id)
+            } catch (e: ApiException.Http) {
+                // Already gone elsewhere: treat as deleted.
+                if (e.code != 404) throw TagException(e.message?.takeIf { it.isNotBlank() } ?: MailPiles.DELETE_FAILED)
+            }
+        }
+        ifStillSelected(mailboxId) {
+            _customPiles.update { list -> list.filterNot { it.id == pile.id } }
+            db.clearPile(mailboxId, pile.id)
+            fun Email.out() = if (pileId == pile.id) copy(pileId = null, pileAt = null) else this
+            _emails.update { list -> list.map { it.out() } }
+            _selectedEmail.update { it?.out() }
+            _threadEmails.update { list -> list.map { it.out() } }
+            if (_selectedTab.value == HomeTab.Pile(pile.id)) selectTab(HomeTab.Folder(FolderIds.INBOX))
+        }
+    }
+
     /**
      * Optimistic unread change, in conversations (AVE-228). The Inbox's count is also the New
      * total, so "Show N more new" and the widget move with it (read, archive, delete, move).
@@ -976,6 +1153,10 @@ class AppModel {
             _tags.value = emptyList()
             _tagPickerEmail.value = null
             if (_selectedTab.value is HomeTab.Tag) _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
+            // So do custom piles (AVE-194).
+            _customPiles.value = emptyList()
+            _pilePickerEmail.value = null
+            if (_selectedTab.value is HomeTab.Pile) _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
         }
         _selectedMailboxId.value = id
         selectionIsProvisional = false
@@ -1247,7 +1428,7 @@ class AppModel {
         } else if (tab.isPile) {
             _selectedMailboxId.value?.let { mailboxId ->
                 val cached = cachedPileEmails(mailboxId, tab)
-                val pileCount = if (tab is HomeTab.SetAside) _setAsideCount.value else _replyLaterCount.value
+                val pileCount = pileCount(tab)
                 if (cached.isNotEmpty()) {
                     _emails.value = cached
                     _isLoading.value = false
@@ -1499,6 +1680,7 @@ class AppModel {
             if (piles != null) {
                 if (replyLaterFromPiles) _replyLaterCount.value = piles.count(PileIds.REPLY_LATER)
                 _setAsideCount.value = piles.count(PileIds.SET_ASIDE)
+                if (!isDebugPreview) _customPiles.value = MailPiles.custom(piles.piles)
             } else {
                 val localSetAside = db.getSetAsideCount(mailboxId)
                 if (localSetAside > 0 || _setAsideCount.value == 0) _setAsideCount.value = localSetAside
@@ -1509,11 +1691,30 @@ class AppModel {
     /** Cached rows for a pile tab (Reply Later / Set Aside), in the Worker's order. */
     private fun cachedPileEmails(mailboxId: String, tab: HomeTab): List<Email> = when (tab) {
         HomeTab.SetAside -> db.getSetAsideEmails(mailboxId)
+        is HomeTab.Pile -> db.getPileEmails(mailboxId, tab.id)
         else -> db.getReplyLaterEmails(mailboxId)
     }
 
+    /** What a pile tab holds, as last counted. */
+    fun pileCount(tab: HomeTab): Int = when (tab) {
+        HomeTab.SetAside -> _setAsideCount.value
+        is HomeTab.Pile -> customPile(tab.id)?.count ?: 0
+        else -> _replyLaterCount.value
+    }
+
     private fun setPileCount(listScope: EmailListScope, count: Int) {
-        if (listScope.setAside) _setAsideCount.value = count else _replyLaterCount.value = count
+        val custom = listScope.customPileId
+        when {
+            custom != null -> setCustomPileCount(custom) { count }
+            listScope.setAside -> _setAsideCount.value = count
+            else -> _replyLaterCount.value = count
+        }
+    }
+
+    private fun setCustomPileCount(pileId: String, next: (Int) -> Int) {
+        _customPiles.update { list ->
+            list.map { if (it.id == pileId) it.copy(count = maxOf(0, next(it.count))) else it }
+        }
     }
 
     fun openReminderPicker(email: Email) {
@@ -1565,7 +1766,7 @@ class AppModel {
     /** Pull-to-refresh: start the list over at page 1. */
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
-            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater, is HomeTab.SetAside, is HomeTab.Tag -> {
+            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater, is HomeTab.SetAside, is HomeTab.Tag, is HomeTab.Pile -> {
                 loadEmailsForCurrentTab(showLoading = false, resetPaging = true)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
@@ -1622,6 +1823,8 @@ class AppModel {
         return when {
             tagId != null -> ApiClient.shared.listTaggedEmails(listScope.mailboxId, tagId, page = page)
             listScope.setAside -> ApiClient.shared.listPileEmails(listScope.mailboxId, PileIds.SET_ASIDE, page = page)
+            listScope.customPileId != null ->
+                ApiClient.shared.listPileEmails(listScope.mailboxId, listScope.customPileId, page = page)
             else -> ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
         }
     }
@@ -2362,6 +2565,9 @@ class AppModel {
         _tags.value = emptyList()
         _tagPickerEmail.value = null
         _showsTagList.value = false
+        _customPiles.value = emptyList()
+        _pilePickerEmail.value = null
+        _showsPileList.value = false
         // Sign-out forgets the last mailbox; the next account starts on its own first one.
         if (!isDebugPreview) LastMailboxPreference.clear()
         selectionIsProvisional = false
@@ -2391,12 +2597,16 @@ class AppModel {
         administeredDomains: List<String> = emptyList(),
         domainServices: Map<String, DomainService> = emptyMap(),
         tags: List<MailTag> = emptyList(),
+        customPiles: List<WorkflowPile> = emptyList(),
     ) {
         streamClient.stop()
         isDebugPreview = true
         _tags.value = MailTags.sorted(tags)
         _tagPickerEmail.value = null
         _showsTagList.value = false
+        _customPiles.value = customPiles
+        _pilePickerEmail.value = null
+        _showsPileList.value = false
         val generation = _paging.value.generation + 1
         _paging.value = EmailListScope.of(selectedMailboxId, selectedTab)
             ?.let { EmailPagingState(scope = it, page = 1, hasMore = hasMorePages, generation = generation) }
@@ -2846,9 +3056,10 @@ class AppModel {
         if (_selectedEmail.value?.id == updated.id) _selectedEmail.value = updated
         _threadEmails.update { list -> list.map { if (it.id == updated.id) updated else it } }
         _emails.update { list ->
-            val leftPile = when (_selectedTab.value) {
+            val leftPile = when (val tab = _selectedTab.value) {
                 HomeTab.ReplyLater -> !updated.replyLater
                 HomeTab.SetAside -> !updated.isSetAside
+                is HomeTab.Pile -> updated.currentPileId != tab.id
                 else -> false
             }
             if (leftPile) {

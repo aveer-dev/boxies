@@ -219,6 +219,9 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSetAside` | Set Aside pile (AVE-201) |
+| `-previewPile` | The "Waiting on" pile someone made: back + ⋯ (Rename pile… / Delete pile), fixture rows across folders, no API (AVE-194; Android `pile`) |
+| `-previewPileList` | Phone home Piles group (the sheet the folders menu's Piles item opens), counts + New pile (AVE-194; Android `pileList`) |
+| `-previewPilePicker` | Reader on "To pay" mail with the Move to pile picker open (tick, take out, New pile…), in-memory (AVE-194; Android `pilePicker`) |
 | `-previewReplyLater -previewFocusReply` / `-previewReplyLater -previewFocusReplyDone` | Focus & Reply: the "N waiting · Focus & Reply" strip opens the first thread's reply with the "Focus & Reply · 1 of N · Skip" bar · the pile after a run emptied it ("All done") (AVE-193) |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewCode` / `-previewDetail -previewInvite` | Reader with the Code card / Invite card pinned above the bottom bar (add `-previewInviteCancelled` for the cancelled invite, `-previewInviteAddress` for an in-person invite with Directions, `-previewInviteExpanded` to open the details) (AVE-176) |

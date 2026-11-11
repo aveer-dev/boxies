@@ -170,7 +170,7 @@ fun AddTagChip(hasTags: Boolean, onClick: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TagSheetFrame(
+internal fun TagSheetFrame(
     title: String,
     onDismiss: () -> Unit,
     trailing: (@Composable () -> Unit)? = null,
@@ -459,14 +459,16 @@ fun TagEditorDialogs(state: TagEditorState) {
     }
 }
 
+/** Name prompt for tags, reused by piles (AVE-194) with their own [label]. */
 @Composable
-private fun TagNameDialog(
+internal fun TagNameDialog(
     title: String,
     confirm: String,
     initial: String,
     onDismiss: () -> Unit,
     onConfirm: suspend (String) -> Unit,
     fallbackError: String,
+    label: String = MailTags.NAME_LABEL,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -503,7 +505,7 @@ private fun TagNameDialog(
                     draft = it
                     error = null
                 },
-                label = { Text(MailTags.NAME_LABEL, fontFamily = InterFontFamily) },
+                label = { Text(label, fontFamily = InterFontFamily) },
                 singleLine = true,
                 isError = error != null,
                 supportingText = error?.let { message ->
