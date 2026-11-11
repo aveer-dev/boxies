@@ -57,9 +57,12 @@
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
 #   ./scripts/run-debug-preview.sh signature           # Settings → Outgoing mail → Signature (AVE-204)
-#   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
-#   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
-#   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
+#   ./scripts/run-debug-preview.sh tags                # Settings → Folders (custom folders, AVE-158)
+#   ./scripts/run-debug-preview.sh tagsRename          # Settings → Folders, rename dialog open
+#   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Folders, delete confirmation open
+#   ./scripts/run-debug-preview.sh tagView             # tag view "Clients" (AVE-242)
+#   ./scripts/run-debug-preview.sh tagPicker           # reader with the tag picker open
+#   ./scripts/run-debug-preview.sh tagList             # home with the Tags sheet open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
 #   ./scripts/run-debug-preview.sh aiUsage             # agent chat, usage meter at 42 / 50 (warning)
@@ -110,6 +113,9 @@ case "$mode" in
   tags|Tags|previewTags) extra=previewTags; label=tags ;;
   tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
   tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
+  tagView|TagView|previewTagView) extra=previewTagView; label=tagView ;;
+  tagPicker|TagPicker|previewTagPicker) extra=previewTagPicker; label=tagPicker ;;
+  tagList|TagList|previewTagList) extra=previewTagList; label=tagList ;;
   settings|Settings|previewSettings) extra=previewSettings; label=settings ;;
   settingsScreenerOff|SettingsScreenerOff|previewSettingsScreenerOff) extra=previewSettingsScreenerOff; label=settingsScreenerOff ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
@@ -169,7 +175,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | replyLater | setAside | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

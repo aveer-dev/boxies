@@ -14,6 +14,8 @@ struct EmailDetailView: View {
     @State private var noteEditor: NoteEditorTarget?
     @State private var queuedNoteEditor: NoteEditorTarget?
     @State private var noteToDelete: ThreadNote?
+    /// Tags picker for the open conversation (AVE-242).
+    @State private var showsTagPicker = false
     @Namespace private var actionsNamespace
 
     private var email: Email? {
@@ -135,6 +137,15 @@ struct EmailDetailView: View {
                     )
                 }
             }
+            #if DEBUG
+            .task {
+                // `-previewTagPicker` (AVE-242): the Tags picker open on this conversation.
+                if ProcessInfo.processInfo.arguments.contains("-previewTagPicker") {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    showsTagPicker = true
+                }
+            }
+            #endif
             .task(id: noteThreadKey) {
                 guard let noteThreadKey else { return }
                 await app.loadThreadNotes(threadKey: noteThreadKey)
@@ -155,6 +166,14 @@ struct EmailDetailView: View {
                                 )
                             } : nil
                         )
+                    }
+            }
+            .background {
+                Color.clear
+                    .sheet(isPresented: $showsTagPicker) {
+                        if let email {
+                            TagPickerSheet(email: email)
+                        }
                     }
             }
             .background {
@@ -334,10 +353,69 @@ struct EmailDetailView: View {
                         ForEach(detailTags, id: \.self) { tag in
                             tagChip(tag, destructive: tag == "Spoofed")
                         }
+
+                        // Tags (AVE-242): the conversation's, each opening its tag view.
+                        ForEach(conversationTags) { tag in
+                            Button {
+                                openTag(tag.id)
+                            } label: {
+                                TagPill(name: tag.name, size: 12)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Shows everything tagged \(tag.name)")
+                        }
+
+                        if canTag {
+                            Button {
+                                showsTagPicker = true
+                            } label: {
+                                addTagChip
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(conversationTags.isEmpty ? MailTags.addChip : "Edit tags")
+                            .accessibilityIdentifier("readerAddTag")
+                        }
                     }
                 }
             }
         }
+    }
+
+    private var conversationTags: [TagRef] {
+        guard let email else { return [] }
+        return app.conversationTags(for: email)
+    }
+
+    private var canTag: Bool {
+        guard let email else { return false }
+        return EmailActionAvailability(email: email, readOnly: app.isReadOnly).showsTags
+    }
+
+    /// "Add tag" before the first tag; a bare glyph once the conversation has some.
+    private var addTagChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: conversationTags.isEmpty ? "tag" : "plus")
+                .font(.system(size: 11, weight: .semibold))
+            if conversationTags.isEmpty {
+                Text(MailTags.addChip)
+                    .font(.inter(size: 12, weight: .medium))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(AppTheme.line, lineWidth: 1)
+        }
+        .foregroundStyle(AppTheme.muted)
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    /// The reader is a sheet on phones: close it, then push the tag's view.
+    private func openTag(_ tagId: String) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        app.selectedEmail = nil
+        app.openTagView(tagId)
     }
 
     private func tagChip(_ title: String, destructive: Bool = false) -> some View {

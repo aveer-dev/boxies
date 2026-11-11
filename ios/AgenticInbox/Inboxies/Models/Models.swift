@@ -827,6 +827,9 @@ struct Email: Identifiable, Codable, Hashable {
     var pileId: String? = nil
     /// When the mail joined its pile, UTC ISO 8601 (non-threaded list rows only).
     var pileAt: String? = nil
+    /// Tags (AVE-240): this message's, or on threaded list rows every tag in the
+    /// conversation. Sorted by name; nil from older Workers (shown as none).
+    var tags: [TagRef]? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -862,7 +865,7 @@ struct Email: Identifiable, Codable, Hashable {
         case classificationReason = "classification_reason"
         case matchedRuleId = "matched_rule_id"
         case oneClickUnsubscribe = "one_click_unsubscribe"
-        case otp, invite
+        case otp, invite, tags
         case blockedTrackers = "blocked_trackers"
     }
 
@@ -1267,6 +1270,8 @@ extension Email {
         } else if pileId == WorkflowPileID.replyLater {
             replyLater = true
         }
+        // A malformed tag list never fails the email (missing = untagged).
+        tags = try? c.decodeIfPresent([TagRef].self, forKey: .tags)
     }
 }
 

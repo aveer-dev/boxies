@@ -146,6 +146,9 @@ object PreviewHarness {
                 // Splash and widget mocks need no extra session seeding.
             }
             PreviewMode.Mailbox,
+            PreviewMode.TagView,
+            PreviewMode.TagPicker,
+            PreviewMode.TagList,
             PreviewMode.LoadMore,
             PreviewMode.ManyNew,
             PreviewMode.Toast,
@@ -306,6 +309,9 @@ fun PreviewRoot(
         }
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
+        PreviewMode.TagView,
+        PreviewMode.TagPicker,
+        PreviewMode.TagList,
         PreviewMode.AiUsage,
         PreviewMode.AiUsageLimit,
         PreviewMode.LoadMore,

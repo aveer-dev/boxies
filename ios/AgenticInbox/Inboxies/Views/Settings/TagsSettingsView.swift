@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Settings → Tags (AVE-158): create, rename and delete the mailbox's custom folders.
-/// Web shows them as tags in the Folders column (`FoldersColumn.tsx`); names, validation
-/// and error copy follow web and the Worker (`CustomFolders`). Deleting a tag moves its
-/// mail to the Inbox. Android twin: `TagsSettingsView.kt`.
+/// Settings → Folders (AVE-158): create, rename and delete the mailbox's custom folders.
+/// Was "Tags" until real tags arrived (AVE-242, `MailTags`); the type keeps its name.
+/// Web lists them in the Folders group (`FoldersColumn.tsx`); names, validation and error
+/// copy follow web and the Worker (`CustomFolders`). Deleting a folder moves its mail to
+/// the Inbox. Android twin: `TagsSettingsView.kt`.
 struct TagsSettingsView: View {
     @Environment(AppModel.self) private var app
 
@@ -73,7 +74,7 @@ struct TagsSettingsView: View {
             ),
             presenting: renaming
         ) { tag in
-            TextField("Tag name", text: $renameDraft)
+            TextField(CustomFolders.nameField, text: $renameDraft)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             Button("Cancel", role: .cancel) {}
@@ -92,7 +93,7 @@ struct TagsSettingsView: View {
             titleVisibility: .visible,
             presenting: deleting
         ) { tag in
-            Button("Delete tag", role: .destructive) {
+            Button(CustomFolders.deleteButton, role: .destructive) {
                 Task { await delete(tag) }
             }
             Button("Cancel", role: .cancel) {}
@@ -133,7 +134,7 @@ struct TagsSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 TextField(text: $draft, prompt: Text(verbatim: CustomFolders.namePlaceholder).foregroundStyle(AppTheme.muted)) {
-                    Text(verbatim: "Tag name")
+                    Text(verbatim: CustomFolders.nameField)
                 }
                 .font(.inter(size: 15))
                 .textInputAutocapitalization(.never)
@@ -150,7 +151,7 @@ struct TagsSettingsView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(createError == nil ? AppTheme.line : AppTheme.deepDarkRed, lineWidth: createError == nil ? 0.5 : 1)
                 }
-                .accessibilityLabel("Tag name")
+                .accessibilityLabel(CustomFolders.nameField)
 
                 Button {
                     Task { await create() }
@@ -170,7 +171,7 @@ struct TagsSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canCreate)
-                .accessibilityLabel("Create tag")
+                .accessibilityLabel(CustomFolders.createLabel)
             }
             if let createError {
                 Text(createError)
@@ -190,8 +191,8 @@ struct TagsSettingsView: View {
 
     private func tagRow(_ tag: Folder) -> some View {
         HStack(spacing: 12) {
-            Text("#")
-                .font(.inter(size: 15, weight: .medium))
+            Image(systemName: "folder")
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
                 .frame(width: 18)
             Text(CustomFolders.bareName(tag.name))
@@ -311,7 +312,7 @@ enum PreviewTags {
     ]
 }
 
-#Preview("Tags") {
+#Preview("Folders") {
     PreviewHost {
         NavigationStack {
             TagsSettingsView()

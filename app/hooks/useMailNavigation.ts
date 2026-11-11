@@ -18,14 +18,26 @@ export function mailboxPath(mailboxRef: string) {
 	return `/mailbox/${mailboxRef}`;
 }
 
-/** A built-in folder's list. Tags use `tagPath` / `folderHref`: their names stay out of URLs. */
+/** A built-in folder's list. Custom folders use `tagPath` / `folderHref`: their names stay out of URLs. */
 export function folderPath(mailboxRef: string, folderId: FolderId) {
 	return `${mailboxPath(mailboxRef)}/emails/${folderId}`;
 }
 
-/** A tag's list by its index (`tagRefFor`, shared/tag-url.ts), never its name. */
+/**
+ * A custom folder's list by its index (`tagRefFor`, shared/tag-url.ts), never
+ * its name. The web app used to call custom folders "tags", hence `/tags/`;
+ * real tags (AVE-241) live at `taggedPath`.
+ */
 export function tagPath(mailboxRef: string, tagRef: string) {
 	return `${mailboxPath(mailboxRef)}/tags/${tagRef}`;
+}
+
+/**
+ * Everything with a tag (AVE-241). Tag ids are random UUIDs, not slugs of the
+ * name, so the id can sit in the URL without recording the name (AVE-126).
+ */
+export function taggedPath(mailboxRef: string, tagId: string) {
+	return `${mailboxPath(mailboxRef)}/tagged/${encodeURIComponent(tagId)}`;
 }
 
 /**
@@ -51,7 +63,8 @@ export function searchPath(mailboxRef: string, query: string) {
  * The URL decides which Miller columns are open:
  *
  *   /mailbox/:ref/emails/:folder/:emailId?   built-in folder list → reader
- *   /mailbox/:ref/tags/:tagRef/:emailId?     tag list (by index) → reader
+ *   /mailbox/:ref/tags/:tagRef/:emailId?     custom folder list (by index) → reader
+ *   /mailbox/:ref/tagged/:tagId/:emailId?    everything with a tag → reader
  *   /mailbox/:ref/reply-later/:emailId?      Reply Later → reader
  *   /mailbox/:ref/set-aside/:emailId?        Set Aside → reader
  *   /mailbox/:ref/new/:emailId?              all New Inbox mail → reader

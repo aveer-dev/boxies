@@ -16,6 +16,8 @@ data class EmailListScope(
     val replyLater: Boolean = false,
     /** The Set Aside pile (AVE-201). */
     val setAside: Boolean = false,
+    /** A tag view (AVE-242): `GET /tags/:id/emails`, not a folder. */
+    val tagId: String? = null,
 ) {
     /** One of the workflow piles rather than a folder. */
     val isPile: Boolean get() = replyLater || setAside
@@ -25,6 +27,7 @@ data class EmailListScope(
             if (mailboxId == null) return null
             if (tab is HomeTab.ReplyLater) return EmailListScope(mailboxId, folderId = null, replyLater = true)
             if (tab is HomeTab.SetAside) return EmailListScope(mailboxId, folderId = null, setAside = true)
+            if (tab is HomeTab.Tag) return EmailListScope(mailboxId, folderId = null, tagId = tab.id)
             val folderId = tab.syncFolderId ?: return null
             return EmailListScope(mailboxId, folderId)
         }

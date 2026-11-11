@@ -6,8 +6,8 @@ import { queryKeys } from "../queries/keys";
 
 /**
  * Groups of web queries a live mailbox event can make stale.
- * - `emails`: every email list/detail/thread plus folder counts and workflow piles
- *   (the Screener is a folder, so its list lives here too).
+ * - `emails`: every email list/detail/thread plus folder and tag counts and
+ *   workflow piles (the Screener is a folder, so its list lives here too).
  */
 export type MailboxEventTarget =
 	| "emails"
@@ -84,6 +84,7 @@ export function queryKeysForTargets(
 				keys.push(
 					["emails", mailboxId],
 					queryKeys.folders.list(mailboxId),
+					queryKeys.tags.list(mailboxId),
 					queryKeys.workflowPiles.list(mailboxId),
 				);
 				break;

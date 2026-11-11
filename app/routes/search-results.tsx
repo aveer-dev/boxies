@@ -87,14 +87,14 @@ export default function SearchResultsRoute() {
 	};
 	useListShortcuts(results, actions, { selectedId: emailId, open: handleOpen });
 	// Results carry folder_id plus folder_name (a display name). System folders
-	// show their name; custom folders show as #tags.
+	// show their name; so do custom folders (tags are separate, AVE-241).
 	const folderLabel = (email: Email) => {
 		const name = (email as Email & { folder_name?: string }).folder_name;
 		const id = email.folder_id;
 		if (!id) return name ?? null;
 		if ((SYSTEM_FOLDER_IDS as readonly string[]).includes(id)) return getFolderDisplayName(id);
-		const tag = folders.find((f) => f.id === id)?.name ?? name ?? id;
-		return `#${tag.replace(/^#/, "")}`;
+		const custom = folders.find((f) => f.id === id)?.name ?? name ?? id;
+		return custom.replace(/^#/, "");
 	};
 
 	return (

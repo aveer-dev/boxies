@@ -81,6 +81,8 @@ import androidx.compose.ui.window.DialogProperties
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.services.MailTags
+import co.inboxies.app.ui.tags.TagIcon
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
@@ -376,6 +378,13 @@ fun EmailActionsSheet(
                         trailing = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     ) {
                         screen = ActionsScreen.Move
+                    }
+                }
+                // Tags (AVE-242): the conversation's, in the picker.
+                if (!readOnly && !email.isDraft) {
+                    ActionRow(MailTags.TITLE, TagIcon) {
+                        onDismiss()
+                        app.openTagPicker(email)
                     }
                 }
                 if (confirmsReportSpam) {

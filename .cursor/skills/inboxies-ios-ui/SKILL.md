@@ -207,7 +207,10 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
 | `-previewSignature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API (AVE-204; Android: `signature`) |
-| `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
+| `-previewTags` | Settings → Folders (custom folders, labelled Tags before AVE-242): fixture folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
+| `-previewTagView` | Tag view "Clients": fixture rows across folders, each with its other tags, back + ⋯ (Rename tag… / Delete tag), no API (AVE-242; Android `tagView`) |
+| `-previewTagPicker` | Reader on a tagged conversation with the Tags picker open (find, toggle, Create “…”), in-memory (AVE-242; Android `tagPicker`) |
+| `-previewTagList` | Phone home Tags group (the sheet the folders menu's Tags item opens), counts + create (AVE-242; Android `tagList`) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
 | `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |

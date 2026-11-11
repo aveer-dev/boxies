@@ -78,6 +78,9 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarBorder
@@ -150,6 +153,12 @@ import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.compose.ComposeActionItem
 import co.inboxies.app.ui.compose.ComposeActionListOverlay
+import co.inboxies.app.services.MailTags
+import co.inboxies.app.ui.tags.LocalHiddenTagId
+import co.inboxies.app.ui.tags.TagEditorDialogs
+import co.inboxies.app.ui.tags.TagListSheet
+import co.inboxies.app.ui.tags.TagPickerSheet
+import co.inboxies.app.ui.tags.rememberTagEditor
 import co.inboxies.app.ui.compose.ComposeDockBar
 import co.inboxies.app.ui.compose.ComposeSheetView
 import co.inboxies.app.ui.compose.ComposeStackButton
@@ -202,6 +211,11 @@ fun HomeShellView(
     val focusReplyResult by appModel.focusReplyResult.collectAsState()
     val replyLaterDueCount by appModel.replyLaterDueCount.collectAsState()
     val reminderPickerEmail by appModel.reminderPickerEmail.collectAsState()
+    val mailTags by appModel.tags.collectAsState()
+    val tagPickerEmail by appModel.tagPickerEmail.collectAsState()
+    val showsTagList by appModel.showsTagList.collectAsState()
+    val tagViewRequest by appModel.tagViewRequest.collectAsState()
+    val tagEditor = rememberTagEditor()
     val isLoading by appModel.isLoading.collectAsState()
     val paging by appModel.paging.collectAsState()
     val inboxNewTotal by appModel.inboxNewTotal.collectAsState()
@@ -238,6 +252,8 @@ fun HomeShellView(
     // not a folder-tab slide.
     var isPushTransition by remember { mutableStateOf(false) }
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
+    /** The folder a tag view was pushed over (AVE-242); Back returns to it. */
+    var previousTabBeforeTag by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
     var isCreatingMailbox by remember { mutableStateOf(false) }
@@ -301,7 +317,8 @@ fun HomeShellView(
     }
     val screeningRoomTab = remember { HomeTab.Folder(FolderIds.SCREENER) }
     val isScreeningRoom = selectedTab == screeningRoomTab
-    fun isPushedTab(tab: HomeTab) = tab.isPile || tab == screeningRoomTab
+    fun isPushedTab(tab: HomeTab) = tab.isPile || tab is HomeTab.Tag || tab == screeningRoomTab
+    val openTag = (selectedTab as? HomeTab.Tag)?.let { appModel.tag(it.id) }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
     // Inbox "N waiting to be screened" row (AVE-136); 0 hides it (Screener off or nobody waiting).
@@ -326,6 +343,7 @@ fun HomeShellView(
 
     val navigationTitle = when (val tab = selectedTab) {
         screeningRoomTab -> ScreeningRoom.TITLE
+        is HomeTab.Tag -> mailTags.firstOrNull { it.id == tab.id }?.name ?: tab.title
         HomeTab.AiInbox -> {
             val name = digest?.greetingName.orEmpty()
             if (name.isNotBlank()) "Hi $name \uD83D\uDC4B" else "Hi \uD83D\uDC4B"
@@ -362,6 +380,7 @@ fun HomeShellView(
                 }
             }
         }
+        is HomeTab.Tag -> MailTags.unreadLabel(mailTags.firstOrNull { it.id == tab.id }?.unreadCount ?: 0)
         HomeTab.ReplyLater -> {
             when {
                 replyLaterCount == 0 -> "Nothing queued"
@@ -385,7 +404,12 @@ fun HomeShellView(
             selectedEmailIds = emptySet()
         }
         isPushTransition = isPushedTab(tab) || isPushedTab(selectedTab)
-        if (tab.isPile) {
+        if (tab is HomeTab.Tag) {
+            if (selectedTab !is HomeTab.Tag) previousTabBeforeTag = selectedTab
+            tabNavigatingForward = true
+        } else if (selectedTab is HomeTab.Tag) {
+            tabNavigatingForward = false
+        } else if (tab.isPile) {
             // Pile to pile keeps the folder both were opened from.
             if (!selectedTab.isPile) {
                 previousTabBeforeReplyLater = selectedTab
@@ -416,6 +440,26 @@ fun HomeShellView(
             previousTabBeforeReplyLater
         }
         selectTab(target)
+    }
+
+    /** Back out of a tag view to the folder (or pile) it was opened from. */
+    fun popTagView() {
+        if (selectedTab !is HomeTab.Tag) return
+        val target = previousTabBeforeTag.takeIf { it !is HomeTab.Tag } ?: HomeTab.Folder(FolderIds.INBOX)
+        selectTab(target)
+    }
+
+    fun openTagView(tagId: String) {
+        appModel.setTagListVisible(false)
+        selectTab(HomeTab.Tag(tagId))
+    }
+
+    // Reader chip → that tag's view; the phone's reader sheet closes first.
+    LaunchedEffect(tagViewRequest) {
+        val id = tagViewRequest ?: return@LaunchedEffect
+        appModel.consumeTagViewRequest()
+        appModel.closeEmail()
+        openTagView(id)
     }
 
     /** Back out of the Screening room to Inbox, its only parent (AVE-136). */
@@ -464,6 +508,7 @@ fun HomeShellView(
         when (item) {
             ComposeActionItem.Compose -> scope.launch { appModel.startCompose(ComposeMode.New) }
             ComposeActionItem.Settings -> showSettings = true
+            ComposeActionItem.Tags -> appModel.setTagListVisible(true)
             else -> item.folderTab?.let { selectTab(it) }
         }
     }
@@ -490,7 +535,7 @@ fun HomeShellView(
 
     BackHandler(
         enabled = showSearch || showComposeActions || isSelectMode ||
-            selectedTab.isPile || isScreeningRoom,
+            selectedTab.isPile || selectedTab is HomeTab.Tag || isScreeningRoom,
     ) {
         when {
             showComposeActions -> {
@@ -502,6 +547,7 @@ fun HomeShellView(
                 selectedEmailIds = emptySet()
             }
             selectedTab.isPile -> popReplyLater()
+            selectedTab is HomeTab.Tag -> popTagView()
             isScreeningRoom -> popScreeningRoom()
         }
     }
@@ -528,6 +574,11 @@ fun HomeShellView(
                     setAsideCount = setAsideCount,
                     onSelect = { selectTab(it) },
                     onHide = { showsFolderColumn = false },
+                    tags = mailTags,
+                    canEditTags = !isReadOnly,
+                    onCreateTag = { tagEditor.startCreate { openTagView(it.id) } },
+                    onRenameTag = { tagEditor.renaming = it },
+                    onDeleteTag = { tagEditor.deleting = it },
                 )
             },
             list = {
@@ -560,6 +611,13 @@ fun HomeShellView(
                             icon = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = "Back to Inbox",
                             onClick = { popScreeningRoom() },
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    } else if (selectedTab is HomeTab.Tag) {
+                        HomeChromeToolbarButton(
+                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Back",
+                            onClick = { popTagView() },
                             modifier = Modifier.padding(8.dp),
                         )
                     } else Box {
@@ -600,6 +658,28 @@ fun HomeShellView(
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
+
+                    // Tag view: rename / delete the tag (not on a read-only mailbox).
+                    if (openTag != null && !isReadOnly) {
+                        var showTagMenu by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.padding(end = 8.dp)) {
+                            HomeChromeToolbarButton(
+                                icon = Icons.Outlined.MoreHoriz,
+                                contentDescription = "Tag actions",
+                                onClick = { showTagMenu = true },
+                            )
+                            InboxiesDropdownMenu(expanded = showTagMenu, onDismiss = { showTagMenu = false }) {
+                                InboxiesMenuItem(text = "Rename tag…", icon = Icons.Outlined.Edit, onClick = {
+                                    showTagMenu = false
+                                    tagEditor.renaming = openTag
+                                })
+                                InboxiesMenuItem(text = MailTags.DELETE_BUTTON, icon = Icons.Outlined.Delete, destructive = true, onClick = {
+                                    showTagMenu = false
+                                    tagEditor.deleting = openTag
+                                })
+                            }
+                        }
+                    }
 
                     if (selectedTab is HomeTab.Folder) {
                         Row(
@@ -850,6 +930,8 @@ fun HomeShellView(
                                     if (selectedTab.isPile) {
                                         // A pile is pushed over a folder: swipe right pops back.
                                         if (dragAccum >= 40f) popReplyLater()
+                                    } else if (selectedTab is HomeTab.Tag) {
+                                        if (dragAccum >= 40f) popTagView()
                                     } else if (selectedTab == screeningRoomTab) {
                                         // The Screening room is pushed over Inbox: swipe right pops back.
                                         if (dragAccum >= 40f) popScreeningRoom()
@@ -1027,6 +1109,32 @@ fun HomeShellView(
                                     message = "Keep mail you need handy, like tickets or a document you're waiting on.",
                                 ),
                             )
+                            is HomeTab.Tag -> CompositionLocalProvider(LocalHiddenTagId provides tab.id) {
+                                val name = mailTags.firstOrNull { it.id == tab.id }?.name ?: tab.title
+                                EmailListView(
+                                    emails = tabEmails,
+                                    isLoading = tabLoading,
+                                    bottomInset = listBottomInset,
+                                    fallbackFolderId = null,
+                                    showsTags = true,
+                                    isSelectMode = isSelectMode,
+                                    selectedEmailIds = selectedEmailIds,
+                                    onToggleSelect = { id ->
+                                        selectedEmailIds = if (selectedEmailIds.contains(id)) {
+                                            selectedEmailIds - id
+                                        } else {
+                                            selectedEmailIds + id
+                                        }
+                                    },
+                                    onRefresh = { appModel.refreshCurrentTab() },
+                                    loadError = emailListError,
+                                    paging = paging,
+                                    onLoadMore = { appModel.loadMoreEmails() },
+                                    onOpen = { email -> scope.launch { appModel.openEmail(email) } },
+                                    emptyTitle = MailTags.viewEmptyTitle(name),
+                                    emptyMessage = MailTags.VIEW_EMPTY_MESSAGE,
+                                )
+                            }
                             HomeTab.Chats -> Unit
                         }
                     }
@@ -1388,6 +1496,19 @@ fun HomeShellView(
             onDismiss = { appModel.dismissReminderPicker() },
         )
     }
+
+    // Tags (AVE-242): home's Tags group on phones, and the conversation picker.
+    if (showsTagList) {
+        TagListSheet(
+            selectedTagId = (selectedTab as? HomeTab.Tag)?.id,
+            onOpenTag = { openTagView(it.id) },
+            onDismiss = { appModel.setTagListVisible(false) },
+        )
+    }
+    tagPickerEmail?.let { email ->
+        TagPickerSheet(email = email, onDismiss = { appModel.dismissTagPicker() })
+    }
+    TagEditorDialogs(tagEditor)
 
     if (showAddMailbox) {
         Dialog(onDismissRequest = { if (!isCreatingMailbox) showAddMailbox = false }) {

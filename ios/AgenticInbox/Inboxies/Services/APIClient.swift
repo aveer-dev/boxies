@@ -721,12 +721,18 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func setupDomainAliases(domain: String, aliases: [[String: String]]) async throws {
+    func setupDomainAliases(domain: String, aliases: [SetupAlias]) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/setup-aliases",
             method: "POST",
-            body: ["aliases": aliases]
+            body: Self.setupAliasesBody(aliases)
         )
+    }
+
+    /// Onboarding `setup-aliases` body. The Worker reads `aliasLocal` and `targetMailboxId`
+    /// and silently skips items without them (matches web `api.setupDomainAliases`).
+    static func setupAliasesBody(_ aliases: [SetupAlias]) -> [String: Any] {
+        ["aliases": aliases.map { ["aliasLocal": $0.aliasLocal, "targetMailboxId": $0.targetMailboxId] }]
     }
 
     func setupDomainUsers(domain: String, users: [SetupUser]) async throws {
@@ -921,6 +927,53 @@ final class APIClient: @unchecked Sendable {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders/\(folderId.urlPathEncoded)",
             method: "DELETE"
+        )
+    }
+
+    // MARK: Tags (AVE-240, `shared/tags.ts`): many per email, on top of its one folder
+
+    static func tagsPath(mailboxId: String, tagId: String? = nil) -> String {
+        let base = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/tags"
+        guard let tagId else { return base }
+        return "\(base)/\(tagId.urlPathEncoded)"
+    }
+
+    static func threadTagPath(mailboxId: String, threadId: String, tagId: String) -> String {
+        "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/tags/\(tagId.urlPathEncoded)"
+    }
+
+    func listTags(mailboxId: String) async throws -> [MailTag] {
+        let response: TagListResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId))
+        return response.tags
+    }
+
+    /// 409 when the name is taken (ignoring case), 400 when invalid or over the limit.
+    func createTag(mailboxId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId), method: "POST", body: ["name": name])
+    }
+
+    func renameTag(mailboxId: String, tagId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "PATCH", body: ["name": name])
+    }
+
+    /// 204. The tag comes off every email; the emails stay.
+    func deleteTag(mailboxId: String, tagId: String) async throws {
+        let _: EmptyResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "DELETE")
+    }
+
+    /// One row per conversation with a tagged message, outside Trash, Spam and Drafts.
+    func listTaggedEmails(mailboxId: String, tagId: String, page: Int = 1) async throws -> EmailListResponse {
+        try await request(
+            path: "\(Self.tagsPath(mailboxId: mailboxId, tagId: tagId))/emails",
+            query: ["threaded": "true", "page": String(page), "limit": String(EmailListPaging.pageSize)]
+        )
+    }
+
+    /// Tags (`on`) or untags every message of the conversation `threadId`. Idempotent.
+    func setThreadTag(mailboxId: String, threadId: String, tagId: String, on: Bool) async throws -> ThreadTagsResponse {
+        try await request(
+            path: Self.threadTagPath(mailboxId: mailboxId, threadId: threadId, tagId: tagId),
+            method: on ? "PUT" : "DELETE"
         )
     }
 
@@ -1850,4 +1903,10 @@ private extension CharacterSet {
         set.remove(charactersIn: "/")
         return set
     }()
+}
+
+/// One onboarding alias: local part on the domain, and the mailbox id (full address) it delivers to.
+struct SetupAlias: Hashable {
+    let aliasLocal: String
+    let targetMailboxId: String
 }

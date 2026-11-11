@@ -213,7 +213,10 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
 | Signature | `previewSignature` | `signature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API. Peer of iOS `-previewSignature` (AVE-204) |
-| Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
+| Folders | `previewTags` | `tags` | Settings → Folders (custom folders; titled "Tags" until AVE-242): fixture folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
+| Tag view | `previewTagView` | `tagView` | Tag view "Clients": everything with the tag (across folders), rows showing their other tags, Back + rename/delete menu. Peer of iOS `-previewTagView` (AVE-242) |
+| Tag picker | `previewTagPicker` | `tagPicker` | Reader on a tagged thread (tag chips + "+") with the Tags picker open: find, toggle, "Create “…”" (in-memory). Peer of iOS `-previewTagPicker` (AVE-242) |
+| Tags list | `previewTagList` | `tagList` | Phone home with the Tags sheet open (folders menu → Tags): tags with unread counts, + to create, long-press rename/delete. Peer of iOS `-previewTagList` (AVE-242) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |

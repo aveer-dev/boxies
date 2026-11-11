@@ -7,6 +7,8 @@ import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.BlockedTrackers
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.MailTag
+import co.inboxies.app.models.TagRef
 import co.inboxies.app.models.EmailInvite
 import co.inboxies.app.models.EmailInviteOrganizer
 import co.inboxies.app.models.EmailOtp
@@ -334,6 +336,39 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.TagView -> {
+                // AVE-242: everything tagged Clients; rows carry their other tags too.
+                val tagged = (allEmails + taggedArchiveEmail(you))
+                    .filter { email -> email.tags.orEmpty().any { it.id == PREVIEW_TAG_CLIENTS } }
+                DatabaseService.shared.upsertEmails(mailbox.id, listOf(taggedArchiveEmail(you)))
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = tagged,
+                    selectedTab = HomeTab.Tag(PREVIEW_TAG_CLIENTS),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.TagPicker -> {
+                // AVE-242: a tagged thread open in the reader, the picker over it.
+                val inbox = allEmails.filter { it.folderId == FolderIds.INBOX }
+                val opened = inbox.first { it.id == "preview-1" }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = opened,
+                    threadEmails = listOf(opened),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.ReplyLater, PreviewMode.FocusReply, PreviewMode.FocusReplyDone -> {
                 // FocusReplyDone: a Focus & Reply run just emptied the pile (AVE-193).
                 val queued = if (mode == PreviewMode.FocusReplyDone) emptyList() else allEmails.filter { it.replyLater }
@@ -445,6 +480,10 @@ object PreviewSupport {
                 )
             }
         }
+        // Tags (AVE-242): every mailbox preview has the fixture tags.
+        app.setTagsForPreview(previewMailTags)
+        if (mode == PreviewMode.TagPicker) app.openTagPicker(app.selectedEmail.value ?: allEmails.first())
+        if (mode == PreviewMode.TagList) app.setTagListVisible(true)
         // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
@@ -963,6 +1002,36 @@ object PreviewSupport {
         </table>
     """.trimIndent()
 
+    const val PREVIEW_TAG_CLIENTS = "tag_clients"
+
+    /** Fixture tags (iOS `PreviewSupport.tags`): same names, ids and counts. */
+    val previewMailTags: List<MailTag> = listOf(
+        MailTag(id = PREVIEW_TAG_CLIENTS, name = "Clients", emailCount = 3, unreadCount = 1),
+        MailTag(id = "tag_q3", name = "Q3 planning", emailCount = 1, unreadCount = 0),
+        MailTag(id = "tag_waiting", name = "Waiting on", emailCount = 2, unreadCount = 2),
+        MailTag(id = "tag_personal", name = "Personal", emailCount = 0, unreadCount = 0),
+    )
+
+    private fun tagRefs(vararg ids: String): List<TagRef> =
+        ids.mapNotNull { id -> previewMailTags.firstOrNull { it.id == id }?.ref }
+
+    /** Archived mail tagged Clients: a tag view spans folders. */
+    fun taggedArchiveEmail(you: String = addr("you")): Email = Email(
+        id = "preview-tag-archive",
+        folderId = FolderIds.ARCHIVE,
+        subject = "Signed SOW for the rebrand",
+        sender = "morgan@northwind.example",
+        senderName = "Morgan Lee",
+        recipient = you,
+        date = "2026-08-20T15:20:00.000Z",
+        read = true,
+        starred = false,
+        snippet = "Countersigned copy attached. Kickoff is on the 2nd.",
+        hasAttachment = true,
+        folderName = "Archive",
+        tags = tagRefs(PREVIEW_TAG_CLIENTS),
+    )
+
     fun emails(you: String = addr("you")): List<Email> = listOf(
         Email(
             id = "preview-1",
@@ -980,6 +1049,7 @@ object PreviewSupport {
             snippet = "Can we move Thursday's sync to the morning instead?",
             threadCount = 3,
             listSection = "new",
+            tags = tagRefs(PREVIEW_TAG_CLIENTS, "tag_q3"),
         ),
         Email(
             id = "preview-2",
@@ -997,6 +1067,7 @@ object PreviewSupport {
             needsReply = true,
             hasAttachment = true,
             listSection = "seen",
+            tags = tagRefs(PREVIEW_TAG_CLIENTS, "tag_waiting"),
         ),
         Email(
             id = "preview-3",
@@ -1011,6 +1082,7 @@ object PreviewSupport {
             snippet = "Posting the latest frames in the shared folder now.",
             hasDraft = true,
             listSection = "new",
+            tags = tagRefs("tag_waiting"),
         ),
         Email(
             id = "preview-4",

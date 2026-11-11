@@ -46,14 +46,16 @@ struct EmailListView: View {
     /// "Reached the end · N skipped" line on the strip.
     var focusReplyResult: FocusReplyResult? = nil
     var onStartFocusReply: (() -> Void)? = nil
-    /// Empty-list copy; piles say what belongs there (AVE-201).
+    /// Empty-state copy when the default "This folder is empty." doesn't fit (tag views).
     var emptyTitle: String = "No emails"
-    var emptySystemImage: String = "tray"
     var emptyMessage: String = "This folder is empty."
+    var emptySystemImage: String = "tray"
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
     @State private var actionsSheetEmail: ActionsSheetEmail?
+    /// Conversation the Tags picker is open for (row context menu, AVE-242).
+    @State private var tagPickerEmail: ActionsSheetEmail?
     @State private var isRetrying = false
 
     private var visibleEmails: [Email] {
@@ -75,6 +77,9 @@ struct EmailListView: View {
             EmailActionsSheet(email: item.email) { emailId in
                 hiddenEmailIDs.insert(emailId)
             }
+        }
+        .sheet(item: $tagPickerEmail) { item in
+            TagPickerSheet(email: item.email)
         }
         .onChange(of: emails.map(\.id)) { _, _ in
             hiddenEmailIDs = hiddenEmailIDs.filter { id in
@@ -419,6 +424,7 @@ struct EmailListView: View {
                         highlightQuery: highlightQuery,
                         folderLabel: folderLabel,
                         showsTags: showsTags,
+                        hiddenTagId: app.openTagId,
                         showsSeparator: !isScreener || app.isReadOnly,
                         rowBackground: rowBackground
                     )
@@ -531,6 +537,21 @@ struct EmailListView: View {
                 email.isSetAside ? "Remove from Set Aside" : "Set aside",
                 systemImage: email.isSetAside ? "bookmark.slash" : "bookmark"
             )
+        }
+
+        if availability.showsTags {
+            Button {
+                tagPickerEmail = ActionsSheetEmail(email: email)
+            } label: {
+                Label("Tags…", systemImage: "tag")
+            }
+            if let tagId = app.openTagId, let tag = app.tag(id: tagId) {
+                Button {
+                    Task { await app.setTag(tag.ref, on: false, for: email) }
+                } label: {
+                    Label(MailTags.removeAction, systemImage: "tag.slash")
+                }
+            }
         }
 
         Divider()
@@ -761,6 +782,8 @@ struct EmailRowView: View {
     var highlightQuery: String = ""
     var folderLabel: String?
     var showsTags: Bool = true
+    /// Tag view the row is listed in: its own tag isn't repeated on the row.
+    var hiddenTagId: String? = nil
     var showsSeparator: Bool = true
     /// Fill behind the row; the two-pane list tints the row open in the reading pane.
     var rowBackground: Color = AppTheme.background
@@ -776,10 +799,21 @@ struct EmailRowView: View {
                     previewRow
                 }
                 let tags = showsTags ? rowTags : []
-                if !tags.isEmpty || inlineNoteCount > 0 {
+                let labels = mailTags
+                if !tags.isEmpty || !labels.isEmpty || inlineNoteCount > 0 {
                     HStack(spacing: 6) {
                         ForEach(tags, id: \.self) { tag in
                             tagRow(tag)
+                        }
+                        // Tags (AVE-242): every tag in the conversation, after the status chips.
+                        ForEach(labels.prefix(Self.maxTagPills)) { tag in
+                            TagPill(name: tag.name)
+                        }
+                        if labels.count > Self.maxTagPills {
+                            Text("+\(labels.count - Self.maxTagPills)")
+                                .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                                .foregroundStyle(AppTheme.muted)
+                                .accessibilityLabel("\(labels.count - Self.maxTagPills) more tags")
                         }
                         if inlineNoteCount > 0 {
                             PrivateNotesChip(count: inlineNoteCount)
@@ -943,6 +977,13 @@ struct EmailRowView: View {
 
     private var inlineNoteCount: Int {
         max(0, email.inlineNoteCount ?? 0)
+    }
+
+    /// Row pills before "+N", so a heavily tagged row stays one line (Android shows 3 too).
+    private static let maxTagPills = 3
+
+    private var mailTags: [TagRef] {
+        (email.tags ?? []).filter { $0.id != hiddenTagId }
     }
 
     private var rowTags: [String] {

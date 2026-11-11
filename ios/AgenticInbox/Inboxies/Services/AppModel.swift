@@ -31,6 +31,11 @@ final class AppModel {
     /// which may still hold message counts from an older build). The widget only trusts those.
     private var foldersSyncedMailboxId: String?
     var selectedTab: HomeTab = .folder("inbox")
+    /// The mailbox's tags (AVE-242), by name: many per email, on top of its one folder.
+    var tags: [MailTag] = []
+    /// A tab some view asked the home shell to open (a tag chip in the reader, the Tags
+    /// sheet); the shell runs the push and clears it.
+    var requestedTab: HomeTab?
     var emails: [Email] = [] {
         didSet { scheduleInboxWidgetSnapshot() }
     }
@@ -179,6 +184,9 @@ final class AppModel {
         guard let mailboxId = selectedMailboxId else { return nil }
         if let pileId = selectedTab.pileId {
             return EmailListPaging.key(mailboxId: mailboxId, listId: pileId)
+        }
+        if case .tag(let tagId) = selectedTab {
+            return EmailListPaging.key(mailboxId: mailboxId, listId: "tag:\(tagId)")
         }
         guard let folderId = selectedTab.syncFolderId else { return nil }
         return EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
@@ -410,9 +418,9 @@ final class AppModel {
         screenerQueue = db.getEmails(mailboxId: mailboxId, folderId: "screener", limit: EmailListPaging.pageSize)
     }
 
-    // MARK: - Custom folders ("tags", AVE-158)
+    // MARK: - Custom folders (AVE-158; labelled Folders, not Tags, since AVE-242)
 
-    /// Creates a tag. Names the Worker would refuse throw `CustomFolders.ValidationError`
+    /// Creates a folder. Names the Worker would refuse throw `CustomFolders.ValidationError`
     /// with the Worker's sentence, before any request.
     @discardableResult
     func createCustomFolder(name raw: String) async throws -> Folder {
@@ -436,7 +444,7 @@ final class AppModel {
         return created
     }
 
-    /// Renames a tag; its id (and the mail in it) stay put.
+    /// Renames a folder; its id (and the mail in it) stay put.
     func renameCustomFolder(_ folder: Folder, to raw: String) async throws {
         let name = CustomFolders.normalizedName(raw)
         guard name != folder.name else { return }
@@ -460,7 +468,7 @@ final class AppModel {
         }
     }
 
-    /// Deletes a tag. The Worker moves its mail to the Inbox first; if the tag is open,
+    /// Deletes a folder. The Worker moves its mail to the Inbox first; if it is open,
     /// the list goes back to Inbox.
     func deleteCustomFolder(_ folder: Folder) async throws {
         guard CustomFolders.isCustom(folder) else { return }
@@ -734,6 +742,7 @@ final class AppModel {
             conversations = []
             inboxDigest = nil
             screenerQueue = []
+            tags = []
             listPaging = nil
             emailListError = nil
             if chatSession != .dismissed {
@@ -784,6 +793,7 @@ final class AppModel {
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
             async let replyLaterTask: Void = refreshReplyLaterCount()
+            async let tagsTask: Void = refreshTags()
             let syncedFolders = try await foldersTask
             folders = syncedFolders
             if await syncService.isOnline { foldersSyncedMailboxId = id }
@@ -796,6 +806,7 @@ final class AppModel {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
             _ = await replyLaterTask
+            _ = await tagsTask
         } catch let error as APIError {
             // An expired session signs out globally (RootView); never treat it as
             // losing access to this one mailbox.
@@ -880,6 +891,8 @@ final class AppModel {
                 emails = PreviewSupport.emails.filter(\.replyLater)
             } else if tab == .setAside {
                 emails = PreviewSupport.emails.filter(\.isSetAside)
+            } else if case .tag(let tagId) = tab {
+                emails = PreviewSupport.emails.filter { ($0.tags ?? []).contains { $0.id == tagId } }
             } else if let folderId = tab.syncFolderId {
                 emails = PreviewSupport.emails.filter { $0.folderId == folderId }
             }
@@ -905,6 +918,10 @@ final class AppModel {
                 emails = []
                 isLoading = false
             }
+        } else if case .tag = tab {
+            // Not cached as a list: a tag view always comes from the server.
+            emails = []
+            isLoading = true
         } else if let folderId = tab.syncFolderId, let mailboxId = selectedMailboxId {
             let cached = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
             if !cached.isEmpty {
@@ -954,6 +971,32 @@ final class AppModel {
                 let response = try await APIClient.shared.listPileEmails(mailboxId: mailboxId, pileId: pileId)
                 db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
                 setPileCount(pileId, response.totalCount)
+                lastSyncedAt = Date()
+                if currentListKey == key {
+                    applyPileFirstPage(response, resetPaging: resetPaging)
+                    emailListError = nil
+                }
+            } catch {
+                if emails.isEmpty, currentListKey == key {
+                    errorMessage = error.localizedDescription
+                    emailListError = error.localizedDescription
+                }
+            }
+            return
+        }
+
+        if case .tag(let tagId) = selectedTab {
+            if showLoading && emails.isEmpty {
+                isLoading = true
+            }
+            isSyncing = true
+            defer {
+                isLoading = false
+                isSyncing = false
+            }
+            do {
+                let response = try await APIClient.shared.listTaggedEmails(mailboxId: mailboxId, tagId: tagId)
+                db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
                 lastSyncedAt = Date()
                 if currentListKey == key {
                     applyPileFirstPage(response, resetPaging: resetPaging)
@@ -1104,6 +1147,17 @@ final class AppModel {
                       ) == true else { return }
                 setPileCount(pileId, response.totalCount)
                 emails = EmailListPaging.appending(response.emails, to: emails)
+            } else if case .tag(let tagId) = selectedTab {
+                let response = try await APIClient.shared.listTaggedEmails(mailboxId: mailboxId, tagId: tagId, page: next)
+                db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
+                guard currentListKey == key,
+                      listPaging?.apply(
+                          page: next,
+                          receivedCount: response.emails.count,
+                          totalCount: response.totalCount,
+                          oldestDate: nil
+                      ) == true else { return }
+                emails = EmailListPaging.appending(response.emails, to: emails)
             } else if let folderId = selectedTab.syncFolderId {
                 guard let page = try await syncService.syncFolderPage(
                     mailboxId: mailboxId,
@@ -1192,7 +1246,7 @@ final class AppModel {
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder, .aiInbox, .replyLater, .setAside:
+        case .folder, .aiInbox, .replyLater, .setAside, .tag:
             await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -1221,8 +1275,13 @@ final class AppModel {
                 await loadInboxDigest(showLoading: false)
             }
         }
+        if case .tag = selectedTab {
+            // email_updated / tags_changed land here too: settle the tag view's rows.
+            await loadEmailsForCurrentTab(showLoading: false)
+        }
         await refreshOpenEmailDetailSilently()
         scheduleFolderCountsRefresh()
+        await refreshTags()
     }
 
     /// Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh.
@@ -2013,6 +2072,7 @@ final class AppModel {
         replyLaterCount = 0
         replyLaterDueCount = 0
         setAsideCount = 0
+        tags = []
         reminderPickerEmail = nil
         identities = nil
         adminMailboxes = nil
@@ -2896,6 +2956,8 @@ enum HomeTab: Hashable {
     case replyLater
     /// Set Aside pile (AVE-201): mail to keep handy, beside Reply Later.
     case setAside
+    /// Everything with one tag (AVE-242), pushed over the folders like Reply Later.
+    case tag(String)
 
     static var inbox: HomeTab { .folder("inbox") }
 
@@ -2916,7 +2978,7 @@ enum HomeTab: Hashable {
         switch self {
         case .folder(let id): return id
         case .aiInbox: return "inbox"
-        case .chats, .replyLater, .setAside: return nil
+        case .chats, .replyLater, .setAside, .tag: return nil
         }
     }
 
@@ -2944,6 +3006,9 @@ enum HomeTab: Hashable {
             return "Reply Later"
         case .setAside:
             return "Set Aside"
+        case .tag:
+            // The tag's name lives on AppModel (`tagTitle`); this is the fallback.
+            return "Tag"
         }
     }
 
@@ -2971,6 +3036,8 @@ enum HomeTab: Hashable {
             return "clock.arrow.circlepath"
         case .setAside:
             return "bookmark"
+        case .tag:
+            return "tag"
         }
     }
 }

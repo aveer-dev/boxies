@@ -17,7 +17,13 @@ struct HomeShellView: View {
     @State private var tabNavigatingForward = true
     /// Folder a pile (Reply Later or Set Aside) was opened from; popping returns here.
     @State private var previousTabBeforePile: HomeTab = .folder("inbox")
-    /// Entering or leaving a pile or the Screening room is a push, not a folder-tab slide.
+    /// Where Back leaves a tag view for (AVE-242). Tag → tag keeps the first parent.
+    @State private var previousTabBeforeTag: HomeTab = .folder("inbox")
+    /// Phone home Tags group, opened from the folders menu.
+    @State private var showTagList = false
+    /// Rename / delete from the tag view's menu, create from the folder column.
+    @State private var tagEditor: TagEditorAction?
+    /// Entering or leaving a pile, a tag view or the Screening room is a push, not a folder-tab slide.
     @State private var isPushTransition = false
     @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
@@ -84,8 +90,11 @@ struct HomeShellView: View {
 
     /// Tabs that push over the list instead of sliding between folders.
     private static func isPushedTab(_ tab: HomeTab) -> Bool {
-        tab.isPile || tab == screeningRoomTab
+        if case .tag = tab { return true }
+        return tab.isPile || tab == screeningRoomTab
     }
+
+    private var isTagView: Bool { app.openTagId != nil }
 
     private var hasMinimizedCompose: Bool {
         app.composeSession?.isMinimized == true
@@ -159,6 +168,16 @@ struct HomeShellView: View {
             }) {
                 chatSheet
             }
+            .sheet(isPresented: $showTagList) {
+                TagListSheet()
+            }
+            .tagEditorDialogs($tagEditor)
+            .onChange(of: app.requestedTab) { _, tab in
+                guard let tab else { return }
+                app.requestedTab = nil
+                showTagList = false
+                selectTab(tab)
+            }
             .onChange(of: isComposeExpanded) { _, expanded in
                 showComposeSheet = expanded
             }
@@ -170,6 +189,10 @@ struct HomeShellView: View {
                     openChat()
                 }
                 #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-previewTagList") {
+                    // AVE-242: the phone home Tags group, as the folders menu opens it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showTagList = true }
+                }
                 if ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                     // `-previewReplyLater -previewFocusReply` (AVE-193): Focus & Reply on the first thread.
                     if ProcessInfo.processInfo.arguments.contains("-previewFocusReply") {
@@ -208,7 +231,8 @@ struct HomeShellView: View {
                 folders: folderTabs,
                 selected: app.selectedTab,
                 onSelect: selectTab,
-                onHide: { setFolderColumnVisible(false) }
+                onHide: { setFolderColumnVisible(false) },
+                tagEditor: $tagEditor
             )
         } list: {
             shell
@@ -308,6 +332,8 @@ struct HomeShellView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         if isScreeningRoom {
                             screeningRoomBackButton
+                        } else if isTagView {
+                            tagBackButton
                         } else {
                             mailboxControl
                         }
@@ -346,6 +372,10 @@ struct HomeShellView: View {
         }
         .onChange(of: app.selectedMailboxId) { _, _ in
             showAllNew = false
+            // Tags belong to the mailbox: its tag view doesn't follow a switch.
+            if isTagView {
+                selectTab(.inbox)
+            }
             // The room belongs to the mailbox it was opened from (and may be off in the next).
             if isScreeningRoom {
                 popScreeningRoom()
@@ -475,6 +505,40 @@ struct HomeShellView: View {
     }
 
     /// Leading toolbar control inside the Screening room: back to Inbox.
+    private var tagBackButton: some View {
+        Button {
+            popTagView()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: Self.mailboxAvatarSize, height: Self.mailboxAvatarSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to \(app.title(for: previousTabBeforeTag))")
+    }
+
+    /// Tag view header menu: rename or delete the tag on screen.
+    @ViewBuilder
+    private var tagMenuButton: some View {
+        if let tagId = app.openTagId, let tag = app.tag(id: tagId), !app.isReadOnly {
+            Menu {
+                Button(MailTags.renameMenu, systemImage: "pencil") { tagEditor = .rename(tag) }
+                Button(MailTags.deleteMenu, systemImage: "trash", role: .destructive) { tagEditor = .delete(tag) }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions for tag \(tag.name)")
+        }
+    }
+
     private var screeningRoomBackButton: some View {
         Button {
             popScreeningRoom()
@@ -663,7 +727,7 @@ struct HomeShellView: View {
             }
             return "Hi 👋"
         }
-        return app.selectedTab.title
+        return app.title(for: app.selectedTab)
     }
 
     private var filteredEmails: [Email] {
@@ -678,6 +742,9 @@ struct HomeShellView: View {
                 return "You have \(count) suggested to-do\(count == 1 ? "" : "s")"
             }
             return app.isDigestLoading ? "Loading…" : ""
+        }
+        if let tagId = app.openTagId {
+            return MailTags.unreadLabel(app.tag(id: tagId)?.unreadCount ?? 0)
         }
         if case .replyLater = app.selectedTab {
             let count = app.replyLaterCount
@@ -813,8 +880,31 @@ struct HomeShellView: View {
                     paging: app.visibleListPaging,
                     onLoadMore: { await app.loadMoreEmails() },
                     emptyTitle: "Nothing set aside",
-                    emptySystemImage: "bookmark",
-                    emptyMessage: "Keep mail you need handy, like tickets or a document you're waiting on."
+                    emptyMessage: "Keep mail you need handy, like tickets or a document you're waiting on.",
+                    emptySystemImage: "bookmark"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
+            case .tag(let tagId):
+                let name = app.title(for: .tag(tagId))
+                EmailListView(
+                    emails: app.emails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: false,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: true,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: MailTags.emptyViewTitle(name),
+                    emptyMessage: MailTags.emptyViewMessage,
+                    emptySystemImage: "tag"
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -869,7 +959,14 @@ struct HomeShellView: View {
             selectedEmailIDs.removeAll()
         }
         isPushTransition = Self.isPushedTab(tab) || Self.isPushedTab(app.selectedTab)
-        if tab.isPile {
+        if case .tag = tab {
+            if !isTagView {
+                previousTabBeforeTag = app.selectedTab
+            }
+            tabNavigatingForward = true
+        } else if isTagView {
+            tabNavigatingForward = false
+        } else if tab.isPile {
             if !app.selectedTab.isPile {
                 previousTabBeforePile = app.selectedTab
             }
@@ -894,6 +991,14 @@ struct HomeShellView: View {
     private func popPile() {
         guard app.selectedTab.isPile else { return }
         let target = previousTabBeforePile.isPile ? .folder("inbox") : previousTabBeforePile
+        selectTab(target)
+    }
+
+    /// Back out of a tag view to where it was opened from.
+    private func popTagView() {
+        guard isTagView else { return }
+        let target: HomeTab
+        if case .tag = previousTabBeforeTag { target = .inbox } else { target = previousTabBeforeTag }
         selectTab(target)
     }
 
@@ -928,6 +1033,10 @@ struct HomeShellView: View {
                 if isScreeningRoom {
                     // The Screening room is pushed over Inbox: swipe right pops back.
                     if value.translation.width > threshold { popScreeningRoom() }
+                    return
+                }
+                if isTagView {
+                    if value.translation.width > threshold { popTagView() }
                     return
                 }
                 if value.translation.width < -threshold {
@@ -1204,6 +1313,8 @@ struct HomeShellView: View {
             startComposeFromBar()
         case .settings:
             showSettings = true
+        case .tags:
+            showTagList = true
         default:
             if let tab = item.folderTab {
                 selectTab(tab)
@@ -1257,7 +1368,9 @@ struct HomeShellView: View {
 
     @ViewBuilder
     private var trailingToolbarItems: some View {
-        if case .chats = app.selectedTab, !app.isReadOnly {
+        if isTagView {
+            tagMenuButton
+        } else if case .chats = app.selectedTab, !app.isReadOnly {
             Button {
                 openChat(resumeActive: false)
             } label: {
