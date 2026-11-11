@@ -2065,12 +2065,17 @@ struct DomainAliasItem: Codable, Hashable, Identifiable {
     var aliasLocal: String
     var aliasEmail: String
     var targetMailboxId: String
-    var createdAt: String
+    var createdAt: String?
 }
 
 struct DomainAliasesResponse: Codable {
-    var domain: String
+    var domain: String?
     var aliases: [DomainAliasItem]
+}
+
+struct DomainAliasCreateResponse: Codable {
+    var success: Bool?
+    var alias: DomainAliasItem?
 }
 
 struct ExportJobProgress: Codable, Hashable {

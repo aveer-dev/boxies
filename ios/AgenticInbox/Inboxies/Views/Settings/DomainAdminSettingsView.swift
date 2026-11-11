@@ -10,6 +10,8 @@ struct DomainAdminSettingsView: View {
     var onAssigned: (() -> Void)? = nil
     /// DEBUG / Simulator fixture rows — skips the network reload when non-nil.
     var previewRows: [AdminMailboxRow]? = nil
+    /// DEBUG fixture aliases — adds and deletes stay in memory when non-nil.
+    var previewAliases: [DomainAliasItem]? = nil
 
     @State private var rows: [AdminMailboxRow] = []
     @State private var isLoading = true
@@ -18,9 +20,24 @@ struct DomainAdminSettingsView: View {
     @State private var lastInviteUrl: String?
     @State private var statusMessage: String?
 
+    // Aliases (AVE-219)
+    @State private var aliases: [DomainAliasItem] = []
+    @State private var aliasesLoading = true
+    @State private var aliasesFailed = false
+    @State private var showAddAlias = false
+    @State private var deletingAlias: DomainAliasItem?
+    @State private var busyAliasLocal: String?
+    /// Local toast: the app-level toast sits underneath the settings sheet.
+    @State private var toast: ComposeToast?
+    @State private var toastDismissTask: Task<Void, Never>?
+
     /// The domain this console administers (new addresses are created on it).
     private var adminDomain: String {
         app.mailDomain.lowercased()
+    }
+
+    private var serviceEnded: Bool {
+        app.domainServices[adminDomain]?.isEnded == true
     }
 
     var body: some View {
@@ -123,6 +140,8 @@ struct DomainAdminSettingsView: View {
                             }
                         }
                     }
+
+                    aliasesSection
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -146,7 +165,10 @@ struct DomainAdminSettingsView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await reload() }
+                    Task {
+                        await reload()
+                        await reloadAliases()
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .foregroundStyle(AppTheme.ink)
@@ -167,6 +189,9 @@ struct DomainAdminSettingsView: View {
                 await reload()
             }
         }
+        .task(id: adminDomain) {
+            await reloadAliases()
+        }
         .sheet(isPresented: $showCreate) {
             NavigationStack {
                 DomainAdminCreateView { url in
@@ -176,6 +201,162 @@ struct DomainAdminSettingsView: View {
                 }
             }
             .environment(app)
+        }
+        .sheet(isPresented: $showAddAlias) {
+            DomainAliasAddSheet(
+                domain: adminDomain,
+                targets: DomainAliases.targets(rows, domain: adminDomain),
+                existing: aliases,
+                isPreview: previewAliases != nil
+            ) { created in
+                aliases = DomainAliases.sorted(aliases.filter { $0.aliasLocal != created.aliasLocal } + [created])
+                showToast("Alias added")
+            }
+        }
+        .confirmationDialog(
+            deletingAlias.map { "Delete \($0.aliasEmail)?" } ?? "",
+            isPresented: Binding(
+                get: { deletingAlias != nil },
+                set: { if !$0 { deletingAlias = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: deletingAlias
+        ) { alias in
+            Button("Delete alias", role: .destructive) {
+                Task { await deleteAlias(alias) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { alias in
+            Text(DomainAliases.deleteConfirmMessage(alias))
+        }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                InboxiesToast(
+                    message: toast.message,
+                    icon: toast.toastIcon,
+                    onDismiss: {
+                        toastDismissTask?.cancel()
+                        self.toast = nil
+                    }
+                )
+                .padding(.horizontal, ToastMetrics.screenInset)
+                .padding(.bottom, ToastMetrics.standaloneBottomInset)
+            }
+        }
+        .animation(ToastMetrics.animation, value: toast?.id)
+        #if DEBUG
+        .task {
+            // `-previewDomainAliasAdd` / `-previewDomainAliasConflict` open the add sheet,
+            // `-previewDomainAliasDelete` the delete confirmation (AVE-219).
+            guard previewAliases != nil else { return }
+            let args = ProcessInfo.processInfo.arguments
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if args.contains("-previewDomainAliasAdd") || args.contains("-previewDomainAliasConflict") {
+                showAddAlias = true
+            } else if args.contains("-previewDomainAliasDelete") {
+                deletingAlias = aliases.first
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Aliases (AVE-219)
+
+    @ViewBuilder
+    private var aliasesSection: some View {
+        Section {
+            if aliasesLoading && aliases.isEmpty {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+            } else if aliasesFailed && aliases.isEmpty {
+                HStack {
+                    Text(DomainAliases.loadFailed)
+                        .font(.inter(size: 14))
+                        .foregroundStyle(AppTheme.muted)
+                    Spacer(minLength: 8)
+                    Button("Retry") {
+                        Task { await reloadAliases() }
+                    }
+                    .font(.inter(size: 14, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+                    .buttonStyle(.plain)
+                }
+            } else if aliases.isEmpty {
+                Text(DomainAliases.emptyMessage)
+                    .font(.inter(size: 14))
+                    .foregroundStyle(AppTheme.muted)
+            }
+            ForEach(aliases) { alias in
+                DomainAliasRow(
+                    alias: alias,
+                    busy: busyAliasLocal == alias.aliasLocal,
+                    enabled: busyAliasLocal == nil && !serviceEnded,
+                    onDelete: { deletingAlias = alias }
+                )
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if !serviceEnded {
+                        Button(role: .destructive) {
+                            deletingAlias = alias
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            Button {
+                showAddAlias = true
+            } label: {
+                Label(DomainAliases.addTitle, systemImage: "plus")
+                    .font(.inter(size: 15, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+            }
+            .lockedWhenReadOnly(serviceEnded)
+        } header: {
+            Text(DomainAliases.sectionTitle)
+        }
+    }
+
+    private func reloadAliases() async {
+        if let previewAliases {
+            if aliases.isEmpty { aliases = DomainAliases.sorted(previewAliases) }
+            aliasesLoading = false
+            return
+        }
+        aliasesLoading = true
+        defer { aliasesLoading = false }
+        do {
+            aliases = DomainAliases.sorted(try await APIClient.shared.listDomainAliases(domain: adminDomain))
+            aliasesFailed = false
+        } catch {
+            aliasesFailed = true
+        }
+    }
+
+    private func deleteAlias(_ alias: DomainAliasItem) async {
+        deletingAlias = nil
+        busyAliasLocal = alias.aliasLocal
+        defer { busyAliasLocal = nil }
+        do {
+            if previewAliases == nil {
+                try await APIClient.shared.deleteDomainAlias(domain: adminDomain, aliasLocal: alias.aliasLocal)
+            }
+            aliases.removeAll { $0.aliasLocal == alias.aliasLocal }
+            showToast("Alias deleted")
+        } catch {
+            showToast(DomainAliases.deleteErrorMessage(for: error), isError: true)
+        }
+    }
+
+    private func showToast(_ message: String, isError: Bool = false) {
+        toastDismissTask?.cancel()
+        toast = ComposeToast(message: message, isError: isError)
+        toastDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            toast = nil
         }
     }
 

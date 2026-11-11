@@ -1756,18 +1756,25 @@ data class AdminDomainConnectResponse(
     val audit: EmailHealthAudit? = null,
 )
 
+/** A domain alias (`sales@domain` → a mailbox), Worker `DomainAlias` (AVE-219). */
 @Serializable
 data class DomainAliasItem(
-    val id: String,
-    val domain: String,
-    val alias: String,
-    val target: String,
+    val aliasLocal: String,
+    val aliasEmail: String,
+    val targetMailboxId: String,
     val createdAt: String? = null,
 )
 
 @Serializable
 data class DomainAliasesResponse(
+    val domain: String? = null,
     val aliases: List<DomainAliasItem> = emptyList(),
+)
+
+@Serializable
+data class DomainAliasCreateResponse(
+    val success: Boolean? = null,
+    val alias: DomainAliasItem? = null,
 )
 
 /**

@@ -3,6 +3,7 @@ package co.inboxies.app.ui.preview
 import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.DomainAliasItem
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.BlockedTrackers
@@ -630,6 +631,13 @@ object PreviewSupport {
             ),
         )
     }
+
+    /** Domain Admin → Aliases fixtures (AVE-219; iOS `PreviewSupport.adminAliases`). */
+    fun adminAliases(): List<DomainAliasItem> = listOf(
+        DomainAliasItem("sales", addr("sales"), addr("you"), "2026-10-02T09:00:00.000Z"),
+        DomainAliasItem("support", addr("support"), addr("ops"), "2026-10-04T09:00:00.000Z"),
+        DomainAliasItem("billing", addr("billing"), addr("you"), "2026-10-06T09:00:00.000Z"),
+    )
 
     /** Unread inbox rows for the capped-New preview (AVE-23). */
     private fun manyNewEmails(you: String): List<Email> {

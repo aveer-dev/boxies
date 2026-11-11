@@ -8,6 +8,9 @@ class PreviewModeNamesTest {
     @Test
     fun intentExtraNamesMatchIosLaunchArgs() {
         assertEquals("previewDomainAdmin", PreviewMode.DomainAdmin.intentExtra)
+        assertEquals("previewDomainAliasAdd", PreviewMode.DomainAliasAdd.intentExtra)
+        assertEquals("previewDomainAliasConflict", PreviewMode.DomainAliasConflict.intentExtra)
+        assertEquals("previewDomainAliasDelete", PreviewMode.DomainAliasDelete.intentExtra)
         assertEquals("previewDomainOnboarding", PreviewMode.DomainOnboarding.intentExtra)
         assertEquals("previewPasswordSignIn", PreviewMode.PasswordSignIn.intentExtra)
         assertEquals("previewInviteAccept", PreviewMode.InviteAccept.intentExtra)
@@ -53,6 +56,9 @@ class PreviewModeNamesTest {
     @Test
     fun cliNamesAreStable() {
         assertEquals("domainAdmin", PreviewMode.DomainAdmin.cliName)
+        assertEquals("domainAliasAdd", PreviewMode.DomainAliasAdd.cliName)
+        assertEquals("domainAliasConflict", PreviewMode.DomainAliasConflict.cliName)
+        assertEquals("domainAliasDelete", PreviewMode.DomainAliasDelete.cliName)
         assertEquals("domainOnboarding", PreviewMode.DomainOnboarding.cliName)
         assertEquals("mailbox", PreviewMode.Mailbox.cliName)
         assertEquals("setAside", PreviewMode.SetAside.cliName)

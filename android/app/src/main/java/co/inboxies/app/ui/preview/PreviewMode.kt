@@ -18,6 +18,12 @@ import co.inboxies.app.BuildConfig
  */
 enum class PreviewMode(val cliName: String, val intentExtra: String) {
     DomainAdmin("domainAdmin", "previewDomainAdmin"),
+    /** Domain Admin with the Add alias sheet open (iOS `-previewDomainAdmin -previewDomainAliasAdd`, AVE-219). */
+    DomainAliasAdd("domainAliasAdd", "previewDomainAliasAdd"),
+    /** Add alias sheet trying an address that's already a mailbox: error toast (iOS `-previewDomainAliasConflict`). */
+    DomainAliasConflict("domainAliasConflict", "previewDomainAliasConflict"),
+    /** Domain Admin with the delete-alias confirmation open (iOS `-previewDomainAliasDelete`). */
+    DomainAliasDelete("domainAliasDelete", "previewDomainAliasDelete"),
     DomainDns("domainDns", "previewDomainDns"),
     DomainOnboarding("domainOnboarding", "previewDomainOnboarding"),
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
