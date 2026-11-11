@@ -971,13 +971,74 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Piles (AVE-201; custom piles build on this in AVE-194). `piles`
+		// holds the pile definitions, seeded with the two built-in ones:
+		// Reply Later (clears when you reply) and Set Aside (kept until you
+		// take it out). `emails.pile_id` / `pile_at` are a message's pile and
+		// when it joined; a message is in at most one pile.
+		// Reply Later keeps its `reply_later` columns (reminders, the
+		// conversation index and every existing client read them), mirrored
+		// both ways by the two triggers below so either side can be written:
+		// joining Reply Later sets pile_id, and joining another pile clears
+		// Reply Later and its reminder. Existing Reply Later mail is copied
+		// into pile_id with its original join time.
+		// Additive only. Numbered 49, after 48_email_tags.
+		name: "49_piles",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS piles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                builtin INTEGER NOT NULL DEFAULT 0,
+                clears_on_reply INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );
+            INSERT OR IGNORE INTO piles (id, name, position, builtin, clears_on_reply)
+            VALUES ('reply_later', 'Reply Later', 0, 1, 1),
+                   ('set_aside', 'Set Aside', 1, 1, 0);
+            ALTER TABLE emails ADD COLUMN pile_id TEXT;
+            ALTER TABLE emails ADD COLUMN pile_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_pile
+                ON emails(pile_id, pile_at)
+                WHERE pile_id IS NOT NULL;
+            UPDATE emails
+               SET pile_id = 'reply_later',
+                   pile_at = COALESCE(reply_later_at, date)
+             WHERE reply_later = 1;
+            CREATE TRIGGER IF NOT EXISTS emails_pile_follows_reply_later
+            AFTER UPDATE OF reply_later ON emails
+            WHEN NEW.reply_later IS NOT OLD.reply_later
+            BEGIN
+                UPDATE emails
+                   SET pile_id = CASE WHEN NEW.reply_later = 1 THEN 'reply_later' END,
+                       pile_at = CASE WHEN NEW.reply_later = 1
+                                      THEN COALESCE(NEW.reply_later_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) END
+                 WHERE id = NEW.id
+                   AND CASE WHEN NEW.reply_later = 1
+                            THEN pile_id IS NOT 'reply_later'
+                            ELSE pile_id IS 'reply_later' END;
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_reply_later_follows_pile
+            AFTER UPDATE OF pile_id ON emails
+            WHEN NEW.pile_id IS NOT OLD.pile_id
+            BEGIN
+                UPDATE emails
+                   SET reply_later = CASE WHEN NEW.pile_id IS 'reply_later' THEN 1 ELSE 0 END,
+                       reply_later_at = CASE WHEN NEW.pile_id IS 'reply_later'
+                                             THEN COALESCE(NEW.pile_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) END,
+                       reply_later_remind_at = CASE WHEN NEW.pile_id IS 'reply_later' THEN reply_later_remind_at END,
+                       reply_later_reminded_at = CASE WHEN NEW.pile_id IS 'reply_later' THEN reply_later_reminded_at END
+                 WHERE id = NEW.id
+                   AND reply_later IS NOT (CASE WHEN NEW.pile_id IS 'reply_later' THEN 1 ELSE 0 END);
+            END;
+        `),
+	},
+	{
 		// Writing suggestions quota (AVE-189, workers/lib/ai-quota.ts): the
 		// 'suggest' bucket's daily counter. Same columns as ai_usage (41), whose
 		// CHECK only allows 'chat' and 'inbound', so the bucket gets its own
 		// table instead of a rebuild of ai_usage. Pruned on write like ai_usage.
-		// Additive only: a new table. Numbered 50: dev's highest is
-		// 48_email_tags and open PR #273 adds 49_piles; the runner tracks by
-		// name, so either can land first.
+		// Additive only: a new table. Numbered 50, after 49_piles.
 		name: "50_ai_suggest_usage",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS ai_suggest_usage (

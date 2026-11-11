@@ -25,9 +25,9 @@ export function useEmails(
 	params: Record<string, string>,
 	options?: { enabled?: boolean; refetchInterval?: number },
 ) {
-	// Threaded conversation collapse applies to folder lists only — not Reply Later pile.
+	// Threaded conversation collapse applies to folder lists only — not piles.
 	const queryParams =
-		params.folder && params.reply_later !== "true"
+		params.folder && params.reply_later !== "true" && !params.pile
 			? { ...params, threaded: "true" }
 			: params;
 
