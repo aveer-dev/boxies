@@ -292,8 +292,8 @@ function SortingTab({ mailboxId }: { mailboxId: string }) {
 	return (
 		<>
 			<p className="text-sm text-kumo-subtle mb-4">
-				Choose which purpose box each sender goes to — Inbox, Promotions, or
-				Updates. Changing a destination also moves their existing mail in those
+				Choose which purpose box each sender goes to — Inbox, Promotions,
+				Updates, or Paper Trail. Changing a destination also moves their existing mail in those
 				boxes.
 			</p>
 
@@ -313,7 +313,7 @@ function SortingTab({ mailboxId }: { mailboxId: string }) {
 				<div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center">
 					<p className="text-sm text-kumo-default mb-1">No sender defaults yet</p>
 					<p className="text-xs text-kumo-subtle">
-						When you move mail into Inbox, Promotions, or Updates, you can set
+						When you move mail into Inbox, Promotions, Updates, or Paper Trail, you can set
 						where future mail from that sender goes.
 					</p>
 				</div>

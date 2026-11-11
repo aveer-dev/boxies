@@ -25,6 +25,7 @@ enum PreviewSupport {
             Folder(id: "screener", name: "Screener", unreadCount: 2),
             Folder(id: "promotions", name: "Promotions", unreadCount: 0),
             Folder(id: "updates", name: "Updates", unreadCount: 0),
+            Folder(id: "paper_trail", name: "Paper Trail", unreadCount: 0),
             Folder(id: "sent", name: "Sent", unreadCount: 0),
             Folder(id: "archive", name: "Archive", unreadCount: 0),
             Folder(id: "spam", name: "Spam", unreadCount: 1),
@@ -273,6 +274,95 @@ enum PreviewSupport {
         deliveryStatus: "bounced",
         deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
     )
+
+    /// `-previewMailbox -previewPaperTrail` (AVE-192): Paper Trail, a quiet receipts folder,
+    /// with receipts across this month, last month and last year (compact rows, month headers).
+    static let paperTrailEmails: [Email] = [
+        Email(
+            id: "preview-paper-trail-1",
+            folderId: "paper_trail",
+            subject: "Your receipt from Lumen Coffee",
+            sender: "receipts@lumen.example",
+            senderName: "Lumen Coffee",
+            recipient: "you@inboxies.email",
+            date: "2026-11-09T08:14:00.000Z",
+            read: false,
+            starred: false,
+            snippet: "Order #4821 · $6.40 · Thanks for stopping by."
+        ),
+        Email(
+            id: "preview-paper-trail-2",
+            folderId: "paper_trail",
+            subject: "Your package has shipped",
+            sender: "ship@parcel.example",
+            senderName: "Parcel",
+            recipient: "you@inboxies.email",
+            date: "2026-11-06T16:40:00.000Z",
+            read: false,
+            starred: false,
+            snippet: "Arriving Thursday. Track it any time."
+        ),
+        Email(
+            id: "preview-paper-trail-3",
+            folderId: "paper_trail",
+            subject: "Payment received",
+            sender: "billing@studio.example",
+            senderName: "Studio Billing",
+            recipient: "you@inboxies.email",
+            date: "2026-11-02T12:05:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "We received your payment of $24.00. Thank you."
+        ),
+        Email(
+            id: "preview-paper-trail-4",
+            folderId: "paper_trail",
+            subject: "Your October statement is ready",
+            sender: "statements@bank.example",
+            senderName: "Northwind Bank",
+            recipient: "you@inboxies.email",
+            date: "2026-10-31T09:00:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Your statement for October is ready to view."
+        ),
+        Email(
+            id: "preview-paper-trail-5",
+            folderId: "paper_trail",
+            subject: "Booking confirmed: Lisbon, Dec 12",
+            sender: "trips@stay.example",
+            senderName: "Stay",
+            recipient: "you@inboxies.email",
+            date: "2026-10-18T19:22:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Check-in from 3 PM. Your host will message you before you arrive."
+        ),
+        Email(
+            id: "preview-paper-trail-6",
+            folderId: "paper_trail",
+            subject: "Password changed",
+            sender: "security@accounts.example",
+            senderName: "Accounts",
+            recipient: "you@inboxies.email",
+            date: "2026-10-03T07:48:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Your password was changed. If this wasn’t you, reset it now."
+        ),
+        Email(
+            id: "preview-paper-trail-7",
+            folderId: "paper_trail",
+            subject: "Your 2025 annual summary",
+            sender: "hello@ride.example",
+            senderName: "Ride",
+            recipient: "you@inboxies.email",
+            date: "2025-12-30T10:10:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "142 trips this year. Here’s where you went."
+        ),
+    ]
 
     /// `-previewDetail -previewCode` (AVE-176): sign-in mail with a one-time code, so the
     /// reader pins the Code card above the bottom bar. Android twin: AVE-177.
@@ -585,6 +675,10 @@ enum PreviewSupport {
             app.emails = app.emails.filter { $0.folderId == "spam" }
             app.selectedEmail = spam
             app.threadEmails = [spam]
+        } else if args.contains("-previewPaperTrail") {
+            // AVE-192: Paper Trail, a quiet receipts folder.
+            app.selectedTab = .folder(PaperTrail.folderId)
+            app.emails = paperTrailEmails
         } else if args.contains("-previewReplyLater") {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)

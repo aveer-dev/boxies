@@ -60,6 +60,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.MarkEmailRead
@@ -118,6 +119,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.services.FocusReplyResult
 import co.inboxies.app.services.NoteText
+import co.inboxies.app.services.PaperTrail
 import co.inboxies.app.ui.notes.PrivateNotesChip
 import co.inboxies.app.ui.notes.StickyNoteRowStrip
 import co.inboxies.app.models.FolderIds
@@ -250,7 +252,7 @@ fun EmailListView(
                 bottomInset = bottomInset,
                 topRow = screeningRoomRow,
                 allDone = focusReplyResult != null && onStartFocusReply != null,
-                copy = emptyState,
+                copy = emptyState ?: paperTrailEmptyState(fallbackFolderId),
                 title = emptyTitle,
                 message = emptyMessage,
             )
@@ -458,6 +460,29 @@ private fun EmailRows(
                     )
                 }
             }
+        } else if (PaperTrail.isPaperTrail(fallbackFolderId)) {
+            // Paper Trail, a quiet receipts folder (AVE-192): compact rows under month headers.
+            PaperTrail.monthSections(emails).forEach { section ->
+                item(key = section.id) {
+                    ListSectionHeader(title = section.label)
+                }
+                items(section.emails, key = { "${section.id}-${it.id}" }) { email ->
+                    EmailRowItem(
+                        email = email,
+                        isSelectMode = isSelectMode,
+                        selectedEmailIds = selectedEmailIds,
+                        onToggleSelect = onToggleSelect,
+                        highlightQuery = highlightQuery,
+                        folderLabel = folderLabel,
+                        fallbackFolderId = fallbackFolderId,
+                        swipePreferences = swipePreferences,
+                        showsTags = showsTags,
+                        compact = true,
+                        onOpen = onOpen,
+                        onMore = onMore,
+                    )
+                }
+            }
         } else {
             items(emails, key = { it.id }) { email ->
                 EmailRowItem(
@@ -598,7 +623,7 @@ private fun ShowAllNewRow(hiddenCount: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ListSectionHeader(title: String, count: Int) {
+private fun ListSectionHeader(title: String, count: Int? = null) {
     val colors = inboxiesColors()
     Row(
         modifier = Modifier
@@ -620,14 +645,16 @@ private fun ListSectionHeader(title: String, count: Int) {
             fontWeight = FontWeight.Medium,
             letterSpacing = AppThemeDims.List.tracking,
         )
-        Text(
-            text = "· $count",
-            color = colors.muted,
-            fontFamily = InterFontFamily,
-            fontSize = AppThemeDims.List.sectionHeader,
-            fontWeight = FontWeight.Normal,
-            letterSpacing = AppThemeDims.List.tracking,
-        )
+        if (count != null) {
+            Text(
+                text = "· $count",
+                color = colors.muted,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.List.sectionHeader,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = AppThemeDims.List.tracking,
+            )
+        }
     }
 }
 
@@ -642,6 +669,8 @@ private fun EmailRowItem(
     fallbackFolderId: String?,
     swipePreferences: SwipeActionPreferences,
     showsTags: Boolean = true,
+    /** Paper Trail receipt row (AVE-192): no preview line, tighter padding. */
+    compact: Boolean = false,
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
@@ -665,6 +694,7 @@ private fun EmailRowItem(
         isScreener = isScreener,
         readOnly = readOnly,
         isOpenInPane = isOpenInPane,
+        compact = compact,
         onOpen = { onOpen(email) },
         onToggleSelect = { onToggleSelect?.invoke(email.id) },
         onMore = { onMore(email) },
@@ -684,6 +714,7 @@ private fun MailRow(
     isScreener: Boolean = false,
     readOnly: Boolean = false,
     isOpenInPane: Boolean = false,
+    compact: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
@@ -761,6 +792,7 @@ private fun MailRow(
                         showsTags = showsTags,
                         showDivider = !isScreener,
                         rowBackground = rowBackground,
+                        compact = compact,
                         modifier = Modifier
                             .fillMaxWidth()
                             .combinedClickable(
@@ -1289,6 +1321,8 @@ fun EmailRowView(
     modifier: Modifier = Modifier,
     /** Fill behind the row; the two-pane list tints the row open in the reading pane. */
     rowBackground: Color = inboxiesColors().background,
+    /** Paper Trail receipt row (AVE-192): sender, subject, date; no preview line, tighter padding. */
+    compact: Boolean = false,
 ) {
     val colors = inboxiesColors()
     val list = AppThemeDims.List
@@ -1308,8 +1342,12 @@ fun EmailRowView(
                 .padding(
                     start = list.rowHorizontalPadding,
                     end = list.rowHorizontalPadding,
-                    top = list.rowVerticalPadding,
-                    bottom = if (showDivider) list.rowVerticalPadding else 6.dp,
+                    top = if (compact) list.compactRowVerticalPadding else list.rowVerticalPadding,
+                    bottom = when {
+                        !showDivider -> 6.dp
+                        compact -> list.compactRowVerticalPadding
+                        else -> list.rowVerticalPadding
+                    },
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -1444,7 +1482,7 @@ fun EmailRowView(
                 color = colors.ink,
             )
 
-            if (previewText.isNotEmpty()) {
+            if (!compact && previewText.isNotEmpty()) {
                 HighlightedText(
                     text = previewText,
                     query = highlightQuery,
@@ -1618,6 +1656,7 @@ fun ScreenerActionButtons(
             Triple(FolderIds.INBOX, "Inbox", Icons.Outlined.Inbox),
             Triple(FolderIds.PROMOTIONS, "Promotions", Icons.Outlined.LocalOffer),
             Triple(FolderIds.UPDATES, "Updates", Icons.Outlined.Notifications),
+            Triple(FolderIds.PAPER_TRAIL, "Paper Trail", Icons.AutoMirrored.Outlined.ReceiptLong),
         )
     }
 
@@ -1797,6 +1836,18 @@ private fun ReplyLaterReminderChip(email: Email) {
         }
     }
 }
+
+/** Empty Paper Trail: says what lands there (AVE-192); same copy as the web and iOS. */
+private fun paperTrailEmptyState(folderId: String?): EmptyStateCopy? =
+    if (PaperTrail.isPaperTrail(folderId)) {
+        EmptyStateCopy(
+            icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+            title = PaperTrail.EMPTY_TITLE,
+            message = PaperTrail.EMPTY_DESCRIPTION,
+        )
+    } else {
+        null
+    }
 
 /** Empty-state icon + title + message for a list that isn't a folder (AVE-201). */
 data class EmptyStateCopy(

@@ -432,7 +432,7 @@ final class ClientContractTests: XCTestCase {
     /// AVE-132: remote images load by default; only Spam blocks them until "Load images".
     func testRemoteImagesBlockedOnlyInSpam() {
         XCTAssertTrue(EmailHTMLSanitizer.blocksRemoteImages(folderId: "spam"))
-        for folder in ["inbox", "screener", "promotions", "updates", "sent", "draft", "archive", "screened_out", "trash"] {
+        for folder in ["inbox", "screener", "promotions", "updates", "paper_trail", "sent", "draft", "archive", "screened_out", "trash"] {
             XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: folder), folder)
         }
         XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: nil))
@@ -620,6 +620,10 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(
             ScreenerDecision.toastTitle(destinationFolderId: "updates"),
             "Accepted · future mail goes to Updates"
+        )
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "paper_trail"),
+            "Accepted · future mail goes to Paper Trail"
         )
     }
 

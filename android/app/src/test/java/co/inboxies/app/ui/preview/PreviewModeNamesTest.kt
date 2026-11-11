@@ -56,6 +56,8 @@ class PreviewModeNamesTest {
         assertEquals("domainOnboarding", PreviewMode.DomainOnboarding.cliName)
         assertEquals("mailbox", PreviewMode.Mailbox.cliName)
         assertEquals("setAside", PreviewMode.SetAside.cliName)
+        assertEquals("paperTrail", PreviewMode.PaperTrail.cliName)
+        assertEquals("previewPaperTrail", PreviewMode.PaperTrail.intentExtra)
         assertEquals("tagView", PreviewMode.TagView.cliName)
         assertEquals("tagPicker", PreviewMode.TagPicker.cliName)
         assertEquals("tagList", PreviewMode.TagList.cliName)

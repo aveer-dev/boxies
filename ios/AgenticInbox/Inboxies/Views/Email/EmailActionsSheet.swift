@@ -343,7 +343,7 @@ private struct MoveToFolderView: View {
 
     @State private var pendingFolderId: String?
 
-    private static let purposeFolderIds: Set<String> = ["inbox", "promotions", "updates"]
+    private static let purposeFolderIds: Set<String> = ["inbox", "promotions", "updates", PaperTrail.folderId]
 
     private var senderLabel: String {
         let name = sender.displaySender.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -399,7 +399,7 @@ private struct MoveToFolderView: View {
                 pendingFolderId = nil
             }
         } message: {
-            Text("Also move their existing Inbox, Promotions, and Updates mail.")
+            Text("Also move their existing Inbox, Promotions, Updates, and Paper Trail mail.")
         }
     }
 }
@@ -425,7 +425,7 @@ struct ReportSpamConfirmView: View {
                         Text("Move their other mail to Spam")
                             .font(.inter(size: 15, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
-                        Text("Also moves what they sent to Inbox, Promotions and Updates.")
+                        Text("Also moves what they sent to Inbox, Promotions, Updates and Paper Trail.")
                             .font(.inter(size: AppTheme.FontSize.meta))
                             .foregroundStyle(AppTheme.muted)
                     }

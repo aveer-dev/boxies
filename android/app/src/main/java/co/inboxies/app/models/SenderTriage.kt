@@ -25,11 +25,12 @@ object ScreenerDecision {
     private val folderNames = mapOf(
         "promotions" to "Promotions",
         "updates" to "Updates",
+        "paper_trail" to "Paper Trail",
     )
 
     /**
      * Toast after the decision. [destinationFolderId] null means Decline. Inbox is
-     * the plain Accept (pins nothing, AVE-139); Promotions / Updates stick.
+     * the plain Accept (pins nothing, AVE-139); Promotions / Updates / Paper Trail stick.
      */
     fun toastTitle(destinationFolderId: String?): String {
         if (destinationFolderId == null) return "Declined"

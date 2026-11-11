@@ -3222,7 +3222,7 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Move this sender's mail among inbox / promotions / updates only.
+	 * Move this sender's mail among inbox / promotions / updates / paper_trail only.
 	 * Spam, trash, archive, sent, draft, and custom folders are untouched.
 	 */
 	#refileSenderPurposeMail(address: string, folderId: PurposeFolderId): number {

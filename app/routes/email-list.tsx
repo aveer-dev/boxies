@@ -13,6 +13,7 @@ import {
 	FileIcon,
 	MegaphoneIcon,
 	NewspaperIcon,
+	ReceiptIcon,
 	PaperclipIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
@@ -33,6 +34,7 @@ import {
 	getFolderDisplayName,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
+import { buildMonthListItems, folderIsPaperTrail } from "shared/paper-trail";
 import { formatParticipants } from "shared/sender";
 import ColumnMenu from "~/components/columns/ColumnMenu";
 import { IconButton } from "~/components/IconButton";
@@ -48,7 +50,7 @@ import { hasUnread, useEmailActions } from "~/hooks/useEmailActions";
 import { useEmailMenu } from "~/hooks/useEmailMenu";
 import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useUIStore } from "~/hooks/useUIStore";
-import { buildInboxListItems, INBOX_NEW_PREVIEW_LIMIT } from "~/lib/list-sections";
+import { buildInboxListItems, INBOX_NEW_PREVIEW_LIMIT, type InboxListItem } from "~/lib/list-sections";
 import { keysFor } from "~/lib/shortcuts";
 import { getSnippetText } from "~/lib/utils";
 import { useEmails } from "~/queries/emails";
@@ -108,6 +110,12 @@ const FOLDER_EMPTY_STATES: Record<
 		title: "No updates",
 		description:
 			"Receipts and transactional mail you file here. Assign senders so they land here automatically.",
+	},
+	[Folders.PAPER_TRAIL]: {
+		icon: <ReceiptIcon size={40} weight="thin" className="text-kumo-subtle" />,
+		title: "No paper trail",
+		description:
+			"Receipts and confirmations from senders you send here, grouped by month. Mail here never sends a notification.",
 	},
 	[Folders.SPAM]: {
 		icon: <WarningIcon size={40} weight="thin" className="text-kumo-subtle" />,
@@ -169,6 +177,8 @@ function FolderList({ folder }: { folder: string }) {
 	);
 
 	const showNewSeen = folder === Folders.INBOX;
+	// Paper Trail is a quiet receipts view (AVE-192): compact rows by month.
+	const paperTrail = folderIsPaperTrail(folder);
 	// Inbox: only the newest few New conversations, then Seen (AVE-23), so
 	// Seen stays in view however much is unread. "Show all" opens the rest.
 	const params = useMemo(
@@ -190,7 +200,8 @@ function FolderList({ folder }: { folder: string }) {
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
 
-	const listItems = useMemo(() => {
+	const listItems = useMemo((): InboxListItem<Email>[] => {
+		if (paperTrail) return buildMonthListItems(emails);
 		if (!showNewSeen || emails.length === 0) {
 			return emails.map((email) => ({ type: "email" as const, email }));
 		}
@@ -200,7 +211,7 @@ function FolderList({ folder }: { folder: string }) {
 			seenCount: emailData?.seenCount,
 			newPreviewLimit: INBOX_NEW_PREVIEW_LIMIT,
 		});
-	}, [emails, showNewSeen, emailData?.newCount, emailData?.seenCount, page]);
+	}, [emails, paperTrail, showNewSeen, emailData?.newCount, emailData?.seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);
 	const isCustomFolder = !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folder);
@@ -375,7 +386,8 @@ function FolderList({ folder }: { folder: string }) {
 									isUnread={unread}
 									onOpen={() => handleOpen(email)}
 									sender={formatParticipants(email)}
-									snippet={getSnippetText(email.snippet)}
+									snippet={paperTrail ? undefined : getSnippetText(email.snippet)}
+									compact={paperTrail}
 									onToggleStar={() => actions.toggleStar(email)}
 									hoverActions={
 										<>

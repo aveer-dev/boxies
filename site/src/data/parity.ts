@@ -30,11 +30,11 @@ export const gmail: ParityRow[] = shown([
 ]);
 
 export const hey: ParityRow[] = shown([
-	{ competitor: "hey", theirs: "The Screener", ours: "Screener", status: "available", note: "Accept into Inbox, Promotions or Updates; decline quietly.", src: HEY },
+	{ competitor: "hey", theirs: "The Screener", ours: "Screener", status: "available", note: "Accept into Inbox, Promotions, Updates or Paper Trail; decline quietly.", src: `${HEY}; AVE-192` },
 	{ competitor: "hey", theirs: "The Imbox", ours: "Inbox, New and Seen", status: "available", note: "New sits above Seen.", src: HEY },
 	{ competitor: "hey", theirs: "Reply Later", ours: "Reply Later", status: "available", note: "Leaves the pile when you reply.", src: HEY },
+	{ competitor: "hey", theirs: "Paper Trail", ours: "Paper Trail", status: "available", note: "Its own folder. Send a sender there from the Screener, or when you move their mail; it’s listed by month and never notifies you.", src: `${HEY}; AVE-192 (shared/folders.ts PAPER_TRAIL, shared/paper-trail.ts; shouldSendPush skips Paper Trail; DO migration 51_paper_trail_folder; web, iOS, Android)` },
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", src: HEY },
-	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", src: HEY },
 	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "available", note: "One thread at a time, with the reply open.", src: `${HEY}; AVE-193 (iOS, Android)` },
 	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later and Set Aside", status: "partly", note: "Two piles so far; no piles of your own yet.", src: `${HEY}; AVE-201` },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
@@ -63,8 +63,8 @@ export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Imbox", ours: "Inbox, New and Seen", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Reply Later", ours: "Reply Later", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names); AVE-193 (iOS, Android)" },
+	{ competitor: "hey", theirs: "Paper Trail", ours: "Paper Trail", status: "available", note: "Its own folder you send senders to from the Screener.", landing: true, src: "RM#3; WEB#2.1 (HEY names); AVE-192" },
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
-	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names); AVE-201" },
 	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Tracker blocking", status: "available", note: "In every folder, naming who tried.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168)" },
 ]);

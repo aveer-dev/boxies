@@ -25,6 +25,7 @@ import {
 	type EmailAuth,
 } from "./email-auth.ts";
 import { isDirectMail, type DirectMailInput } from "./direct-mail.ts";
+import { folderIsQuiet } from "../../shared/paper-trail.ts";
 
 export type InboundClass = "spam" | "ham" | "bulk";
 
@@ -426,9 +427,19 @@ export function shouldAutoDraft(
 	return direct ? isDirectMail(direct) : true;
 }
 
-/** Skip push for spam; ham and bulk still notify. */
-export function shouldSendPush(classification: EmailClassification): boolean {
-	return classification.class !== "spam";
+/**
+ * Skip push for spam, and for mail filed in a quiet folder (Paper Trail:
+ * receipts from senders you send there are kept for reference, not to
+ * interrupt; AVE-192). Updates still notifies.
+ * Otherwise ham and bulk still notify. Pass the folder the mail was actually
+ * filed to (after any Inbox fallback).
+ */
+export function shouldSendPush(
+	classification: EmailClassification,
+	filedFolderId?: string | null,
+): boolean {
+	if (classification.class === "spam") return false;
+	return !folderIsQuiet(filedFolderId);
 }
 
 /**

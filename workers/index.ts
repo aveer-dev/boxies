@@ -796,7 +796,7 @@ app.post("/api/v1/mailboxes/:mailboxId/folders/trash/empty", async (c: AppContex
  *
  * A Spam verdict is retroactive and undoable (AVE-98, lib/sender-verdict-undo):
  * Not spam also rescues the sender's other Spam from the last 30 days, and
- * Report spam also moves their Inbox / Promotions / Updates mail to Spam
+ * Report spam also moves their Inbox / Promotions / Updates / Paper Trail mail to Spam
  * unless `refileSender` is false. The response carries `rescuedCount` (other
  * messages moved) and an `undoToken` for `POST sender-rules/undo`.
  */
@@ -806,7 +806,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 		setSenderPreference?: boolean;
 		/** Report spam on RFC 8058 bulk mail: also send the one-click unsubscribe (AVE-99). */
 		unsubscribe?: boolean;
-		/** Report spam: also move the sender's Inbox / Promotions / Updates mail to Spam. Default true (AVE-98). */
+		/** Report spam: also move the sender's Inbox / Promotions / Updates / Paper Trail mail to Spam. Default true (AVE-98). */
 		refileSender?: boolean;
 	};
 	const { folderId, setSenderPreference } = body;
@@ -1394,14 +1394,14 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/approve", async (c: AppCont
 	const destinationFolderId = (body.destinationFolderId || Folders.INBOX).trim();
 	if (!isScreenerDestination(destinationFolderId)) {
 		return c.json(
-			{ error: "destinationFolderId must be inbox, promotions, or updates" },
+			{ error: "destinationFolderId must be inbox, promotions, updates, or paper_trail" },
 			400,
 		);
 	}
 
 	// Accept is consent, not a filing rule (AVE-139): Inbox (the default)
 	// pins nothing, so the classifier still sorts their newsletters and
-	// receipts. Only a picked Promotions / Updates sticks. This message and
+	// receipts. Only a picked Promotions / Updates / Paper Trail sticks. This message and
 	// the queued ones still go where the user accepted them.
 	const pinned = screenerAcceptDestination(destinationFolderId);
 	const triage = await stub.upsertSenderTriage({
@@ -1515,7 +1515,7 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 			null;
 		if (destinationFolderId && !isScreenerDestination(destinationFolderId)) {
 			return c.json(
-				{ error: "destinationFolderId must be inbox, promotions, or updates" },
+				{ error: "destinationFolderId must be inbox, promotions, updates, or paper_trail" },
 				400,
 			);
 		}
@@ -2574,7 +2574,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
-		if (triageDecision.skipPush || !shouldSendPush(classification)) {
+		if (triageDecision.skipPush || !shouldSendPush(classification, filedFolder)) {
 			return;
 		}
 

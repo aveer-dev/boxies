@@ -15,6 +15,8 @@ export const Folders = {
 	SCREENER: "screener",
 	PROMOTIONS: "promotions",
 	UPDATES: "updates",
+	/** HEY's Paper Trail (AVE-192): receipts from senders you send here. Never pushes. */
+	PAPER_TRAIL: "paper_trail",
 	SENT: "sent",
 	DRAFT: "draft",
 	ARCHIVE: "archive",
@@ -30,6 +32,7 @@ export const SCREENER_DESTINATION_IDS = [
 	Folders.INBOX,
 	Folders.PROMOTIONS,
 	Folders.UPDATES,
+	Folders.PAPER_TRAIL,
 ] as const;
 
 export type ScreenerDestinationId = (typeof SCREENER_DESTINATION_IDS)[number];
@@ -44,6 +47,7 @@ export const SYSTEM_FOLDER_IDS: readonly FolderId[] = [
 	Folders.SCREENER,
 	Folders.PROMOTIONS,
 	Folders.UPDATES,
+	Folders.PAPER_TRAIL,
 	Folders.SENT,
 	Folders.DRAFT,
 	Folders.ARCHIVE,
@@ -61,12 +65,15 @@ export const PRIMARY_FOLDER_IDS: readonly FolderId[] = SYSTEM_FOLDER_IDS.filter(
 
 /**
  * Purpose boxes — sender defaults may only target these.
- * Inbox / Promotions / Updates (Hey-shaped Imbox / Feed / Paper Trail).
+ * Inbox / Promotions / Updates / Paper Trail (HEY's Imbox / Feed / Paper Trail;
+ * Updates is ours: mail the classifier files as receipts and alerts).
+ * Paper Trail only ever holds senders you send there (AVE-192).
  */
 export const PURPOSE_FOLDER_IDS = [
 	Folders.INBOX,
 	Folders.PROMOTIONS,
 	Folders.UPDATES,
+	Folders.PAPER_TRAIL,
 ] as const;
 
 export type PurposeFolderId = (typeof PURPOSE_FOLDER_IDS)[number];
@@ -109,6 +116,7 @@ export const FOLDER_DISPLAY_NAMES: Record<string, string> = {
 	[Folders.SCREENER]: "Screener",
 	[Folders.PROMOTIONS]: "Promotions",
 	[Folders.UPDATES]: "Updates",
+	[Folders.PAPER_TRAIL]: "Paper Trail",
 	[Folders.SENT]: "Sent",
 	[Folders.DRAFT]: "Drafts",
 	[Folders.ARCHIVE]: "Archive",
@@ -119,11 +127,11 @@ export const FOLDER_DISPLAY_NAMES: Record<string, string> = {
 
 /** Formatted string for tool parameter descriptions (agent + MCP). */
 export const FOLDER_TOOL_DESCRIPTION =
-	"Folder to list: inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash";
+	"Folder to list: inbox, screener, promotions, updates, paper_trail, sent, draft, archive, spam, screened_out, trash";
 
 /** Formatted string for move-email tool descriptions. */
 export const MOVE_FOLDER_TOOL_DESCRIPTION =
-	"Target folder: inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash";
+	"Target folder: inbox, screener, promotions, updates, paper_trail, sent, draft, archive, spam, screened_out, trash";
 
 /**
  * Look up a display name for a folder ID, falling back to the raw ID

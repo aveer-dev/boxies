@@ -589,7 +589,7 @@ private fun MoveToFolderScreen(
             title = { Text("Put future mail here?") },
             text = {
                 Text(
-                    "Also file future messages from $senderLabel here, and move their existing Inbox / Promotions / Updates mail.",
+                    "Also file future messages from $senderLabel here, and move their existing Inbox / Promotions / Updates / Paper Trail mail.",
                 )
             },
             confirmButton = {
@@ -740,7 +740,7 @@ internal fun ReportSpamConfirmScreen(
         ) {
             ReportSpamSwitchRow(
                 title = "Move their other mail to Spam",
-                detail = "Also moves what they sent to Inbox, Promotions and Updates.",
+                detail = "Also moves what they sent to Inbox, Promotions, Updates and Paper Trail.",
                 checked = refileSender,
                 onCheckedChange = { refileSender = it },
             )
