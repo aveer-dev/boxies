@@ -25,6 +25,7 @@ class PreviewModeNamesTest {
         assertEquals("previewScreener", PreviewMode.Screener.intentExtra)
         assertEquals("previewScreenerReaderAccept", PreviewMode.ScreenerReaderAccept.intentExtra)
         assertEquals("previewReplyLater", PreviewMode.ReplyLater.intentExtra)
+        assertEquals("previewSetAside", PreviewMode.SetAside.intentExtra)
         assertEquals("previewNewsletter", PreviewMode.Newsletter.intentExtra)
         assertEquals("previewCode", PreviewMode.Code.intentExtra)
         assertEquals("previewInvite", PreviewMode.InviteCard.intentExtra)
@@ -44,6 +45,9 @@ class PreviewModeNamesTest {
         assertEquals("previewTags", PreviewMode.Tags.intentExtra)
         assertEquals("previewTagsRename", PreviewMode.TagsRename.intentExtra)
         assertEquals("previewTagsDelete", PreviewMode.TagsDelete.intentExtra)
+        assertEquals("previewTagView", PreviewMode.TagView.intentExtra)
+        assertEquals("previewTagPicker", PreviewMode.TagPicker.intentExtra)
+        assertEquals("previewTagList", PreviewMode.TagList.intentExtra)
     }
 
     @Test
@@ -51,6 +55,10 @@ class PreviewModeNamesTest {
         assertEquals("domainAdmin", PreviewMode.DomainAdmin.cliName)
         assertEquals("domainOnboarding", PreviewMode.DomainOnboarding.cliName)
         assertEquals("mailbox", PreviewMode.Mailbox.cliName)
+        assertEquals("setAside", PreviewMode.SetAside.cliName)
+        assertEquals("tagView", PreviewMode.TagView.cliName)
+        assertEquals("tagPicker", PreviewMode.TagPicker.cliName)
+        assertEquals("tagList", PreviewMode.TagList.cliName)
         assertEquals("loadMore", PreviewMode.LoadMore.cliName)
         assertEquals("loadFailed", PreviewMode.LoadFailed.cliName)
         assertEquals("listError", PreviewMode.ListError.cliName)

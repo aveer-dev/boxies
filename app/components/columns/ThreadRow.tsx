@@ -17,6 +17,7 @@ import { type CSSProperties, type MouseEvent, type ReactNode, useState } from "r
 import { formatListDate } from "shared/dates";
 import { useContextMenu } from "~/components/ContextMenu";
 import { IconButton, Tip } from "~/components/IconButton";
+import { TagChip } from "~/components/TagPicker";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
 import { formatReminderShort, isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
@@ -52,6 +53,7 @@ export default function ThreadRow({
 	onMenu,
 	index = 0,
 	compact = false,
+	hideTagId,
 }: {
 	email: Email;
 	isSelected: boolean;
@@ -73,6 +75,8 @@ export default function ThreadRow({
 	index?: number;
 	/** Tighter receipt row for Updates (AVE-192): pass no snippet with it. */
 	compact?: boolean;
+	/** A tag not to repeat on the row (the tag view it's listed in). */
+	hideTagId?: string;
 }) {
 	// The row stays marked while its menu is open.
 	const menuOpen = useContextMenu(
@@ -83,7 +87,9 @@ export default function ThreadRow({
 	// Notes to self (AVE-60): the sticky's text on the bottom row; inline notes as a count.
 	const stickyPreview = email.has_sticky_note ? notePreviewText(email.sticky_note_text) : "";
 	const inlineNotes = email.inline_note_count ?? 0;
-	const showChips = Boolean(chips) || hasFiles || inlineNotes > 0;
+	// Tags (AVE-241): every tag in the conversation, after the list's own chips.
+	const tags = (email.tags ?? []).filter((t) => t.id !== hideTagId);
+	const showChips = Boolean(chips) || tags.length > 0 || hasFiles || inlineNotes > 0;
 
 	return (
 		<div
@@ -198,6 +204,9 @@ export default function ThreadRow({
 				{showChips && (
 					<div className="mt-2.5 flex items-center gap-2 flex-wrap">
 						{chips}
+						{tags.map((tag) => (
+							<TagChip key={tag.id} name={tag.name} />
+						))}
 						{hasFiles && (
 							<span className="inline-flex items-center gap-1 text-xs text-kumo-subtle">
 								<PaperclipIcon size={12} aria-label="Has attachment" />

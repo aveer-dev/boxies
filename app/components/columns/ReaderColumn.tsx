@@ -8,6 +8,7 @@ import { FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "shared/folders";
 import EmailPanel from "~/components/EmailPanel";
 import { folderHref as folderHrefFor, useMailNavigation } from "~/hooks/useMailNavigation";
 import { useListFolderId } from "~/hooks/useListFolder";
+import { isSetAside } from "~/lib/piles";
 import { useEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import type { Email } from "~/types";
@@ -39,10 +40,10 @@ export default function ReaderColumn({
 	const { data: folders = [] } = useFolders(mailboxId);
 
 	const folderId = email?.folder_id ?? folder;
-	const isTag = Boolean(folderId && !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folderId));
+	const isCustomFolder = Boolean(folderId && !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folderId));
 	const folderName = folderId
-		? isTag
-			? `#${(folders.find((f) => f.id === folderId)?.name ?? folderId).replace(/^#/, "")}`
+		? isCustomFolder
+			? (folders.find((f) => f.id === folderId)?.name ?? folderId).replace(/^#/, "")
 			: (FOLDER_DISPLAY_NAMES[folderId] ?? folderId)
 		: null;
 
@@ -67,6 +68,7 @@ export default function ReaderColumn({
 			)}
 			{email?.starred && <ThreadChip>Starred</ThreadChip>}
 			{email?.reply_later && <ThreadChip>Reply later</ThreadChip>}
+			{email && isSetAside(email) && <ThreadChip>Set aside</ThreadChip>}
 		</>
 	);
 

@@ -128,9 +128,10 @@ const FOLDER_EMPTY_STATES: Record<
 };
 
 /**
- * Column 3 for `/emails/:folder` (built-in folders) and `/tags/:tagRef` (a tag
- * by its index, never its name: AVE-126, shared/tag-url.ts), plus the reader
- * for `:emailId`.
+ * Column 3 for `/emails/:folder` (built-in folders) and `/tags/:tagRef` (a
+ * custom folder by its index, never its name: AVE-126, shared/tag-url.ts),
+ * plus the reader for `:emailId`. Real tags have their own view
+ * (routes/tag-view.tsx).
  */
 export default function EmailListRoute() {
 	const folder = useResolvedListFolder(useMailboxId());
@@ -206,12 +207,12 @@ function FolderList({ folder }: { folder: string }) {
 	}, [emails, paperTrail, showNewSeen, emailData?.newCount, emailData?.seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);
-	const isTag = !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folder);
+	const isCustomFolder = !(SYSTEM_FOLDER_IDS as readonly string[]).includes(folder);
 	const folderName = useMemo(() => {
 		const found = folders.find((f) => f.id === folder);
-		if (found) return isTag ? `#${found.name.replace(/^#/, "")}` : found.name;
+		if (found) return isCustomFolder ? found.name.replace(/^#/, "") : found.name;
 		return getFolderDisplayName(folder);
-	}, [folders, folder, isTag]);
+	}, [folders, folder, isCustomFolder]);
 	const unreadCount = folderUnread(folders.find((f) => f.id === folder));
 
 	// New folder (or mailbox) → back to page 1.
@@ -259,8 +260,8 @@ function FolderList({ folder }: { folder: string }) {
 
 	const emptyState = FOLDER_EMPTY_STATES[folder] ?? {
 		icon: <EnvelopeSimpleIcon size={40} weight="thin" className="text-kumo-subtle" />,
-		title: isTag ? "Nothing tagged yet" : "No emails",
-		description: isTag
+		title: isCustomFolder ? "Nothing here yet" : "No emails",
+		description: isCustomFolder
 			? "Move a message here from the reader’s Move to menu."
 			: "This folder is empty.",
 	};

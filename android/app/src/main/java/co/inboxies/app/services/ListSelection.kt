@@ -4,7 +4,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.HomeTab
 
 /**
- * What the shared `emails` list is showing: one folder (or the Reply Later pile) of one
+ * What the shared `emails` list is showing: one folder (or a workflow pile) of one
  * mailbox. Async loads capture it before their first await and only apply results while
  * it is still current, so a slow response for mailbox A / folder X can never overwrite
  * B / Y after a fast switch. "For you" and the Inbox folder share a scope on purpose:
@@ -14,11 +14,20 @@ data class EmailListScope(
     val mailboxId: String,
     val folderId: String?,
     val replyLater: Boolean = false,
+    /** The Set Aside pile (AVE-201). */
+    val setAside: Boolean = false,
+    /** A tag view (AVE-242): `GET /tags/:id/emails`, not a folder. */
+    val tagId: String? = null,
 ) {
+    /** One of the workflow piles rather than a folder. */
+    val isPile: Boolean get() = replyLater || setAside
+
     companion object {
         fun of(mailboxId: String?, tab: HomeTab): EmailListScope? {
             if (mailboxId == null) return null
             if (tab is HomeTab.ReplyLater) return EmailListScope(mailboxId, folderId = null, replyLater = true)
+            if (tab is HomeTab.SetAside) return EmailListScope(mailboxId, folderId = null, setAside = true)
+            if (tab is HomeTab.Tag) return EmailListScope(mailboxId, folderId = null, tagId = tab.id)
             val folderId = tab.syncFolderId ?: return null
             return EmailListScope(mailboxId, folderId)
         }

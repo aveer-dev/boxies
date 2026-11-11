@@ -105,6 +105,7 @@ export function useListShortcuts(
 	useRowShortcut("toggleRead", emails, (email) => actions.toggleRead(email));
 	useRowShortcut("star", emails, (email) => actions.toggleStar(email));
 	useRowShortcut("replyLater", emails, (email) => actions.toggleReplyLater(email));
+	useRowShortcut("setAside", emails, (email) => actions.toggleSetAside(email));
 	useRowShortcut("openInColumn", emails, (email) => actions.openInColumn(email));
 	useRowShortcut("popOut", emails, (email) => actions.popOut(email));
 	useRowShortcut("archive", emails, (email, row) => {

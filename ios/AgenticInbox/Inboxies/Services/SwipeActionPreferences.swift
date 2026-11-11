@@ -8,6 +8,8 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
     case star
     case toggleRead
     case reply
+    /// Set Aside pile (AVE-201): a flag, so it still works on a read-only mailbox.
+    case setAside
 
     var id: String { rawValue }
 
@@ -18,6 +20,7 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
         case .star: return "Star"
         case .toggleRead: return "Mark Read/Unread"
         case .reply: return "Reply"
+        case .setAside: return "Set Aside"
         }
     }
 
@@ -28,6 +31,7 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
         case .star: return "star"
         case .toggleRead: return "envelope.open"
         case .reply: return "arrowshape.turn.up.left"
+        case .setAside: return "bookmark"
         }
     }
 
@@ -38,12 +42,13 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
         case .star: return .orange
         case .toggleRead: return .blue
         case .reply: return AppTheme.accent
+        case .setAside: return .teal
         }
     }
 
     /// Flags still sync on a read-only mailbox; moving, deleting and replying don't.
     var isAllowedWhenReadOnly: Bool {
-        self == .star || self == .toggleRead
+        self == .star || self == .toggleRead || self == .setAside
     }
 
     func label(for email: Email) -> String {
@@ -52,6 +57,8 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
             return email.starred ? "Unstar" : "Star"
         case .toggleRead:
             return email.read ? "Unread" : "Read"
+        case .setAside:
+            return email.isSetAside ? "Remove" : "Set Aside"
         default:
             return title
         }
@@ -63,6 +70,8 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
             return email.starred ? "star.fill" : "star"
         case .toggleRead:
             return email.read ? "envelope.badge" : "envelope.open"
+        case .setAside:
+            return email.isSetAside ? "bookmark.slash" : "bookmark"
         default:
             return systemImage
         }
@@ -271,6 +280,9 @@ struct EmailActionAvailability {
     var showsDelete: Bool { !readOnly }
 
     var showsMove: Bool { !readOnly }
+
+    /// Tags (AVE-242): any received or sent conversation, not drafts; never read-only.
+    var showsTags: Bool { !readOnly && !email.isDraft }
 
     var showsReplyActions: Bool {
         !readOnly && !email.isDraft

@@ -42,6 +42,8 @@ export interface EmailMetadata {
 	starred: boolean;
 	reply_later?: boolean;
 	reply_later_at?: string | null;
+	/** Pile the message is in (`reply_later`, `set_aside`), or null (AVE-201). */
+	pile_id?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;
 	thread_id?: string | null;

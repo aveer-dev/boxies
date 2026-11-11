@@ -20,6 +20,7 @@ struct RootView: View {
             || args.contains("-previewScreenerList")
             || args.contains("-previewSpam")
             || args.contains("-previewReplyLater")
+            || args.contains("-previewSetAside")
             || args.contains("-previewDomainAdmin")
             || args.contains("-previewDomainAdminDetail")
             || args.contains("-previewDomainAdminDetailUnassigned")
@@ -27,6 +28,7 @@ struct RootView: View {
             || args.contains("-previewInviteAccept")
             || args.contains("-previewSignInMethods")
             || args.contains("-previewDomainAdminServiceEnded")
+            || PreviewSupport.isTagPreview
             || PreviewSupport.isServiceMailboxPreview {
             return false
         }
@@ -87,6 +89,7 @@ struct RootView: View {
                 || args.contains("-previewScreenerList")
                 || args.contains("-previewSpam")
                 || args.contains("-previewReplyLater")
+                || args.contains("-previewSetAside")
                 || args.contains("-previewDomainAdmin")
                 || args.contains("-previewDomainAdminDetail")
                 || args.contains("-previewDomainAdminDetailUnassigned")
@@ -94,6 +97,7 @@ struct RootView: View {
                 || args.contains("-previewInviteAccept")
                 || args.contains("-previewSignInMethods")
                 || args.contains("-previewDomainAdminServiceEnded")
+                || PreviewSupport.isTagPreview
                 || PreviewSupport.isServiceMailboxPreview {
                 return
             }
@@ -1977,10 +1981,9 @@ struct MailboxOnboardingView: View {
     private func persistAliases() async {
         if !domainAliases.isEmpty {
             let domain = customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let payload = domainAliases.map { [
-                "alias": $0.alias,
-                "target": $0.target
-            ] }
+            let payload = domainAliases.map {
+                SetupAlias(aliasLocal: $0.alias, targetMailboxId: $0.target)
+            }
             _ = try? await APIClient.shared.setupDomainAliases(domain: domain, aliases: payload)
         }
         await MainActor.run {

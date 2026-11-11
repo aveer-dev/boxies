@@ -38,9 +38,18 @@ enum PreviewSupport {
         // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
         app.screenerQueue = emails.filter { $0.folderId == "screener" }
         app.replyLaterCount = emails.filter(\.replyLater).count
+        app.setAsideCount = emails.filter(\.isSetAside).count
+        app.tags = PreviewMailTags.tags
         app.isLoading = false
         app.isMailboxLoading = false
         return app
+    }
+
+    /// `-previewTagView` / `-previewTagPicker` / `-previewTagList` (AVE-242): Android
+    /// `tagView` / `tagPicker` / `tagList`.
+    static var isTagPreview: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        return args.contains("-previewTagView") || args.contains("-previewTagPicker") || args.contains("-previewTagList")
     }
 
     /// `-previewTags`: the fixture mailbox plus a few custom folders (AVE-158).
@@ -72,7 +81,8 @@ enum PreviewSupport {
             starred: false,
             body: HTMLHardenFixture.html,
             snippet: "Can we move Thursday's sync to the morning instead?",
-            threadCount: 3
+            threadCount: 3,
+            tags: [PreviewMailTags.clients.ref, PreviewMailTags.q3.ref]
         ),
         Email(
             id: "preview-2",
@@ -88,7 +98,8 @@ enum PreviewSupport {
             replyLaterAt: "2026-09-02T10:00:00.000Z",
             snippet: "Attached is the updated PDF for last month's work.",
             needsReply: true,
-            hasAttachment: true
+            hasAttachment: true,
+            tags: [PreviewMailTags.clients.ref]
         ),
         Email(
             id: "preview-3",
@@ -191,7 +202,57 @@ enum PreviewSupport {
             replyLater: true,
             replyLaterAt: "2026-09-11T09:00:00.000Z",
             snippet: "Draft is in the shared drive — need a sign-off by Friday.",
-            needsReply: true
+            needsReply: true,
+            tags: [PreviewMailTags.waiting.ref]
+        ),
+        // Archived but tagged: a tag view spans folders (AVE-242).
+        Email(
+            id: "preview-sow",
+            folderId: "archive",
+            subject: "Signed SOW",
+            sender: "ops@northwind.example",
+            senderName: "Northwind Ops",
+            recipient: "you@inboxies.email",
+            date: "2026-08-20T15:20:00.000Z",
+            read: true,
+            starred: false,
+            body: "<p>Countersigned statement of work attached.</p>",
+            snippet: "Countersigned statement of work attached.",
+            hasAttachment: true,
+            tags: [PreviewMailTags.clients.ref, PreviewMailTags.waiting.ref]
+        ),
+        // Set Aside (AVE-201): mail kept handy, already filed away.
+        Email(
+            id: "preview-sa-1",
+            folderId: "archive",
+            subject: "Your boarding pass: SFO → JFK",
+            sender: "checkin@airline.example",
+            senderName: "Skyline Air",
+            recipient: "you@inboxies.email",
+            date: "2026-09-14T06:20:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Gate B12 · Boards 7:45 AM · Seat 14C. Show this pass at security.",
+            folderName: "Archive",
+            hasAttachment: true,
+            pileId: WorkflowPileID.setAside,
+            pileAt: "2026-09-14T06:30:00.000Z"
+        ),
+        Email(
+            id: "preview-sa-2",
+            folderId: "archive",
+            subject: "Signed lease for 24 Elm Street",
+            sender: "leasing@elmproperties.example",
+            senderName: "Elm Properties",
+            recipient: "you@inboxies.email",
+            date: "2026-09-12T15:05:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Countersigned copy attached. Keys are ready for pickup on the 1st.",
+            folderName: "Archive",
+            hasAttachment: true,
+            pileId: WorkflowPileID.setAside,
+            pileAt: "2026-09-15T08:00:00.000Z"
         ),
     ]
 
@@ -627,6 +688,21 @@ enum PreviewSupport {
                 app.replyLaterCount = 0
                 app.focusReplyResult = FocusReplyResult(replied: 3, skipped: 0)
             }
+        } else if args.contains("-previewSetAside") {
+            // AVE-201: the Set Aside pile, oldest-added first.
+            app.selectedTab = .setAside
+            app.emails = app.emails.filter(\.isSetAside)
+            app.setAsideCount = app.emails.count
+        } else if args.contains("-previewTagView") {
+            // AVE-242: everything tagged Clients, across folders.
+            app.selectedTab = .tag(PreviewMailTags.clients.id)
+            app.emails = app.emails.filter { ($0.tags ?? []).contains { $0.id == PreviewMailTags.clients.id } }
+        } else if args.contains("-previewTagPicker"),
+                  let tagged = app.emails.first(where: { $0.id == "preview-1" }) {
+            // AVE-242: reader on a tagged conversation; the picker opens from EmailDetailView.
+            app.emails = app.emails.filter { $0.folderId == "inbox" }
+            app.selectedEmail = tagged
+            app.threadEmails = [tagged]
         } else if args.contains("-previewDetail"),
                   args.contains("-previewCode") || args.contains("-previewInvite") {
             // AVE-176: reader with the Code card / Invite card pinned at the bottom.

@@ -3,27 +3,35 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import {
+	BookmarkSimpleIcon,
 	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
 	ArrowsOutSimpleIcon,
 	ChatCircleIcon,
+	CheckIcon,
 	ClockCounterClockwiseIcon,
 	ColumnsPlusRightIcon,
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
 	StarIcon,
+	TagSimpleIcon,
 	TrashIcon,
 } from "@phosphor-icons/react";
+import type { TagRef } from "shared/tags";
 import { type MouseEvent, useCallback } from "react";
 import { Folders } from "shared/folders";
 import { type MenuEntry, useContextMenu } from "~/components/ContextMenu";
 import { type EmailActions, hasUnread } from "~/hooks/useEmailActions";
 import { pendingReminder } from "~/lib/reply-later-reminders";
+import { isSetAside } from "~/lib/piles";
 import { keysFor } from "~/lib/shortcuts";
 import { useFolders } from "~/queries/folders";
+import { useSetThreadTag, useTags } from "~/queries/tags";
+import { useUIStore } from "~/hooks/useUIStore";
+import { tagThreadKey } from "~/lib/tags";
 import type { Email } from "~/types";
 
 /**
@@ -35,6 +43,8 @@ export function buildEmailMenu(
 	email: Email,
 	actions: EmailActions,
 	moveTargets: { id: string; name: string }[],
+	/** Tags (AVE-241): the mailbox's tags and how to set one on the row's conversation. */
+	tagging?: { tags: readonly TagRef[]; set: (email: Email, tag: TagRef, on: boolean) => void },
 ): MenuEntry[] {
 	const isDraft = email.folder_id === Folders.DRAFT;
 	const unread = hasUnread(email);
@@ -70,6 +80,13 @@ export function buildEmailMenu(
 			icon: ClockCounterClockwiseIcon,
 			shortcut: keysFor("replyLater"),
 			onSelect: () => actions.toggleReplyLater(email),
+		},
+		{
+			type: "item",
+			label: isSetAside(email) ? "Remove from Set Aside" : "Set aside",
+			icon: BookmarkSimpleIcon,
+			shortcut: keysFor("setAside"),
+			onSelect: () => actions.toggleSetAside(email),
 		},
 		{
 			type: "item",
@@ -113,6 +130,23 @@ export function buildEmailMenu(
 			items: targets.map((f) => ({ type: "item", label: f.name, onSelect: () => actions.move(email, f.id) })),
 		});
 	}
+	if (tagging && tagging.tags.length > 0 && !isDraft) {
+		const applied = new Set((email.tags ?? []).map((t) => t.id));
+		entries.push({
+			type: "submenu",
+			label: "Tags",
+			icon: TagSimpleIcon,
+			items: tagging.tags.map((tag) => {
+				const on = applied.has(tag.id);
+				return {
+					type: "item",
+					label: tag.name,
+					icon: on ? CheckIcon : undefined,
+					onSelect: () => tagging.set(email, tag, !on),
+				};
+			}),
+		});
+	}
 	entries.push(
 		{ type: "separator" },
 		{
@@ -133,11 +167,26 @@ export function buildEmailMenu(
  */
 export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: tags = [] } = useTags(mailboxId);
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
+	const setThreadTag = useSetThreadTag();
 	const open = useContextMenu((s) => s.open);
 
 	return useCallback(
 		(email: Email, from: MouseEvent<HTMLElement> | HTMLElement) => {
-			const entries = buildEmailMenu(email, actions, folders);
+			const tagging = isReadOnly
+				? undefined
+				: {
+						tags,
+						set: (target: Email, tag: TagRef, on: boolean) =>
+							setThreadTag.mutate({
+								mailboxId,
+								threadId: tagThreadKey(target),
+								tag: { id: tag.id, name: tag.name },
+								on,
+							}),
+					};
+			const entries = buildEmailMenu(email, actions, folders, tagging);
 			const label = `Actions for ${email.subject || "message"}`;
 			if (from instanceof HTMLElement) {
 				// Keyboard (row) or the ⋯ button: anchor to the element.
@@ -165,6 +214,6 @@ export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 				viaKeyboard: from.detail === 0 && from.clientX === 0 && from.clientY === 0,
 			});
 		},
-		[actions, folders, open],
+		[actions, folders, tags, isReadOnly, setThreadTag.mutate, mailboxId, open],
 	);
 }

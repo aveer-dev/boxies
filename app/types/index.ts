@@ -4,6 +4,7 @@
 
 import type { EmailInvite, EmailOtp } from "shared/mail-cards";
 import type { BlockedTrackers } from "shared/tracking-pixels";
+import type { TagRef } from "shared/tags";
 
 export interface SignatureSettings {
 	enabled: boolean;
@@ -450,6 +451,10 @@ export interface Email {
 	reply_later_remind_at?: string | null;
 	/** When the reminder fired; with `read === false` the mail is due. */
 	reply_later_reminded_at?: string | null;
+	/** Pile the message is in (`reply_later`, `set_aside`), or null (AVE-201). Older Workers omit it. */
+	pile_id?: string | null;
+	/** When it joined its pile (pile lists only). */
+	pile_at?: string | null;
 	body?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;
@@ -504,6 +509,11 @@ export interface Email {
 	/** Latest sticky note's markdown, trimmed to a short snippet. */
 	sticky_note_text?: string | null;
 	inline_note_count?: number;
+	/**
+	 * Tags (AVE-240): this message's, or on threaded list rows every tag in
+	 * the conversation. Sorted by name; absent from older Workers.
+	 */
+	tags?: TagRef[];
 }
 
 export interface Attachment {

@@ -30,6 +30,9 @@ export const queryKeys = {
 	folders: {
 		list: (mailboxId: string) => ["folders", mailboxId] as const,
 	},
+	tags: {
+		list: (mailboxId: string) => ["tags", mailboxId] as const,
+	},
 	workflowPiles: {
 		list: (mailboxId: string) => ["workflow-piles", mailboxId] as const,
 	},

@@ -53,7 +53,9 @@ import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.Forward
@@ -136,6 +138,9 @@ import co.inboxies.app.ui.home.isOpenInReadingPane
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.tags.LocalHiddenTagId
+import co.inboxies.app.ui.tags.MailTagPill
+import co.inboxies.app.ui.tags.TagIcon
 import co.inboxies.app.utils.DateUtils
 import co.inboxies.app.services.EmailPaging
 import co.inboxies.app.services.EmailPagingState
@@ -189,6 +194,11 @@ fun EmailListView(
     /** How the last Focus & Reply run ended: "All done" on an empty pile, or the strip's line. */
     focusReplyResult: FocusReplyResult? = null,
     onStartFocusReply: (() -> Unit)? = null,
+    /** Empty-state override for a pile (AVE-201 Set Aside); null keeps the folder copy. */
+    emptyState: EmptyStateCopy? = null,
+    /** Empty-state copy override (a tag view: "Nothing tagged …"), shown with the tag icon. */
+    emptyTitle: String? = null,
+    emptyMessage: String? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -243,7 +253,9 @@ fun EmailListView(
                 bottomInset = bottomInset,
                 topRow = screeningRoomRow,
                 allDone = focusReplyResult != null && onStartFocusReply != null,
-                paperTrail = PaperTrail.isPaperTrail(fallbackFolderId),
+                copy = emptyState,
+                title = emptyTitle,
+                message = emptyMessage,
             )
             else -> EmailRows(
                 emails = emails,
@@ -885,6 +897,14 @@ private fun MailRow(
                     },
                 )
                 InboxiesMenuItem(
+                    text = if (email.isSetAside) "Remove from Set Aside" else "Set aside",
+                    icon = Icons.Outlined.BookmarkBorder,
+                    onClick = {
+                        showMenu = false
+                        scope.launch { app.toggleSetAside(email) }
+                    },
+                )
+                InboxiesMenuItem(
                     text = if (email.hasPendingReplyLaterReminder) "Change reminder" else "Remind me…",
                     icon = Icons.Outlined.NotificationsActive,
                     onClick = {
@@ -892,6 +912,27 @@ private fun MailRow(
                         app.openReminderPicker(email)
                     },
                 )
+                if (!readOnly && !email.isDraft) {
+                    InboxiesMenuItem(
+                        text = "Tags…",
+                        icon = TagIcon,
+                        onClick = {
+                            showMenu = false
+                            app.openTagPicker(email)
+                        },
+                    )
+                    val viewTag = LocalHiddenTagId.current?.let { id -> app.tag(id) }
+                    if (viewTag != null) {
+                        InboxiesMenuItem(
+                            text = "Remove tag",
+                            icon = Icons.Outlined.Close,
+                            onClick = {
+                                showMenu = false
+                                scope.launch { app.setTag(email, viewTag.ref, on = false) }
+                            },
+                        )
+                    }
+                }
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",
@@ -1090,8 +1131,9 @@ private fun EmptyList(
     topRow: (@Composable () -> Unit)? = null,
     /** Reply Later right after Focus & Reply emptied the pile (AVE-193). */
     allDone: Boolean = false,
-    /** Empty Updates: says what lands there (AVE-192). */
-    paperTrail: Boolean = false,
+    copy: EmptyStateCopy? = null,
+    title: String? = null,
+    message: String? = null,
 ) {
     val colors = inboxiesColors()
     if (allDone) {
@@ -1127,7 +1169,8 @@ private fun EmptyList(
                 Icon(
                     when {
                         isFiltered -> Icons.Outlined.FilterList
-                        paperTrail -> Icons.Outlined.Newspaper
+                        copy != null -> copy.icon
+                        title != null -> TagIcon
                         else -> Icons.Outlined.Inbox
                     },
                     contentDescription = null,
@@ -1135,26 +1178,18 @@ private fun EmptyList(
                     modifier = Modifier.size(40.dp),
                 )
                 Text(
-                    when {
-                        isFiltered -> "No matching emails"
-                        paperTrail -> "No updates"
-                        else -> "No emails"
-                    },
+                    if (isFiltered) "No matching emails" else copy?.title ?: title ?: "No emails",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.sp,
                     color = colors.ink,
                 )
                 Text(
-                    when {
-                        isFiltered -> "No emails match your active filters."
-                        paperTrail -> PaperTrail.EMPTY_DESCRIPTION
-                        else -> "This folder is empty."
-                    },
+                    if (isFiltered) "No emails match your active filters." else copy?.message ?: message ?: "This folder is empty.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
-                    textAlign = TextAlign.Center,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 32.dp),
                 )
                 if (isFiltered && onClearFilters != null) {
@@ -1415,6 +1450,13 @@ fun EmailRowView(
                     }
                     if (email.replyLater) {
                         ReplyLaterReminderChip(email)
+                    } else if (email.isSetAside) {
+                        Icon(
+                            Icons.Outlined.BookmarkBorder,
+                            contentDescription = "Set aside",
+                            tint = colors.accent,
+                            modifier = Modifier.size(list.badge.value.dp),
+                        )
                     }
                     if (email.starred) {
                         Icon(
@@ -1452,7 +1494,10 @@ fun EmailRowView(
             }
 
             val shownTags = if (showsTags) tags else emptyList()
-            if (shownTags.isNotEmpty() || inlineNoteCount > 0) {
+            // Tags (AVE-242): every tag in the conversation, after the row's own chips.
+            val hiddenTagId = LocalHiddenTagId.current
+            val mailTags = email.tags.orEmpty().filter { it.id != hiddenTagId }
+            if (shownTags.isNotEmpty() || mailTags.isNotEmpty() || inlineNoteCount > 0) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1471,6 +1516,16 @@ fun EmailRowView(
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(colors.pillFill)
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                    mailTags.take(MAX_ROW_TAGS).forEach { tag -> MailTagPill(tag.name) }
+                    if (mailTags.size > MAX_ROW_TAGS) {
+                        Text(
+                            "+${mailTags.size - MAX_ROW_TAGS}",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = list.badge,
+                            color = colors.muted,
                         )
                     }
                     if (inlineNoteCount > 0) {
@@ -1562,6 +1617,9 @@ private fun highlightedString(
         start = index + target.length
     }
 }
+
+/** Tag pills a row shows before "+N" (a narrow row can't fit many). */
+private const val MAX_ROW_TAGS = 3
 
 private fun rowTags(email: Email, highlightQuery: String, folderLabel: String?): List<String> {
     val tags = mutableListOf<String>()
@@ -1778,3 +1836,10 @@ private fun ReplyLaterReminderChip(email: Email) {
         }
     }
 }
+
+/** Empty-state icon + title + message for a list that isn't a folder (AVE-201). */
+data class EmptyStateCopy(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val title: String,
+    val message: String,
+)

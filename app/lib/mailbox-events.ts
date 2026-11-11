@@ -6,8 +6,8 @@ import { queryKeys } from "../queries/keys";
 
 /**
  * Groups of web queries a live mailbox event can make stale.
- * - `emails`: every email list/detail/thread plus folder counts and workflow piles
- *   (the Screener is a folder, so its list lives here too).
+ * - `emails`: every email list/detail/thread plus folder and tag counts and
+ *   workflow piles (the Screener is a folder, so its list lives here too).
  */
 export type MailboxEventTarget =
 	| "emails"
@@ -32,6 +32,8 @@ export const MAILBOX_EVENT_TARGETS: Readonly<Record<string, readonly MailboxEven
 	emails_refiled: ["emails", "summaries"],
 	email_deleted: ["emails", "summaries"],
 	thread_read: ["emails"],
+	// A tag was created, renamed or deleted (AVE-240): rows show tag names.
+	tags_changed: ["emails"],
 	// A stored thread summary was regenerated elsewhere.
 	summary_updated: ["summaries"],
 	sender_preference_updated: SENDER_TARGETS,
@@ -82,6 +84,7 @@ export function queryKeysForTargets(
 				keys.push(
 					["emails", mailboxId],
 					queryKeys.folders.list(mailboxId),
+					queryKeys.tags.list(mailboxId),
 					queryKeys.workflowPiles.list(mailboxId),
 				);
 				break;

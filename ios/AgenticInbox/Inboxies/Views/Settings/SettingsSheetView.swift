@@ -83,7 +83,7 @@ struct SettingsSheetView: View {
                         settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
                         settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
                         // Custom folders, shown as tags like web (AVE-158).
-                        settingsNavRow(CustomFolders.pageTitle, systemImage: "number", destination: .tags)
+                        settingsNavRow(CustomFolders.pageTitle, systemImage: "folder", destination: .tags)
                         settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
                         settingsNavRow("Private email", destination: .aliases) {
                             PrivateEmailLogoView(size: 18, showTile: false)

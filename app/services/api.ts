@@ -41,6 +41,7 @@ import type {
 	CreateThreadNoteRequest,
 	UpdateThreadNoteRequest,
 } from "~/types";
+import type { Tag, ThreadTagsResponse } from "shared/tags";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
 import { reauthChallenge, requestReauth, type ReauthChallenge } from "~/lib/reauth";
 import type { AiUsageSnapshot } from "../../shared/ai-quota";
@@ -707,7 +708,16 @@ const api = {
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
 	listWorkflowPiles: (mailboxId: string) =>
-		get<{ piles: { id: string; count: number; due_count?: number }[] }>(
+		get<{
+			piles: {
+				id: string;
+				name?: string;
+				builtin?: boolean;
+				clears_on_reply?: boolean;
+				count: number;
+				due_count?: number;
+			}[];
+		}>(
 			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
 		),
 	createFolder: (mailboxId: string, name: string) =>
@@ -716,6 +726,23 @@ const api = {
 		put<Folder>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`, { name }),
 	deleteFolder: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`),
+
+	// Tags (AVE-240, shared/tags.ts): many per email, on top of its one folder
+	listTags: (mailboxId: string) =>
+		get<{ tags: Tag[] }>(`/api/v1/mailboxes/${mailboxId}/tags`),
+	createTag: (mailboxId: string, name: string) =>
+		post<Tag>(`/api/v1/mailboxes/${mailboxId}/tags`, { name }),
+	renameTag: (mailboxId: string, tagId: string, name: string) =>
+		patch<Tag>(`/api/v1/mailboxes/${mailboxId}/tags/${encodeURIComponent(tagId)}`, { name }),
+	deleteTag: (mailboxId: string, tagId: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/tags/${encodeURIComponent(tagId)}`),
+	listTaggedEmails: (mailboxId: string, tagId: string, params: Record<string, string>) =>
+		get<EmailListResponse>(`/api/v1/mailboxes/${mailboxId}/tags/${encodeURIComponent(tagId)}/emails`, { params }),
+	/** Tags (`on`) or untags every message of the conversation `threadId`. */
+	setThreadTag: (mailboxId: string, threadId: string, tagId: string, on: boolean) => {
+		const url = `/api/v1/mailboxes/${mailboxId}/threads/${encodeURIComponent(threadId)}/tags/${encodeURIComponent(tagId)}`;
+		return on ? put<ThreadTagsResponse>(url) : del<ThreadTagsResponse>(url);
+	},
 
 	// Sender triage (Screener-lite)
 	approveSender: (
