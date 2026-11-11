@@ -29,6 +29,7 @@ struct RootView: View {
             || args.contains("-previewSignInMethods")
             || args.contains("-previewDomainAdminServiceEnded")
             || PreviewSupport.isTagPreview
+                || PreviewSupport.isPilePreview
             || PreviewSupport.isServiceMailboxPreview {
             return false
         }
@@ -98,6 +99,7 @@ struct RootView: View {
                 || args.contains("-previewSignInMethods")
                 || args.contains("-previewDomainAdminServiceEnded")
                 || PreviewSupport.isTagPreview
+                || PreviewSupport.isPilePreview
                 || PreviewSupport.isServiceMailboxPreview {
                 return
             }
