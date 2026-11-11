@@ -530,6 +530,15 @@ struct EmailListView: View {
             Label(email.replyLaterRemindDate == nil ? "Remind me…" : "Change reminder", systemImage: "alarm")
         }
 
+        Button {
+            Task { await app.toggleSetAside(on: email) }
+        } label: {
+            Label(
+                email.isSetAside ? "Remove from Set Aside" : "Set aside",
+                systemImage: email.isSetAside ? "bookmark.slash" : "bookmark"
+            )
+        }
+
         if availability.showsTags {
             Button {
                 tagPickerEmail = ActionsSheetEmail(email: email)
@@ -907,6 +916,11 @@ struct EmailRowView: View {
                         .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                         .accessibilityLabel("Reply later")
+                } else if email.isSetAside {
+                    Image(systemName: "bookmark.fill")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .accessibilityLabel("Set aside")
                 }
                 
                 if email.starred {

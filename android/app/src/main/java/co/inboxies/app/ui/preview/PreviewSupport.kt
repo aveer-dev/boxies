@@ -25,6 +25,7 @@ import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
+import co.inboxies.app.models.PileIds
 import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
@@ -380,6 +381,20 @@ object PreviewSupport {
                     selectedEmail = null,
                     threadEmails = emptyList(),
                     replyLaterCount = queued.size,
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.SetAside -> {
+                val setAside = DatabaseService.shared.getSetAsideEmails(mailbox.id)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = setAside,
+                    selectedTab = HomeTab.SetAside,
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
             }
@@ -1081,6 +1096,9 @@ object PreviewSupport {
             starred = false,
             snippet = "Your itinerary for next week's trip is ready to view.",
             listSection = "seen",
+            // AVE-201: kept handy in Set Aside.
+            pileId = PileIds.SET_ASIDE,
+            pileAt = "2026-03-15T12:00:00.000Z",
             // AVE-99: RFC 8058 bulk mail, so Report Spam offers "Unsubscribe".
             oneClickUnsubscribe = true,
         ),
@@ -1160,6 +1178,22 @@ object PreviewSupport {
             snippet = "Draft is in the shared drive — need a sign-off by Friday.",
             needsReply = true,
             listSection = "seen",
+        ),
+        Email(
+            id = "preview-sa-2",
+            folderId = FolderIds.ARCHIVE,
+            subject = "Your tickets for Saturday",
+            sender = "tickets@boxoffice.example",
+            senderName = "City Box Office",
+            recipient = you,
+            date = "2026-09-08T18:30:00.000Z",
+            read = true,
+            starred = false,
+            body = "<p>Two tickets, Row F seats 11–12. Show this email at the door.</p>",
+            snippet = "Two tickets, Row F seats 11–12. Show this email at the door.",
+            folderName = "Archive",
+            pileId = PileIds.SET_ASIDE,
+            pileAt = "2026-09-08T19:00:00.000Z",
         ),
     )
 }

@@ -218,6 +218,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
+| `-previewSetAside` | Set Aside pile (AVE-201) |
 | `-previewReplyLater -previewFocusReply` / `-previewReplyLater -previewFocusReplyDone` | Focus & Reply: the "N waiting · Focus & Reply" strip opens the first thread's reply with the "Focus & Reply · 1 of N · Skip" bar · the pile after a run emptied it ("All done") (AVE-193) |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewCode` / `-previewDetail -previewInvite` | Reader with the Code card / Invite card pinned above the bottom bar (add `-previewInviteCancelled` for the cancelled invite, `-previewInviteAddress` for an in-person invite with Directions, `-previewInviteExpanded` to open the details) (AVE-176) |

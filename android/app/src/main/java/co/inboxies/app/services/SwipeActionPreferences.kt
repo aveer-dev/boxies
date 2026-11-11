@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -21,11 +23,14 @@ enum class SwipeQuickAction(val title: String) {
     ARCHIVE("Archive"),
     STAR("Star"),
     TOGGLE_READ("Mark Read/Unread"),
-    REPLY("Reply");
+    REPLY("Reply"),
+    /** Set Aside pile toggle (AVE-201). */
+    SET_ASIDE("Set Aside");
 
     fun label(forEmail: Email): String = when (this) {
         STAR -> if (forEmail.starred) "Unstar" else "Star"
         TOGGLE_READ -> if (forEmail.read) "Unread" else "Read"
+        SET_ASIDE -> if (forEmail.isSetAside) "Remove" else "Set aside"
         else -> title
     }
 
@@ -35,6 +40,7 @@ enum class SwipeQuickAction(val title: String) {
         STAR -> Color(0xFFFF9800)
         TOGGLE_READ -> Color(0xFF1E88E5)
         REPLY -> colors.accent
+        SET_ASIDE -> Color(0xFF2E9C8F)
     }
 
     fun icon(): ImageVector = when (this) {
@@ -43,12 +49,14 @@ enum class SwipeQuickAction(val title: String) {
         STAR -> Icons.Outlined.Star
         TOGGLE_READ -> Icons.Outlined.MarkEmailRead
         REPLY -> Icons.AutoMirrored.Outlined.Reply
+        SET_ASIDE -> Icons.Outlined.BookmarkBorder
     }
 
     fun icon(email: Email): ImageVector = when (this) {
         STAR -> if (email.starred) Icons.Filled.Star else Icons.Outlined.Star
         TOGGLE_READ ->
             if (email.read) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead
+        SET_ASIDE -> if (email.isSetAside) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder
         else -> icon()
     }
 }
@@ -88,9 +96,9 @@ data class EmailSwipeLayout(
     val leadingAllowsFullSwipe: Boolean,
     val showsMore: Boolean,
 ) {
-    /** Read-only mailbox: keep only the flag swipes (star, read/unread). */
+    /** Read-only mailbox: keep only the flag swipes (star, read/unread, Set Aside). */
     fun readOnly(): EmailSwipeLayout {
-        val allowed = setOf(SwipeQuickAction.STAR, SwipeQuickAction.TOGGLE_READ)
+        val allowed = setOf(SwipeQuickAction.STAR, SwipeQuickAction.TOGGLE_READ, SwipeQuickAction.SET_ASIDE)
         val trailing = trailingActions.filter { it in allowed }
         val leading = leadingActions.filter { it in allowed }
         return copy(

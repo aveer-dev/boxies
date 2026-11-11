@@ -38,6 +38,7 @@ enum PreviewSupport {
         // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
         app.screenerQueue = emails.filter { $0.folderId == "screener" }
         app.replyLaterCount = emails.filter(\.replyLater).count
+        app.setAsideCount = emails.filter(\.isSetAside).count
         app.tags = PreviewMailTags.tags
         app.isLoading = false
         app.isMailboxLoading = false
@@ -219,6 +220,39 @@ enum PreviewSupport {
             snippet: "Countersigned statement of work attached.",
             hasAttachment: true,
             tags: [PreviewMailTags.clients.ref, PreviewMailTags.waiting.ref]
+        ),
+        // Set Aside (AVE-201): mail kept handy, already filed away.
+        Email(
+            id: "preview-sa-1",
+            folderId: "archive",
+            subject: "Your boarding pass: SFO → JFK",
+            sender: "checkin@airline.example",
+            senderName: "Skyline Air",
+            recipient: "you@inboxies.email",
+            date: "2026-09-14T06:20:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Gate B12 · Boards 7:45 AM · Seat 14C. Show this pass at security.",
+            folderName: "Archive",
+            hasAttachment: true,
+            pileId: WorkflowPileID.setAside,
+            pileAt: "2026-09-14T06:30:00.000Z"
+        ),
+        Email(
+            id: "preview-sa-2",
+            folderId: "archive",
+            subject: "Signed lease for 24 Elm Street",
+            sender: "leasing@elmproperties.example",
+            senderName: "Elm Properties",
+            recipient: "you@inboxies.email",
+            date: "2026-09-12T15:05:00.000Z",
+            read: true,
+            starred: false,
+            snippet: "Countersigned copy attached. Keys are ready for pickup on the 1st.",
+            folderName: "Archive",
+            hasAttachment: true,
+            pileId: WorkflowPileID.setAside,
+            pileAt: "2026-09-15T08:00:00.000Z"
         ),
     ]
 
@@ -561,6 +595,11 @@ enum PreviewSupport {
                 app.replyLaterCount = 0
                 app.focusReplyResult = FocusReplyResult(replied: 3, skipped: 0)
             }
+        } else if args.contains("-previewSetAside") {
+            // AVE-201: the Set Aside pile, oldest-added first.
+            app.selectedTab = .setAside
+            app.emails = app.emails.filter(\.isSetAside)
+            app.setAsideCount = app.emails.count
         } else if args.contains("-previewTagView") {
             // AVE-242: everything tagged Clients, across folders.
             app.selectedTab = .tag(PreviewMailTags.clients.id)

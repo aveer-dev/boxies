@@ -15,14 +15,15 @@ struct HomeShellView: View {
     @State private var showChat = false
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
-    @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
+    /// Folder a pile (Reply Later or Set Aside) was opened from; popping returns here.
+    @State private var previousTabBeforePile: HomeTab = .folder("inbox")
     /// Where Back leaves a tag view for (AVE-242). Tag → tag keeps the first parent.
     @State private var previousTabBeforeTag: HomeTab = .folder("inbox")
     /// Phone home Tags group, opened from the folders menu.
     @State private var showTagList = false
     /// Rename / delete from the tag view's menu, create from the folder column.
     @State private var tagEditor: TagEditorAction?
-    /// Entering or leaving Reply Later or the Screening room is a push, not a folder-tab slide.
+    /// Entering or leaving a pile, a tag view or the Screening room is a push, not a folder-tab slide.
     @State private var isPushTransition = false
     @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
@@ -90,7 +91,7 @@ struct HomeShellView: View {
     /// Tabs that push over the list instead of sliding between folders.
     private static func isPushedTab(_ tab: HomeTab) -> Bool {
         if case .tag = tab { return true }
-        return tab == .replyLater || tab == screeningRoomTab
+        return tab.isPile || tab == screeningRoomTab
     }
 
     private var isTagView: Bool { app.openTagId != nil }
@@ -751,6 +752,11 @@ struct HomeShellView: View {
             if count == 1 { return "1 to reply" }
             return "\(count) to reply"
         }
+        if case .setAside = app.selectedTab {
+            let count = app.setAsideCount
+            if count == 0 { return "Nothing set aside" }
+            return "\(count) set aside"
+        }
         guard case .folder = app.selectedTab else { return "" }
         if isScreeningRoom, !isSelectMode, !filterState.isActive {
             let count = app.screenerSenderCount
@@ -856,6 +862,29 @@ struct HomeShellView: View {
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
+            case .setAside:
+                // Set Aside (AVE-201): Reply Later's list without Focus & Reply or reminders.
+                EmailListView(
+                    emails: filteredEmails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: isSelectMode,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: false,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: "Nothing set aside",
+                    emptyMessage: "Keep mail you need handy, like tickets or a document you're waiting on.",
+                    emptySystemImage: "bookmark"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
             case .tag(let tagId):
                 let name = app.title(for: .tag(tagId))
                 EmailListView(
@@ -937,12 +966,12 @@ struct HomeShellView: View {
             tabNavigatingForward = true
         } else if isTagView {
             tabNavigatingForward = false
-        } else if tab == .replyLater {
-            if app.selectedTab != .replyLater {
-                previousTabBeforeReplyLater = app.selectedTab
+        } else if tab.isPile {
+            if !app.selectedTab.isPile {
+                previousTabBeforePile = app.selectedTab
             }
             tabNavigatingForward = true
-        } else if app.selectedTab == .replyLater {
+        } else if app.selectedTab.isPile {
             tabNavigatingForward = false
         } else if tab == Self.screeningRoomTab {
             tabNavigatingForward = true
@@ -958,10 +987,10 @@ struct HomeShellView: View {
         }
     }
 
-    /// Back out of Reply Later to the folder it was opened from (Android: system back).
-    private func popReplyLater() {
-        guard app.selectedTab == .replyLater else { return }
-        let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
+    /// Back out of a pile to the folder it was opened from (Android: system back).
+    private func popPile() {
+        guard app.selectedTab.isPile else { return }
+        let target = previousTabBeforePile.isPile ? .folder("inbox") : previousTabBeforePile
         selectTab(target)
     }
 
@@ -996,9 +1025,9 @@ struct HomeShellView: View {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 let threshold: CGFloat = 40
-                if app.selectedTab == .replyLater {
-                    // Reply Later is pushed over a folder: swipe right pops back.
-                    if value.translation.width > threshold { popReplyLater() }
+                if app.selectedTab.isPile {
+                    // Piles are pushed over a folder: swipe right pops back.
+                    if value.translation.width > threshold { popPile() }
                     return
                 }
                 if isScreeningRoom {
@@ -1022,10 +1051,19 @@ struct HomeShellView: View {
         app.replyLaterCount > 0 || app.selectedTab == .replyLater
     }
 
+    /// Set Aside sits right beside Reply Later and shows on the same terms (AVE-201).
+    private var showSetAsideButton: Bool {
+        app.setAsideCount > 0 || app.selectedTab == .setAside
+    }
+
     private var bottomBar: some View {
         HStack(spacing: 10) {
             if showReplyLaterButton {
                 replyLaterPileButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+            if showSetAsideButton {
+                setAsidePileButton
                     .transition(.scale.combined(with: .opacity))
             }
             // The AI agent is part of the service; a read-only mailbox has no Ask AI.
@@ -1037,6 +1075,7 @@ struct HomeShellView: View {
             composeButton
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showReplyLaterButton)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showSetAsideButton)
     }
 
     /// A Reply Later reminder fired on mail that's still unread (AVE-86).
@@ -1062,12 +1101,11 @@ struct HomeShellView: View {
                 return
             }
             if app.selectedTab == .replyLater {
-                popReplyLater()
+                popPile()
             } else if app.replyLaterCount == 0 {
                 app.showToast("There is no reply later mail")
                 Task { await app.refreshReplyLaterCount() }
             } else {
-                previousTabBeforeReplyLater = app.selectedTab
                 selectTab(.replyLater)
             }
         } label: {
@@ -1106,6 +1144,43 @@ struct HomeShellView: View {
         .accessibilityValue(replyLaterAccessibilityValue)
         .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : (app.replyLaterCount == 0 ? "Shows status toast when empty" : "Opens Reply Later pile"))
         .accessibilityIdentifier("replyLaterPileButton")
+    }
+
+    /// Set Aside pile (AVE-201): Reply Later's pill without the due state.
+    private var setAsidePileButton: some View {
+        Button {
+            if showComposeActions {
+                dismissComposeActions()
+                return
+            }
+            if app.selectedTab == .setAside {
+                popPile()
+            } else if app.setAsideCount == 0 {
+                app.showToast("Nothing set aside")
+                Task { await app.refreshReplyLaterCount() }
+            } else {
+                selectTab(.setAside)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: HomeTab.setAside.systemImage)
+                    .font(.inter(size: 15, weight: .medium))
+                if app.setAsideCount > 0 {
+                    Text("\(app.setAsideCount)")
+                        .font(.inter(size: 13, weight: .semibold))
+                        .contentTransition(.numericText())
+                }
+            }
+            .foregroundStyle(app.selectedTab == .setAside ? AppTheme.accent : AppTheme.ink)
+            .padding(.horizontal, 14)
+            .frame(height: HomeChromeMetrics.actionBarHeight)
+            .liquidGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Set Aside")
+        .accessibilityValue(app.setAsideCount == 0 ? "Nothing set aside" : "\(app.setAsideCount) set aside")
+        .accessibilityHint(app.selectedTab == .setAside ? "Returns to previous folder" : (app.setAsideCount == 0 ? "Shows status toast when empty" : "Opens Set Aside pile"))
+        .accessibilityIdentifier("setAsidePileButton")
     }
 
     /// Presents the reminder picker for `app.reminderPickerEmail` (toast "Add reminder",

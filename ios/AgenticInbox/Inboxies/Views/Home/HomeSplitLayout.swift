@@ -148,6 +148,7 @@ struct HomeFolderColumn: View {
                 sectionHeader("Workflow")
 
                 row(.replyLater, count: app.replyLaterCount, countLabel: "queued", dueCount: app.replyLaterDueCount)
+                row(.setAside, count: app.setAsideCount, countLabel: "set aside")
 
                 // Tags (AVE-242): a message can carry several; each opens its view.
                 HStack(spacing: 4) {

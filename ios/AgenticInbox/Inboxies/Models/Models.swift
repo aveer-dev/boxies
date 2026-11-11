@@ -822,6 +822,11 @@ struct Email: Identifiable, Codable, Hashable {
     var invite: EmailInvite? = nil
     /// Tracking pixels the server removed from `body` (reader payloads only; AVE-195).
     var blockedTrackers: BlockedTrackers? = nil
+    /// Workflow pile the mail sits in (`reply_later` | `set_aside`), nil when none (AVE-201).
+    /// A mail is in at most one pile. Older Workers omit it: `reply_later` then stands in.
+    var pileId: String? = nil
+    /// When the mail joined its pile, UTC ISO 8601 (non-threaded list rows only).
+    var pileAt: String? = nil
     /// Tags (AVE-240): this message's, or on threaded list rows every tag in the
     /// conversation. Sorted by name; nil from older Workers (shown as none).
     var tags: [TagRef]? = nil
@@ -848,6 +853,8 @@ struct Email: Identifiable, Codable, Hashable {
         case replyLaterAt = "reply_later_at"
         case replyLaterRemindAt = "reply_later_remind_at"
         case replyLaterRemindedAt = "reply_later_reminded_at"
+        case pileId = "pile_id"
+        case pileAt = "pile_at"
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
@@ -1173,6 +1180,11 @@ struct Email: Identifiable, Codable, Hashable {
         return ReplyLaterReminder.parseISO(replyLaterRemindAt)
     }
 
+    /// In the Set Aside pile (AVE-201): kept handy, no reply owed.
+    var isSetAside: Bool {
+        pileId == WorkflowPileID.setAside
+    }
+
     /// The reminder fired and the mail is still unread in Reply Later: it needs attention.
     var isReplyLaterDue: Bool {
         replyLater && replyLaterRemindedAt != nil && !read
@@ -1249,9 +1261,24 @@ extension Email {
         otp = try? c.decodeIfPresent(EmailOtp.self, forKey: .otp)
         invite = try? c.decodeIfPresent(EmailInvite.self, forKey: .invite)
         blockedTrackers = try? c.decodeIfPresent(BlockedTrackers.self, forKey: .blockedTrackers)
+        // Piles (AVE-201): older Workers send only `reply_later`; a mail sits in one pile.
+        let decodedPile = (try? c.decodeIfPresent(String.self, forKey: .pileId)) ?? nil
+        pileId = decodedPile ?? (replyLater ? WorkflowPileID.replyLater : nil)
+        pileAt = (try? c.decodeIfPresent(String.self, forKey: .pileAt)) ?? nil
+        if pileId == WorkflowPileID.setAside {
+            replyLater = false
+        } else if pileId == WorkflowPileID.replyLater {
+            replyLater = true
+        }
         // A malformed tag list never fails the email (missing = untagged).
         tags = try? c.decodeIfPresent([TagRef].self, forKey: .tags)
     }
+}
+
+/// Built-in workflow pile ids (AVE-201). Web/Worker twin: `workers/lib/piles.ts`.
+enum WorkflowPileID {
+    static let replyLater = "reply_later"
+    static let setAside = "set_aside"
 }
 
 // MARK: - Tracking pixels (AVE-195)

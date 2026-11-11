@@ -61,6 +61,12 @@ actor OutboxQueueWorker {
             let replyLater = (payload["reply_later"] as? Bool) ?? true
             _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, replyLater: replyLater)
 
+        case "pile":
+            // AVE-201: a pile id puts the mail in that pile (moving it out of any other);
+            // null takes it out of whatever pile it's in.
+            let patch: PilePatch = (payload["pile"] as? String).map { .set($0) } ?? .clear
+            _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, pile: patch)
+
         case "reply_later_reminder":
             // AVE-86: an ISO time sets the reminder (and adds to Reply Later); null clears it.
             // A time that passed while offline fires right away on the server.

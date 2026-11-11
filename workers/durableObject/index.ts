@@ -227,6 +227,17 @@ import {
 	type SummaryQuotaCheck,
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
+import {
+	PILE_EXCLUDED_FOLDERS_SQL,
+	PILE_REPLY_LATER,
+	UNKNOWN_PILE_ERROR,
+	clearOtherPilesInThread,
+	countPile,
+	isPileId,
+	listPiles,
+	setEmailPile,
+	type PileChange,
+} from "../lib/piles";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
 import type { AiQuotaExceededError, AiUsageSnapshot } from "../../shared/ai-quota";
 import {
@@ -308,7 +319,9 @@ interface GetEmailsOptions {
 	sortDirection?: "ASC" | "DESC";
 	/** When true, list Reply Later pile (independent of folder). */
 	reply_later?: boolean;
-	/** Include trash/spam/draft in Reply Later pile (default false). */
+	/** List this pile (independent of folder; AVE-201). `reply_later` is the same as `pile: "reply_later"`. */
+	pile?: string;
+	/** Include trash/spam/draft in a pile list (default false). */
 	include_junk?: boolean;
 	/** Threaded lists: whose notes to summarize on each row (notes are private). */
 	userId?: string;
@@ -1121,9 +1134,10 @@ export class MailboxDO extends DurableObject<Env> {
 			limit: rawLimit = 25,
 			sortColumn: rawSortColumn = "date",
 			sortDirection = "DESC",
-			reply_later,
 			include_junk = false,
 		} = options;
+		const pile = options.reply_later ? PILE_REPLY_LATER : options.pile;
+		const reply_later = pile === PILE_REPLY_LATER;
 
 		// Cap pagination limit to prevent unbounded queries
 		const limit = Math.min(Math.max(rawLimit, 1), 100);
@@ -1137,8 +1151,10 @@ export class MailboxDO extends DurableObject<Env> {
 		const offset = (page - 1) * limit;
 
 		const conditions: SQL[] = [];
-		if (reply_later) {
-			conditions.push(eq(schema.emails.reply_later, 1));
+		if (pile) {
+			conditions.push(
+				reply_later ? eq(schema.emails.reply_later, 1) : eq(schema.emails.pile_id, pile),
+			);
 			if (!include_junk) {
 				conditions.push(
 					sql`${schema.emails.folder_id} NOT IN (${Folders.TRASH}, ${Folders.SPAM}, ${Folders.DRAFT})`,
@@ -1156,9 +1172,11 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const orderCol = reply_later
 			? schema.emails.reply_later_at
-			: SORT_COLUMN_MAP[sortColumn];
+			: pile
+				? schema.emails.pile_at
+				: SORT_COLUMN_MAP[sortColumn];
 		const orderDir =
-			reply_later || sortDirection === "ASC" ? asc(orderCol) : desc(orderCol);
+			pile || sortDirection === "ASC" ? asc(orderCol) : desc(orderCol);
 
 		const result = this.db
 			.select({
@@ -1176,6 +1194,8 @@ export class MailboxDO extends DurableObject<Env> {
 				reply_later_at: schema.emails.reply_later_at,
 				reply_later_remind_at: schema.emails.reply_later_remind_at,
 				reply_later_reminded_at: schema.emails.reply_later_reminded_at,
+				pile_id: schema.emails.pile_id,
+				pile_at: schema.emails.pile_at,
 				in_reply_to: schema.emails.in_reply_to,
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
@@ -1328,15 +1348,22 @@ export class MailboxDO extends DurableObject<Env> {
 			folder?: string;
 			thread_id?: string;
 			reply_later?: boolean;
+			pile?: string;
 			include_junk?: boolean;
 		} = {},
 	) {
-		const { folder, thread_id, reply_later, include_junk = false } = options;
+		const { folder, thread_id, include_junk = false } = options;
+		const pile = options.reply_later ? PILE_REPLY_LATER : options.pile;
 		const conditions: string[] = [];
 		const params: (string | number)[] = [];
 
-		if (reply_later) {
-			conditions.push("reply_later = 1");
+		if (pile) {
+			if (pile === PILE_REPLY_LATER) {
+				conditions.push("reply_later = 1");
+			} else {
+				conditions.push(`pile_id = ?${params.length + 1}`);
+				params.push(pile);
+			}
 			if (!include_junk) {
 				conditions.push(
 					`folder_id NOT IN ('${Folders.TRASH}', '${Folders.SPAM}', '${Folders.DRAFT}')`,
@@ -1369,12 +1396,31 @@ export class MailboxDO extends DurableObject<Env> {
 		return row?.total ?? 0;
 	}
 
-	/** Workflow pile counts for home chrome (Reply Later now; Set Aside later). */
-	async getWorkflowPiles(): Promise<{ id: string; count: number; due_count: number }[]> {
-		const count = await this.countEmails({ reply_later: true });
-		// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
-		const due_count = countDueReplyLater(this.ctx.storage.sql);
-		return [{ id: "reply_later", count, due_count }];
+	/**
+	 * Piles with their counts for home chrome, in order (AVE-201): Reply
+	 * Later, Set Aside, then custom piles (AVE-194). Older clients read only
+	 * `id`, `count` and `due_count`.
+	 */
+	async getWorkflowPiles(): Promise<
+		{ id: string; name: string; builtin: boolean; clears_on_reply: boolean; count: number; due_count: number }[]
+	> {
+		const sql = this.ctx.storage.sql;
+		return listPiles(sql).map((pile) => ({
+			id: pile.id,
+			name: pile.name,
+			builtin: pile.builtin,
+			clears_on_reply: pile.clears_on_reply,
+			count:
+				pile.id === PILE_REPLY_LATER
+					? Number(
+							[...sql.exec<{ total: number }>(
+								`SELECT COUNT(*) AS total FROM emails WHERE reply_later = 1 AND folder_id NOT IN ${PILE_EXCLUDED_FOLDERS_SQL}`,
+							)][0]?.total ?? 0,
+						)
+					: countPile(sql, pile.id),
+			// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
+			due_count: pile.id === PILE_REPLY_LATER ? countDueReplyLater(sql) : 0,
+		}));
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──
@@ -1446,7 +1492,7 @@ export class MailboxDO extends DurableObject<Env> {
 				)
 				SELECT
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
-					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.reply_later_remind_at, lp.reply_later_reminded_at, lp.thread_id, lp.folder_id,
+					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.reply_later_remind_at, lp.reply_later_reminded_at, lp.pile_id, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
@@ -2019,12 +2065,15 @@ export class MailboxDO extends DurableObject<Env> {
 			starred,
 			reply_later,
 			reply_later_remind_at,
+			pile,
 		}: {
 			read?: boolean;
 			starred?: boolean;
 			reply_later?: boolean;
 			/** UTC ISO (validated by the route) sets a reminder; null clears it (AVE-86). */
 			reply_later_remind_at?: string | null;
+			/** Pile id to put the message in, or null to take it out of its pile (AVE-201). */
+			pile?: string | null;
 		},
 		/** Mailbox address, remembered for reminder pushes fired by the alarm. */
 		mailboxId?: string,
@@ -2032,11 +2081,29 @@ export class MailboxDO extends DurableObject<Env> {
 		const existing = this.db
 			.select({
 				reply_later: schema.emails.reply_later,
+				pile_id: schema.emails.pile_id,
 			})
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
 		if (!existing) return null;
+		if (pile !== undefined && pile !== null && !isPileId(this.ctx.storage.sql, pile)) {
+			throw new Error(UNKNOWN_PILE_ERROR);
+		}
+
+		// Reply Later goes through its own columns (reminders); every other
+		// pile is written as pile_id. Triggers mirror the two (49_piles).
+		let otherPile: string | null | undefined;
+		if (pile === PILE_REPLY_LATER) {
+			reply_later = true;
+		} else if (pile === null) {
+			if (existing.reply_later || existing.pile_id === PILE_REPLY_LATER) reply_later = false;
+			else otherPile = null;
+		} else if (pile !== undefined) {
+			otherPile = pile;
+			if (reply_later === true) reply_later = undefined;
+			reply_later_remind_at = undefined;
+		}
 
 		const data: {
 			read?: number;
@@ -2075,23 +2142,42 @@ export class MailboxDO extends DurableObject<Env> {
 			if (reply_later_remind_at !== null) data.reply_later_reminded_at = null;
 		}
 
-		if (Object.keys(data).length === 0) {
+		const pileChanges: PileChange[] = [];
+		if (Object.keys(data).length > 0) {
+			this.db
+				.update(schema.emails)
+				.set(data)
+				.where(eq(schema.emails.id, id))
+				.run();
+		}
+		if (otherPile !== undefined) {
+			pileChanges.push(...(setEmailPile(this.ctx.storage.sql, id, otherPile) ?? []));
+		} else if (reply_later === true) {
+			pileChanges.push(...clearOtherPilesInThread(this.ctx.storage.sql, id, PILE_REPLY_LATER));
+		}
+
+		if (Object.keys(data).length === 0 && pileChanges.length === 0) {
 			return this.getEmail(id);
 		}
 
-		this.db
-			.update(schema.emails)
-			.set(data)
-			.where(eq(schema.emails.id, id))
-			.run();
-
+		const after = [
+			...this.ctx.storage.sql.exec<{ reply_later: number; pile_id: string | null }>(
+				`SELECT reply_later, pile_id FROM emails WHERE id = ?`,
+				id,
+			),
+		][0];
+		const pileTouched = reply_later !== undefined || otherPile !== undefined;
 		this.broadcastEvent("email_updated", {
 			id,
 			read,
 			starred,
-			reply_later,
+			...(pileTouched ? { reply_later: Boolean(after?.reply_later), pile_id: after?.pile_id ?? null } : {}),
 			...(reply_later_remind_at !== undefined ? { reply_later_remind_at } : {}),
 		});
+		for (const change of pileChanges) {
+			if (change.id === id) continue;
+			this.broadcastEvent("email_updated", { id: change.id, pile_id: change.pile_id, reply_later: false });
+		}
 		if (typeof data.reply_later_remind_at === "string") {
 			if (mailboxId && (await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) !== mailboxId) {
 				await this.ctx.storage.put(REPLY_LATER_MAILBOX_ID_KEY, mailboxId);
@@ -2893,11 +2979,13 @@ export class MailboxDO extends DurableObject<Env> {
 					reply_later_at: null,
 					reply_later_remind_at: null,
 					reply_later_reminded_at: null,
+					pile_id: null,
+					pile_at: null,
 				})
 				.where(eq(schema.emails.id, id))
 				.run();
 			this.broadcastEvent("email_moved", { id, folder_id: folderId });
-			this.broadcastEvent("email_updated", { id, reply_later: false });
+			this.broadcastEvent("email_updated", { id, reply_later: false, pile_id: null });
 			// retention_since is set by trigger; make sure the purge is armed.
 			this.#armRetentionSweep();
 		} else {
@@ -3406,7 +3494,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const query = `
 			SELECT e.id, e.subject, e.sender, e.sender_name, e.recipient, e.cc, e.bcc, e.date,
-				e.read, e.starred, e.reply_later, e.reply_later_at, e.reply_later_remind_at, e.reply_later_reminded_at, e.in_reply_to, e.email_references,
+				e.read, e.starred, e.reply_later, e.reply_later_at, e.reply_later_remind_at, e.reply_later_reminded_at, e.pile_id, e.in_reply_to, e.email_references,
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
@@ -3804,6 +3892,7 @@ export class MailboxDO extends DurableObject<Env> {
 			matched_rule_id: email.matched_rule_id ?? null,
 			// iOS decodes the full Email model from this event; it requires these.
 			reply_later: false,
+			pile_id: null,
 			alias_id: email.alias_id ?? null,
 		});
 		// Inbound spam lands with retention_since set by trigger.
