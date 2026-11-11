@@ -789,7 +789,7 @@ private fun TagsRow(
                 }
             }
             tags.forEach { TagChip(it, destructive = it == "Spoofed") }
-            pileName?.let { ReaderTagChip(it, onClick = onOpenPile) }
+            pileName?.let { ReaderTagChip(it, icon = co.inboxies.app.ui.piles.PileIcon, label = "Pile $it", onClick = onOpenPile) }
             mailTags.forEach { tag -> ReaderTagChip(tag.name) { onOpenTag(tag) } }
             onEditTags?.let { AddTagChip(hasTags = mailTags.isNotEmpty(), onClick = it) }
         }
