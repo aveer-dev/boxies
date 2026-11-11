@@ -55,7 +55,7 @@ export interface ResolveInboundFolderInput {
 	/** When false, unknowns file by classify+filters (legacy). Default true. */
 	screenerEnabled?: boolean;
 	/**
-	 * Purpose-box preference (Inbox / Promotions / Updates).
+	 * Purpose-box preference (Inbox / Promotions / Updates / Paper Trail).
 	 * Used after filters for allowed senders, or when screener is disabled.
 	 */
 	preferenceFolderId?: string | null;

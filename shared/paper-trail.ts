@@ -3,12 +3,16 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Updates as a quiet receipts view (AVE-192, HEY's Paper Trail).
+ * Paper Trail, a quiet receipts folder (AVE-192, HEY's Paper Trail).
  *
- * Receipts, confirmations and notifications are kept for reference, not to
- * interrupt: mail filed in Updates never sends a push, the list shows compact
- * rows (sender, subject, date; no preview line) grouped by month, and opening
- * a message marks it read like any other folder.
+ * Its own system folder (`paper_trail`), next to Updates. Only senders you
+ * send there land in it: pick Paper Trail when you accept them in the
+ * Screener, or move one of their messages there and keep future mail there.
+ * The classifier never files anything here. Receipts, confirmations and
+ * notifications are kept for reference, not to interrupt: mail filed in
+ * Paper Trail never sends a push, the list shows compact rows (sender,
+ * subject, date; no preview line) grouped by month, and opening a message
+ * marks it read like any other folder. Updates stays a normal folder.
  *
  * iOS (`PaperTrail.swift`) and Android (`PaperTrail.kt`) mirror these rules.
  */
@@ -17,7 +21,7 @@ import { Folders } from "./folders.ts";
 
 /** Folders that render as the quiet receipts view. */
 export function folderIsPaperTrail(folderId: string | null | undefined): boolean {
-	return folderId === Folders.UPDATES;
+	return folderId === Folders.PAPER_TRAIL;
 }
 
 /** Folders whose new mail never sends a push notification. */

@@ -13,6 +13,7 @@ import {
 	FileIcon,
 	MegaphoneIcon,
 	NewspaperIcon,
+	ReceiptIcon,
 	PaperclipIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
@@ -108,7 +109,13 @@ const FOLDER_EMPTY_STATES: Record<
 		icon: <NewspaperIcon size={40} weight="thin" className="text-kumo-subtle" />,
 		title: "No updates",
 		description:
-			"Receipts, confirmations and notifications, grouped by month. Mail here doesn’t send notifications.",
+			"Receipts and transactional mail you file here. Assign senders so they land here automatically.",
+	},
+	[Folders.PAPER_TRAIL]: {
+		icon: <ReceiptIcon size={40} weight="thin" className="text-kumo-subtle" />,
+		title: "No paper trail",
+		description:
+			"Receipts and confirmations from senders you send here, grouped by month. Mail here never sends a notification.",
 	},
 	[Folders.SPAM]: {
 		icon: <WarningIcon size={40} weight="thin" className="text-kumo-subtle" />,
@@ -170,7 +177,7 @@ function FolderList({ folder }: { folder: string }) {
 	);
 
 	const showNewSeen = folder === Folders.INBOX;
-	// Updates is a quiet receipts view (AVE-192): compact rows by month.
+	// Paper Trail is a quiet receipts view (AVE-192): compact rows by month.
 	const paperTrail = folderIsPaperTrail(folder);
 	// Inbox: only the newest few New conversations, then Seen (AVE-23), so
 	// Seen stays in view however much is unread. "Show all" opens the rest.

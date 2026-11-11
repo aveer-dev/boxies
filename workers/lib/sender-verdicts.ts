@@ -112,7 +112,7 @@ function agentSender(mailboxId: string, raw: string): { sender: string } | { err
 
 /**
  * Agent `allow_sender`: the same allow as Not spam. Files future mail to
- * `folderId` (inbox, promotions, updates); without one, keeps the sender's
+ * `folderId` (inbox, promotions, updates, paper_trail); without one, keeps the sender's
  * current box, else Inbox, as Not spam does.
  */
 export async function allowSenderForAgent(
@@ -126,7 +126,7 @@ export async function allowSenderForAgent(
 	let destination: ScreenerDestinationId;
 	if (params.folderId) {
 		if (!isScreenerDestination(params.folderId)) {
-			return { error: "folderId must be inbox, promotions, or updates" };
+			return { error: "folderId must be inbox, promotions, updates, or paper_trail" };
 		}
 		destination = params.folderId;
 	} else {

@@ -73,7 +73,7 @@ export default function ThreadRow({
 	onMenu?: (from: MouseEvent<HTMLElement> | HTMLElement) => void;
 	/** Position in the list: staggers the entrance of the first rows. */
 	index?: number;
-	/** Tighter receipt row for Updates (AVE-192): pass no snippet with it. */
+	/** Tighter receipt row for Paper Trail (AVE-192): pass no snippet with it. */
 	compact?: boolean;
 	/** A tag not to repeat on the row (the tag view it's listed in). */
 	hideTagId?: string;

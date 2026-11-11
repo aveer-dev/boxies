@@ -219,11 +219,12 @@ function headers(...pairs) {
 	});
 	assert.equal(shouldAutoDraft(result), true);
 	assert.equal(shouldSendPush(result), true);
-	// Mail filed in Updates never pushes (AVE-192); other folders still do.
+	// Mail filed in Paper Trail never pushes (AVE-192); Updates and the rest still do.
 	assert.equal(shouldSendPush(result, Folders.INBOX), true);
 	assert.equal(shouldSendPush(result, Folders.PROMOTIONS), true);
-	assert.equal(shouldSendPush(result, Folders.UPDATES), false);
-	assert.equal(shouldSendPush({ ...result, class: "bulk" }, Folders.UPDATES), false);
+	assert.equal(shouldSendPush(result, Folders.UPDATES), true);
+	assert.equal(shouldSendPush(result, Folders.PAPER_TRAIL), false);
+	assert.equal(shouldSendPush({ ...result, class: "bulk" }, Folders.PAPER_TRAIL), false);
 }
 
 // JSON raw_headers string (PostalMime storage shape)

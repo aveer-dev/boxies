@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Per-sender purpose-box defaults (Inbox / Promotions / Updates).
+ * Per-sender purpose-box defaults (Inbox / Promotions / Updates / Paper Trail).
  *
  * Stored in MailboxDO SQLite — not the R2 settings blob — so inbound
  * lookup and bulk refile stay indexed. Classify is only a suggestion

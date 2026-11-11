@@ -428,8 +428,9 @@ export function shouldAutoDraft(
 }
 
 /**
- * Skip push for spam, and for mail filed in a quiet folder (Updates: receipts
- * and notifications are kept for reference, not to interrupt; AVE-192).
+ * Skip push for spam, and for mail filed in a quiet folder (Paper Trail:
+ * receipts from senders you send there are kept for reference, not to
+ * interrupt; AVE-192). Updates still notifies.
  * Otherwise ham and bulk still notify. Pass the folder the mail was actually
  * filed to (after any Inbox fallback).
  */

@@ -151,7 +151,7 @@ const gettingStarted: Faq[] = [
 		id: "first-email",
 		group: "getting-started",
 		q: "What happens to email from someone new?",
-		a: ["It waits in the Screener. You decide whether that sender reaches your Inbox, Promotions or Updates, or is screened out. People you’ve emailed are let through automatically. [How the Screener works](#screener)."],
+		a: ["It waits in the Screener. You decide whether that sender reaches your Inbox, Promotions, Updates or Paper Trail, or is screened out. People you’ve emailed are let through automatically. [How the Screener works](#screener)."],
 		src: "FSW#the-screener",
 	},
 	{
@@ -176,7 +176,7 @@ const sorting: Faq[] = [
 		id: "screener",
 		group: "sorting-topic",
 		q: "How does the Screener work?",
-		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender, and their mail is sorted into Inbox, Promotions or Updates by its headers; accept into Promotions or Updates to keep it there. Decline, and their mail is filed in Screened out. Mail in the Screener never notifies you, never gets an assistant draft and never gets your auto-reply, but if you forward your mail, a copy still goes out. Mail you’ve screened out is never forwarded or auto-replied to. The sender isn’t told."],
+		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender, and their mail is sorted into Inbox, Promotions or Updates by its headers; accept into Promotions, Updates or [Paper Trail](#paper-trail) to keep it there. Decline, and their mail is filed in Screened out. Mail in the Screener never notifies you, never gets an assistant draft and never gets your auto-reply, but if you forward your mail, a copy still goes out. Mail you’ve screened out is never forwarded or auto-replied to. The sender isn’t told."],
 		src: "FSW#the-screener; FC#4.3 (\"screen them out privately\"); dev cb0b217 sender-triage.ts resolveInboundFolder (unknown: skipPush/skipAutoDraft/skipAutoReply, skipForward false; rejected: skips forwarding too)",
 	},
 	{
@@ -204,15 +204,22 @@ const sorting: Faq[] = [
 		id: "sorting",
 		group: "sorting-topic",
 		q: "How does Inboxies decide where an email goes?",
-		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the place you chose for the sender, when you accepted them into Promotions or Updates or in Settings → Senders. If you never chose one, as with people you’ve emailed or accepted with a plain Accept, the email is sorted by its headers: mailing-list mail goes to Promotions, or to Updates when it’s a receipt, an alert or an automatic reply, and everything else goes to Inbox. Spam is mail with spam headers, personal mail that fails sender checks, or mail the AI spam check flags. The AI check alone can’t send mail to Spam from someone you’ve accepted, emailed or given a place, as long as it passes sender checks. If the AI check can’t run, the mail is treated as not spam, so nothing is lost."],
+		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the place you chose for the sender, when you accepted them into Promotions, Updates or Paper Trail or in Settings → Senders. If you never chose one, as with people you’ve emailed or accepted with a plain Accept, the email is sorted by its headers: mailing-list mail goes to Promotions, or to Updates when it’s a receipt, an alert or an automatic reply, and everything else goes to Inbox. Spam is mail with spam headers, personal mail that fails sender checks, or mail the AI spam check flags. The AI check alone can’t send mail to Spam from someone you’ve accepted, emailed or given a place, as long as it passes sender checks. If the AI check can’t run, the mail is treated as not spam, so nothing is lost."],
 		src: "dev sender-triage.ts resolveInboundFolder (spam → rejected → unknown → filter → sender preference → explicit destination → classifier folder → Inbox; 31c58c6, PR #56); classify-email.ts (spam headers; Auto-Submitted / List-* / Precedence → Updates or Promotions; spoof check; Llama spam/ham; fail-open to ham); d19cd72 (PR #64): overrideAiSpamForVouchedSender (reason ai-spam only, auth.aligned), isVouchedSender",
 	},
 	{
 		id: "senders",
 		group: "sorting-topic",
 		q: "How do I always send a sender somewhere?",
-		a: ["Move one of their emails to Inbox, Promotions or Updates and choose “Yes, for this sender”. Their earlier mail moves too. To change or remove these choices, go to Settings → Senders. Remove one, and that sender’s new mail is sorted by its headers again."],
+		a: ["Move one of their emails to Inbox, Promotions, Updates or Paper Trail and choose “Yes, for this sender”. Their earlier mail moves too. To change or remove these choices, go to Settings → Senders. Remove one, and that sender’s new mail is sorted by its headers again."],
 		src: "FSW#sender-destinations; FC#4.3; dev 31c58c6 index.ts DELETE sender-preferences clears the triage destination; settings-senders.tsx (\"future mail uses the default sorter again\")",
+	},
+	{
+		id: "paper-trail",
+		group: "sorting-topic",
+		q: "What is Paper Trail?",
+		a: ["A folder for receipts, confirmations and notifications you want to keep but don’t need to read right away. Only senders you send there land in it: choose Paper Trail when you accept them in the Screener, or move one of their emails there and choose “Yes, for this sender”. It lists mail in short rows by month, without a preview, and its mail never notifies you. Updates stays a normal folder and still notifies you."],
+		src: "AVE-192: shared/folders.ts PAPER_TRAIL (Screener destination, purpose folder); shared/paper-trail.ts (month rows, folderIsQuiet); classify-email.ts shouldSendPush skips Paper Trail; DO migration 51_paper_trail_folder; web email-list.tsx, iOS EmailListView.swift, Android EmailListView.kt",
 	},
 	{
 		id: "filters",
@@ -313,7 +320,7 @@ const everyday: Faq[] = [
 		id: "notifications",
 		group: "everyday-topic",
 		q: "Which emails send notifications?",
-		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener, filed in Updates, sent to Spam, or moved by a filter somewhere other than Inbox or Promotions never notifies you. You can turn notifications off in Settings."],
+		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener, filed in Paper Trail, sent to Spam, or moved by a filter somewhere other than Inbox, Promotions or Updates never notifies you. You can turn notifications off in Settings."],
 		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (skipPush: filedAway)",
 	},
 	{

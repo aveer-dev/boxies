@@ -568,7 +568,7 @@ export default function EmailPanel({
 							<span className="text-sm">
 								<span className="font-medium text-kumo-default">Move their other mail to Spam</span>
 								<span className="block text-kumo-subtle">
-									Also moves what they sent to Inbox, Promotions and Updates.
+									Also moves what they sent to Inbox, Promotions, Updates and Paper Trail.
 								</span>
 							</span>
 						</label>
@@ -626,7 +626,7 @@ export default function EmailPanel({
 						{pendingPurposeMove
 							? FOLDER_DISPLAY_NAMES[pendingPurposeMove] ?? pendingPurposeMove
 							: "this folder"}
-						, and move their existing Inbox / Promotions / Updates mail.</>}
+						, and move their existing Inbox / Promotions / Updates / Paper Trail mail.</>}
 					/>
 					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
 						<Button

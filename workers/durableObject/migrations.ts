@@ -1033,4 +1033,22 @@ export const mailboxMigrations: Migration[] = [
             END;
         `),
 	},
+	{
+		// Paper Trail (AVE-192): a system folder for senders you send there.
+		// Named 51_ because the writing-suggestions PR claims 50_; the runner
+		// tracks migrations by name, so the gap is harmless. A custom folder
+		// already named "Paper Trail" (any case) keeps its id and mail and is
+		// renamed, like 16_ did for Promotions / Updates (folder names are
+		// unique).
+		name: "51_paper_trail_folder",
+		sql: txn(`
+            UPDATE folders SET name = name || ' (custom)'
+             WHERE lower(name) = 'paper trail'
+               AND id != 'paper_trail';
+            INSERT OR IGNORE INTO folders (id, name, is_deletable) VALUES
+                ('paper_trail', 'Paper Trail', 0);
+            UPDATE folders SET is_deletable = 0, name = 'Paper Trail'
+             WHERE id = 'paper_trail';
+        `),
+	},
 ];

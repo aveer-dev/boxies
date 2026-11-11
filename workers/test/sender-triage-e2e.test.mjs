@@ -127,8 +127,8 @@ function inboundPipeline({
 		sender: "orders@shop.example",
 	});
 	assert.equal(updates.folderId, "updates");
-	// Updates is a quiet receipts view: no push (AVE-192).
-	assert.equal(updates.push, false);
+	// Updates still notifies; only Paper Trail is quiet (AVE-192).
+	assert.equal(updates.push, true);
 
 	// Explicit sender preference (Settings → Senders) beats classify
 	const pinnedByPref = inboundPipeline({
@@ -192,6 +192,31 @@ function inboundPipeline({
 		sender: "letters@writer.example",
 	});
 	assert.equal(promotions.folderId, "promotions");
+
+	// Paper Trail (AVE-192): only a sender you send there lands in it, filed
+	// quietly (no push). The classifier never picks it, even for a receipt.
+	const paperTrail = inboundPipeline({
+		classification: ham,
+		triage: acceptedTo("paper_trail"),
+		sender: "letters@writer.example",
+	});
+	assert.equal(paperTrail.folderId, "paper_trail");
+	assert.equal(paperTrail.push, false);
+	const pinnedPaperTrail = inboundPipeline({
+		classification: receipt,
+		triage: acceptedTo(null),
+		sender: "letters@writer.example",
+		preferenceFolderId: "paper_trail",
+	});
+	assert.equal(pinnedPaperTrail.folderId, "paper_trail");
+	assert.equal(pinnedPaperTrail.push, false);
+	const receiptUnpinned = inboundPipeline({
+		classification: receipt,
+		triage: acceptedTo(null),
+		sender: "letters@writer.example",
+	});
+	assert.equal(receiptUnpinned.folderId, "updates");
+	assert.equal(receiptUnpinned.push, true);
 }
 
 // Rejected stays quiet in screened_out
