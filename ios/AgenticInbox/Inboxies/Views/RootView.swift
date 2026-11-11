@@ -20,6 +20,7 @@ struct RootView: View {
             || args.contains("-previewScreenerList")
             || args.contains("-previewSpam")
             || args.contains("-previewReplyLater")
+            || args.contains("-previewSetAside")
             || args.contains("-previewDomainAdmin")
             || args.contains("-previewDomainAdminDetail")
             || args.contains("-previewDomainAdminDetailUnassigned")
@@ -27,6 +28,7 @@ struct RootView: View {
             || args.contains("-previewInviteAccept")
             || args.contains("-previewSignInMethods")
             || args.contains("-previewDomainAdminServiceEnded")
+            || PreviewSupport.isTagPreview
             || PreviewSupport.isServiceMailboxPreview {
             return false
         }
@@ -87,6 +89,7 @@ struct RootView: View {
                 || args.contains("-previewScreenerList")
                 || args.contains("-previewSpam")
                 || args.contains("-previewReplyLater")
+                || args.contains("-previewSetAside")
                 || args.contains("-previewDomainAdmin")
                 || args.contains("-previewDomainAdminDetail")
                 || args.contains("-previewDomainAdminDetailUnassigned")
@@ -94,6 +97,7 @@ struct RootView: View {
                 || args.contains("-previewInviteAccept")
                 || args.contains("-previewSignInMethods")
                 || args.contains("-previewDomainAdminServiceEnded")
+                || PreviewSupport.isTagPreview
                 || PreviewSupport.isServiceMailboxPreview {
                 return
             }

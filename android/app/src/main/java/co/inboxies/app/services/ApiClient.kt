@@ -1074,6 +1074,50 @@ class ApiClient private constructor() {
         )
     }
 
+    // Tags (AVE-240, shared/tags.ts): many per email, on top of its one folder.
+
+    suspend fun listTags(mailboxId: String): List<co.inboxies.app.models.MailTag> =
+        request<co.inboxies.app.models.TagListResponse>(tagsPath(mailboxId)).tags
+
+    /** `201 Tag`; `409` name taken; `400` invalid name or too many tags. */
+    suspend fun createTag(mailboxId: String, name: String): co.inboxies.app.models.MailTag =
+        request(tagsPath(mailboxId), method = "POST", body = buildJsonObject { put("name", name) })
+
+    suspend fun renameTag(mailboxId: String, tagId: String, name: String): co.inboxies.app.models.MailTag =
+        request(tagPath(mailboxId, tagId), method = "PATCH", body = buildJsonObject { put("name", name) })
+
+    /** 204. The links go; the emails stay where they are. */
+    suspend fun deleteTag(mailboxId: String, tagId: String) {
+        request<EmptyResponse>(tagPath(mailboxId, tagId), method = "DELETE")
+    }
+
+    /** One row per conversation with a tagged message, outside Trash, Spam and Drafts. */
+    suspend fun listTaggedEmails(mailboxId: String, tagId: String, page: Int = 1): EmailListResponse = request(
+        "${tagPath(mailboxId, tagId)}/emails",
+        query = taggedEmailsQuery(page),
+    )
+
+    /** Tags (`on`, PUT) or untags (DELETE) every message of conversation [threadId]. */
+    suspend fun setThreadTag(
+        mailboxId: String,
+        threadId: String,
+        tagId: String,
+        on: Boolean,
+    ): co.inboxies.app.models.ThreadTagsResponse = request(
+        threadTagPath(mailboxId, threadId, tagId),
+        method = if (on) "PUT" else "DELETE",
+    )
+
+    internal fun tagsPath(mailboxId: String): String = "/api/v1/mailboxes/${pathEncode(mailboxId)}/tags"
+
+    internal fun tagPath(mailboxId: String, tagId: String): String = "${tagsPath(mailboxId)}/${pathEncode(tagId)}"
+
+    internal fun threadTagPath(mailboxId: String, threadId: String, tagId: String): String =
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/tags/${pathEncode(tagId)}"
+
+    internal fun taggedEmailsQuery(page: Int): Map<String, String> =
+        mapOf("threaded" to "true", "page" to page.toString(), "limit" to "25")
+
     suspend fun getInboxDigest(mailboxId: String): InboxDigest =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/inbox-digest")
 
@@ -1239,6 +1283,33 @@ class ApiClient private constructor() {
             "page" to page.toString(),
             "limit" to "25",
         ),
+    )
+
+    /** One page of a workflow pile, oldest-added first (AVE-201: `set_aside`). */
+    suspend fun listPileEmails(
+        mailboxId: String,
+        pileId: String,
+        page: Int = 1,
+    ): EmailListResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
+        query = mapOf(
+            "pile" to pileId,
+            "page" to page.toString(),
+            "limit" to "25",
+        ),
+    )
+
+    /**
+     * Put the message in [pileId] (moving it out of any other pile), or take it out of
+     * whatever pile it's in with `null` — sent as an explicit JSON `null` (AVE-201).
+     */
+    suspend fun setEmailPile(mailboxId: String, id: String, pileId: String?): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            if (pileId != null) put("pile", pileId)
+            else put("pile", kotlinx.serialization.json.JsonNull)
+        },
     )
 
     suspend fun listWorkflowPiles(mailboxId: String): WorkflowPilesResponse =

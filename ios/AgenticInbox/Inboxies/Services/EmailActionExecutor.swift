@@ -14,6 +14,8 @@ extension AppModel {
             await toggleRead(on: email)
         case .reply:
             await startCompose(mode: .reply, original: email)
+        case .setAside:
+            await toggleSetAside(on: email)
         }
     }
 
@@ -230,7 +232,7 @@ extension AppModel {
         }
         if folderId == "trash" || folderId == "spam" {
             await refreshReplyLaterCount()
-            if selectedTab == .replyLater {
+            if selectedTab.pileId != nil {
                 await loadEmailsForCurrentTab(showLoading: false)
             }
         }

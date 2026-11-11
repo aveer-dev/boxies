@@ -38,6 +38,7 @@ export default [
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
 		route("tags/:tagRef/:emailId?", "routes/email-list.tsx", { id: "routes/tag-list" }),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),
+		route("set-aside/:emailId?", "routes/set-aside.tsx"),
 		// Tags (AVE-241; many per email, unlike folders) by their random id.
 		route("tagged/:tagId/:emailId?", "routes/tag-view.tsx"),
 		route("new/:emailId?", "routes/inbox-new.tsx"),

@@ -150,6 +150,9 @@ object PreviewHarness {
                 // Splash and widget mocks need no extra session seeding.
             }
             PreviewMode.Mailbox,
+            PreviewMode.TagView,
+            PreviewMode.TagPicker,
+            PreviewMode.TagList,
             PreviewMode.LoadMore,
             PreviewMode.ManyNew,
             PreviewMode.Toast,
@@ -164,6 +167,7 @@ object PreviewHarness {
             PreviewMode.ScreenerUndoAccept,
             PreviewMode.ScreenerReaderAccept,
             PreviewMode.ReplyLater,
+            PreviewMode.SetAside,
         PreviewMode.FocusReply,
         PreviewMode.FocusReplyDone,
             PreviewMode.FocusReply,
@@ -320,6 +324,9 @@ fun PreviewRoot(
         }
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
+        PreviewMode.TagView,
+        PreviewMode.TagPicker,
+        PreviewMode.TagList,
         PreviewMode.AiUsage,
         PreviewMode.AiUsageLimit,
         PreviewMode.LoadMore,
@@ -335,6 +342,7 @@ fun PreviewRoot(
         PreviewMode.ScreenerUndoAccept,
         PreviewMode.ScreenerReaderAccept,
         PreviewMode.ReplyLater,
+        PreviewMode.SetAside,
         PreviewMode.FocusReply,
         PreviewMode.FocusReplyDone,
         PreviewMode.Spam,

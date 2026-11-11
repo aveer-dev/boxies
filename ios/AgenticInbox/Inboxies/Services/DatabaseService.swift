@@ -230,6 +230,25 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;")
             setVersion(9)
         }
+
+        // Tags (AVE-242): the row's `tags` as JSON (`[TagRef]`); NULL = never sent.
+        if (getVersion() < 10) {
+            exec("ALTER TABLE emails ADD COLUMN tags_json TEXT;")
+            setVersion(10)
+        }
+
+        // Workflow piles (AVE-201): which pile the mail sits in + when it joined.
+        // Existing Reply Later rows carry over as `reply_later`.
+        // Pre-merge AVE-201 builds used v10 for piles, so `tags_json` may be missing
+        // and the pile columns may exist: a duplicate-column ALTER just fails.
+        if (getVersion() < 11) {
+            exec("ALTER TABLE emails ADD COLUMN tags_json TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN pile_id TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN pile_at TEXT;")
+            exec("UPDATE emails SET pile_id = 'reply_later', pile_at = COALESCE(pile_at, reply_later_at) WHERE reply_later = 1 AND pile_id IS NULL;")
+            exec("CREATE INDEX IF NOT EXISTS idx_emails_pile ON emails(mailbox_id, pile_id, pile_at);")
+            setVersion(11)
+        }
     }
 
     private func getVersion() -> Int {
@@ -457,7 +476,7 @@ final class DatabaseService: @unchecked Sendable {
                 updated_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
@@ -466,7 +485,7 @@ final class DatabaseService: @unchecked Sendable {
                 ?, ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?,
-                ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -502,6 +521,14 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later_at = excluded.reply_later_at,
                 reply_later_remind_at = excluded.reply_later_remind_at,
                 reply_later_reminded_at = excluded.reply_later_reminded_at,
+                pile_id = excluded.pile_id,
+                -- Rows without `pile_at` (threaded lists, detail) keep the cached time while
+                -- the pile is unchanged; joining a new pile without one stamps now.
+                pile_at = CASE
+                    WHEN excluded.pile_id IS NULL THEN NULL
+                    WHEN excluded.pile_at IS NOT NULL THEN excluded.pile_at
+                    WHEN emails.pile_id IS excluded.pile_id THEN emails.pile_at
+                    ELSE excluded.updated_at END,
                 updated_at = excluded.updated_at,
                 alias_id = COALESCE(excluded.alias_id, emails.alias_id),
                 alias_email = COALESCE(excluded.alias_email, emails.alias_email),
@@ -514,7 +541,9 @@ final class DatabaseService: @unchecked Sendable {
                 alias_active = COALESCE(excluded.alias_active, emails.alias_active),
                 auth_tier = COALESCE(excluded.auth_tier, emails.auth_tier),
                 classification_reason = COALESCE(excluded.classification_reason, emails.classification_reason),
-                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id);
+                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id),
+                -- Payloads from older Workers carry no tags: keep the cached ones.
+                tags_json = COALESCE(excluded.tags_json, emails.tags_json);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -573,6 +602,10 @@ final class DatabaseService: @unchecked Sendable {
                     bindOptionalString(stmt, 42, e.matchedRuleId)
                     bindOptionalString(stmt, 43, e.replyLaterRemindAt)
                     bindOptionalString(stmt, 44, e.replyLaterRemindedAt)
+                    bindOptionalString(stmt, 45, e.pileId)
+                    // Threaded rows carry `pile_id` without `pile_at`: stamp the first sighting.
+                    bindOptionalString(stmt, 46, e.pileAt ?? (e.pileId != nil ? now : nil))
+                    bindOptionalString(stmt, 47, encodeTags(e.tags))
 
                     sqlite3_step(stmt)
                 }
@@ -605,7 +638,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
             ORDER BY MAX(date, COALESCE(reply_later_reminded_at, date)) DESC
@@ -651,7 +684,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -707,6 +740,94 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Set Aside pile, oldest-added first like the Worker (AVE-201).
+    func getSetAsideEmails(mailboxId: String, limit: Int = 50, offset: Int = 0) -> [Email] {
+        return queue.sync {
+            var result: [Email] = []
+            var stmt: OpaquePointer?
+            let sql = """
+            SELECT
+                id, thread_id, folder_id, subject, sender, sender_name,
+                recipient, cc, bcc, date, read, starred, body, snippet,
+                in_reply_to, message_id, raw_headers, thread_count,
+                thread_unread_count, participants, folder_name, has_draft,
+                needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id,
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
+            FROM emails
+            WHERE mailbox_id = ? AND pile_id = 'set_aside' AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
+            ORDER BY COALESCE(pile_at, date) ASC, date DESC
+            LIMIT ? OFFSET ?;
+            """
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_int(stmt, 2, Int32(limit))
+                sqlite3_bind_int(stmt, 3, Int32(offset))
+
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    if let email = parseEmailRow(stmt) {
+                        result.append(email)
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+            return result
+        }
+    }
+
+    func getSetAsideCount(mailboxId: String) -> Int {
+        return queue.sync {
+            var count = 0
+            var stmt: OpaquePointer?
+            let sql = "SELECT COUNT(*) FROM emails WHERE mailbox_id = ? AND pile_id = 'set_aside' AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'));"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+            sqlite3_finalize(stmt)
+            return count
+        }
+    }
+
+    /// Puts the mail in a pile (`nil` takes it out of any). One pile per mail, so Set Aside
+    /// clears Reply Later and its reminder, as the Worker does (AVE-201).
+    func updateEmailPile(id: String, pileId: String?) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql: String
+            switch pileId {
+            case nil:
+                sql = "UPDATE emails SET pile_id = NULL, pile_at = NULL, reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL WHERE id = ?;"
+            case WorkflowPileID.replyLater?:
+                sql = "UPDATE emails SET pile_id = ?, pile_at = ?, reply_later = 1, reply_later_at = ? WHERE id = ?;"
+            default:
+                sql = "UPDATE emails SET pile_id = ?, pile_at = ?, reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL WHERE id = ?;"
+            }
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                if let pileId {
+                    let now = ISO8601DateFormatter().string(from: Date())
+                    sqlite3_bind_text(stmt, 1, (pileId as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (now as NSString).utf8String, -1, nil)
+                    if pileId == WorkflowPileID.replyLater {
+                        sqlite3_bind_text(stmt, 3, (now as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(stmt, 4, (id as NSString).utf8String, -1, nil)
+                    } else {
+                        sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, nil)
+                    }
+                } else {
+                    sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+                }
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     /// Sets (ISO) or clears (nil) the pending reminder. Setting one also puts the mail in
     /// Reply Later and clears a previous fire, as the server does (AVE-86).
     func updateReplyLaterReminder(id: String, remindAt: String?) {
@@ -718,6 +839,8 @@ final class DatabaseService: @unchecked Sendable {
                 UPDATE emails SET
                     reply_later_at = CASE WHEN reply_later = 1 AND reply_later_at IS NOT NULL THEN reply_later_at ELSE ? END,
                     reply_later = 1,
+                    pile_at = CASE WHEN pile_id = 'reply_later' AND pile_at IS NOT NULL THEN pile_at ELSE strftime('%Y-%m-%dT%H:%M:%SZ', 'now') END,
+                    pile_id = 'reply_later',
                     reply_later_remind_at = ?,
                     reply_later_reminded_at = NULL
                 WHERE id = ?;
@@ -751,7 +874,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -783,7 +906,7 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later, reply_later_at, alias_id, alias_email,
                 has_sticky_note, sticky_note_text, inline_note_count,
                 alias_active, auth_tier, classification_reason, matched_rule_id,
-                reply_later_remind_at, reply_later_reminded_at
+                reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -816,6 +939,14 @@ final class DatabaseService: @unchecked Sendable {
                 if !replyLater {
                     clauses.append("reply_later_remind_at = NULL")
                     clauses.append("reply_later_reminded_at = NULL")
+                    // Only Reply Later's own pile entry goes; Set Aside is untouched (AVE-201).
+                    clauses.append("pile_at = CASE WHEN pile_id = 'reply_later' THEN NULL ELSE pile_at END")
+                    clauses.append("pile_id = CASE WHEN pile_id = 'reply_later' THEN NULL ELSE pile_id END")
+                } else {
+                    // One pile per mail: joining Reply Later leaves Set Aside (AVE-201).
+                    clauses.append("pile_id = 'reply_later'")
+                    // SET expressions see the old row, so stamp now rather than read reply_later_at.
+                    clauses.append("pile_at = CASE WHEN pile_id = 'reply_later' AND pile_at IS NOT NULL THEN pile_at ELSE strftime('%Y-%m-%dT%H:%M:%SZ', 'now') END")
                 }
             }
             guard !clauses.isEmpty else { return }
@@ -855,7 +986,7 @@ final class DatabaseService: @unchecked Sendable {
             var stmt: OpaquePointer?
             let clearReplyLater = toFolderId == "trash" || toFolderId == "spam"
             let sql = clearReplyLater
-                ? "UPDATE emails SET folder_id = ?, reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL WHERE id = ?;"
+                ? "UPDATE emails SET folder_id = ?, reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL, pile_id = NULL, pile_at = NULL WHERE id = ?;"
                 : "UPDATE emails SET folder_id = ? WHERE id = ?;"
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (toFolderId as NSString).utf8String, -1, nil)
@@ -1118,7 +1249,7 @@ final class DatabaseService: @unchecked Sendable {
                 e.reply_later, e.reply_later_at, e.alias_id, e.alias_email,
                 e.has_sticky_note, e.sticky_note_text, e.inline_note_count,
                 e.alias_active, e.auth_tier, e.classification_reason, e.matched_rule_id,
-                e.reply_later_remind_at, e.reply_later_reminded_at
+                e.reply_later_remind_at, e.reply_later_reminded_at, e.pile_id, e.pile_at, e.tags_json
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1288,8 +1419,38 @@ final class DatabaseService: @unchecked Sendable {
             inlineNoteCount: columnOptionalInt(stmt, 35),
             authTier: columnOptionalString(stmt, 37),
             classificationReason: columnOptionalString(stmt, 38),
-            matchedRuleId: columnOptionalString(stmt, 39)
+            matchedRuleId: columnOptionalString(stmt, 39),
+            pileId: columnOptionalString(stmt, 42) ?? (sqlite3_column_int(stmt, 29) != 0 ? WorkflowPileID.replyLater : nil),
+            pileAt: columnOptionalString(stmt, 43),
+            tags: decodeTags(columnOptionalString(stmt, 44))
         )
+    }
+
+    private func encodeTags(_ tags: [TagRef]?) -> String? {
+        guard let tags, let data = try? JSONEncoder().encode(tags) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeTags(_ raw: String?) -> [TagRef]? {
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([TagRef].self, from: data)
+    }
+
+    /// Sets the cached `tags` of each email in `ids` (a tag change, AVE-242).
+    func updateEmailTags(_ tagsById: [String: [TagRef]]) {
+        guard !tagsById.isEmpty else { return }
+        queue.sync {
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE emails SET tags_json = ? WHERE id = ?;", -1, &stmt, nil) == SQLITE_OK {
+                for (id, tags) in tagsById {
+                    sqlite3_reset(stmt)
+                    bindOptionalString(stmt, 1, encodeTags(tags))
+                    bindString(stmt, 2, id)
+                    sqlite3_step(stmt)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
     }
 
     private func encodeAuth(_ auth: EmailAuth?) -> String? {

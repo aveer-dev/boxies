@@ -214,7 +214,10 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
 | Signature | `previewSignature` | `signature` | Settings → Outgoing mail → Signature on a web-formatted fixture (bold name + link shown as words), no API. Peer of iOS `-previewSignature` (AVE-204) |
-| Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
+| Folders | `previewTags` | `tags` | Settings → Folders (custom folders; titled "Tags" until AVE-242): fixture folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
+| Tag view | `previewTagView` | `tagView` | Tag view "Clients": everything with the tag (across folders), rows showing their other tags, Back + rename/delete menu. Peer of iOS `-previewTagView` (AVE-242) |
+| Tag picker | `previewTagPicker` | `tagPicker` | Reader on a tagged thread (tag chips + "+") with the Tags picker open: find, toggle, "Create “…”" (in-memory). Peer of iOS `-previewTagPicker` (AVE-242) |
+| Tags list | `previewTagList` | `tagList` | Phone home with the Tags sheet open (folders menu → Tags): tags with unread counts, + to create, long-press rename/delete. Peer of iOS `-previewTagList` (AVE-242) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
@@ -225,6 +228,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | Screener reader after Accept | `previewScreenerReaderAccept` | `screenerReaderAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`). AVE-182 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Set Aside | `previewSetAside` | `setAside` | Set Aside pile. Peer of iOS `-previewSetAside` (AVE-201) |
 | Focus & Reply | `previewFocusReply` · `previewFocusReplyDone` | `focusReply` · `focusReplyDone` | Reply Later with the first thread's reply open under "Focus & Reply · 1 of N · Skip" · the pile after a run emptied it ("All done"). Peer of iOS `-previewReplyLater -previewFocusReply` / `-previewFocusReplyDone` (AVE-193) |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
