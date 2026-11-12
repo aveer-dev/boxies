@@ -66,6 +66,14 @@ interface UIState {
 	openReminderPicker: (email: Email) => void;
 	closeReminderPicker: () => void;
 
+	/**
+	 * "New pile" dialog (AVE-194): `email` goes into the new pile once it's
+	 * made (from a row or reader menu); null opens it from the sidebar.
+	 */
+	pileCreator: { email: Email | null } | null;
+	openPileCreator: (email?: Email | null) => void;
+	closePileCreator: () => void;
+
 	isAgentPanelOpen: boolean;
 	openAgentPanel: () => void;
 	closeAgentPanel: () => void;
@@ -170,6 +178,10 @@ export const useUIStore = create<UIState>((set, get) => ({
 	reminderEmail: null,
 	openReminderPicker: (email) => set({ reminderEmail: email }),
 	closeReminderPicker: () => set({ reminderEmail: null }),
+
+	pileCreator: null,
+	openPileCreator: (email = null) => set({ pileCreator: { email } }),
+	closePileCreator: () => set({ pileCreator: null }),
 
 	openAgentPanel: () =>
 		set((s) => (s.isReadOnly ? s : { isAgentPanelOpen: true, ...opened(s, { kind: "agent", key: "agent" }) })),

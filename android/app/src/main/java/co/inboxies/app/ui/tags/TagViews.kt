@@ -124,9 +124,17 @@ fun MailTagPill(name: String) {
     }
 }
 
-/** Reader chip (above the messages): tag glyph + name; opens the tag's view. */
+/**
+ * Reader chip (above the messages): tag glyph + name; opens the tag's view. Piles
+ * (AVE-194) pass their own [icon] and [label].
+ */
 @Composable
-fun ReaderTagChip(name: String, onClick: () -> Unit) {
+fun ReaderTagChip(
+    name: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = TagIcon,
+    label: String = "Tag $name",
+    onClick: () -> Unit,
+) {
     val colors = inboxiesColors()
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -136,9 +144,9 @@ fun ReaderTagChip(name: String, onClick: () -> Unit) {
             .background(colors.pillFill)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "Tag $name" },
+            .semantics(mergeDescendants = true) { contentDescription = label },
     ) {
-        Icon(TagIcon, contentDescription = null, tint = colors.ink, modifier = Modifier.size(12.dp))
+        Icon(icon, contentDescription = null, tint = colors.ink, modifier = Modifier.size(12.dp))
         Text(name, fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp, color = colors.ink, maxLines = 1)
     }
 }
@@ -170,7 +178,7 @@ fun AddTagChip(hasTags: Boolean, onClick: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TagSheetFrame(
+internal fun TagSheetFrame(
     title: String,
     onDismiss: () -> Unit,
     trailing: (@Composable () -> Unit)? = null,
@@ -459,14 +467,16 @@ fun TagEditorDialogs(state: TagEditorState) {
     }
 }
 
+/** Name prompt for tags, reused by piles (AVE-194) with their own [label]. */
 @Composable
-private fun TagNameDialog(
+internal fun TagNameDialog(
     title: String,
     confirm: String,
     initial: String,
     onDismiss: () -> Unit,
     onConfirm: suspend (String) -> Unit,
     fallbackError: String,
+    label: String = MailTags.NAME_LABEL,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -503,7 +513,7 @@ private fun TagNameDialog(
                     draft = it
                     error = null
                 },
-                label = { Text(MailTags.NAME_LABEL, fontFamily = InterFontFamily) },
+                label = { Text(label, fontFamily = InterFontFamily) },
                 singleLine = true,
                 isError = error != null,
                 supportingText = error?.let { message ->

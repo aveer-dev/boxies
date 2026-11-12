@@ -152,6 +152,89 @@ final class ClientContractTests: XCTestCase {
         XCTAssertNil(db.getEmail(id: "p6")?.pileId)
     }
 
+    // MARK: - Custom piles (AVE-194)
+
+    func testCustomPilesDecodeAfterTheBuiltInOnes() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[
+          {"id":"reply_later","name":"Reply Later","builtin":true,"clears_on_reply":true,"count":3,"due_count":1},
+          {"id":"set_aside","name":"Set Aside","builtin":true,"clears_on_reply":false,"count":2,"due_count":0},
+          {"id":"p_0a1b","name":"Waiting on","builtin":false,"clears_on_reply":false,"count":4,"due_count":0}
+        ]}
+        """)
+        let custom = MailPiles.custom(response.piles)
+        XCTAssertEqual(custom.map(\.id), ["p_0a1b"])
+        XCTAssertEqual(custom.first?.name, "Waiting on")
+        XCTAssertEqual(custom.first?.count, 4)
+        // A newly made pile (POST /piles) decodes the same way.
+        let made = try decode(WorkflowPile.self, """
+        {"id":"p_ff","name":"To pay","position":3,"builtin":false,"clears_on_reply":false,"count":0,"due_count":0}
+        """)
+        XCTAssertEqual(MailPiles.custom([made]).count, 1)
+        // Older Workers send no `builtin`: only the two known ids are built in.
+        let legacy = [WorkflowPile(id: "reply_later", count: 1), WorkflowPile(id: "p_x", count: 0)]
+        XCTAssertEqual(MailPiles.custom(legacy).map(\.id), ["p_x"])
+    }
+
+    func testPileNamesMatchTheWorker() {
+        XCTAssertEqual(MailPiles.normalizeName("  Waiting   on \n"), .ok(name: "Waiting on", key: "waiting on"))
+        XCTAssertEqual(MailPiles.normalizeName("   "), .invalid("Pile name is required"))
+        XCTAssertEqual(MailPiles.normalizeName("bad\u{0007}name"), .invalid("Pile name contains invalid characters"))
+        XCTAssertEqual(MailPiles.normalizeName(String(repeating: "x", count: 41)), .invalid("Pile name must be at most 40 characters"))
+        let waiting = WorkflowPile(id: "p_1", count: 0, name: "Waiting on", builtin: false)
+        XCTAssertEqual(MailPiles.validate("waiting ON", existing: [waiting]), MailPiles.duplicateName)
+        XCTAssertEqual(MailPiles.validate("Set aside", existing: []), MailPiles.duplicateName, "built-in names are taken")
+        XCTAssertNil(MailPiles.validate("Waiting On", existing: [waiting], renaming: waiting), "a new spelling of its own name")
+        XCTAssertNil(MailPiles.validate("To pay", existing: [waiting]))
+        let full = (0..<MailPiles.maxCustom).map { WorkflowPile(id: "p_\($0)", count: 0, name: "Pile \($0)", builtin: false) }
+        XCTAssertEqual(MailPiles.validate("One more", existing: full), MailPiles.tooMany)
+    }
+
+    @MainActor
+    func testMovingToACustomPileLeavesReplyLater() {
+        var email = Email(
+            id: "p7", subject: "Quote", sender: "a@x.com", recipient: "b@x.com",
+            date: "2026-10-10T10:00:00Z", read: true, starred: false,
+            replyLater: true, replyLaterAt: "2026-10-10T11:00:00Z",
+            replyLaterRemindAt: "2026-10-12T09:00:00Z"
+        )
+        email.pileId = WorkflowPileID.replyLater
+        let moved = AppModel.movingToPile(email, "p_waiting")
+        XCTAssertEqual(moved.pileId, "p_waiting")
+        XCTAssertFalse(moved.replyLater)
+        XCTAssertNil(moved.replyLaterRemindAt)
+        XCTAssertNotNil(moved.pileAt)
+        let out = AppModel.movingToPile(moved, nil)
+        XCTAssertNil(out.pileId)
+        XCTAssertNil(out.pileAt)
+    }
+
+    func testCacheListsAndClearsCustomPiles() throws {
+        let db = DatabaseService(inMemory: true)
+        let mb = "mb@x.com"
+        let emails = try ["c1", "c2"].map { id in
+            try decode(Email.self, """
+            {"id":"\(id)","folder_id":"inbox","subject":"S","sender":"a@x.com","recipient":"b@x.com",
+             "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":"p_waiting"}
+            """)
+        }
+        db.upsertEmails(mailboxId: mb, emails: emails)
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 2)
+        XCTAssertEqual(Set(db.getPileEmails(mailboxId: mb, pileId: "p_waiting").map(\.id)), ["c1", "c2"])
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+
+        db.updateEmailPile(id: "c1", pileId: "p_topay")
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 1)
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_topay"), 1)
+
+        // Deleting a pile takes its mail out and nothing else.
+        db.clearPile(mailboxId: mb, pileId: "p_waiting")
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 0)
+        XCTAssertNil(db.getEmail(id: "c2")?.pileId)
+        XCTAssertEqual(db.getEmail(id: "c2")?.folderId, "inbox")
+        XCTAssertEqual(db.getEmail(id: "c1")?.pileId, "p_topay")
+    }
+
     // MARK: - Tracking pixels (AVE-195)
 
     func testEmailDecodesBlockedTrackers() throws {

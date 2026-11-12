@@ -26,6 +26,7 @@ import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.PileIds
+import co.inboxies.app.models.WorkflowPile
 import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
@@ -157,7 +158,9 @@ object PreviewSupport {
         val tagModes = setOf(PreviewMode.Tags, PreviewMode.TagsRename, PreviewMode.TagsDelete)
         val folders = if (mode in tagModes) systemFolders + previewTagFolders else systemFolders
         val reminderModes = setOf(PreviewMode.ReminderPicker, PreviewMode.ReminderToast, PreviewMode.ReminderDue)
-        val allEmails = if (mode in reminderModes) withReminderFixtures(emails(you)) else emails(you)
+        val pileModes = setOf(PreviewMode.Pile, PreviewMode.PileList, PreviewMode.PilePicker)
+        val baseEmails = if (mode in pileModes) emails(you) + pileEmails(you) else emails(you)
+        val allEmails = if (mode in reminderModes) withReminderFixtures(baseEmails) else baseEmails
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
         DatabaseService.shared.upsertFolders(mailbox.id, folders)
         DatabaseService.shared.upsertEmails(mailbox.id, allEmails)
@@ -384,6 +387,37 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.Pile -> {
+                // AVE-194: the "Waiting on" pile, across folders.
+                val waiting = DatabaseService.shared.getPileEmails(mailbox.id, PREVIEW_PILE_WAITING)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = waiting,
+                    selectedTab = HomeTab.Pile(PREVIEW_PILE_WAITING),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.PilePicker -> {
+                // AVE-194: "To pay" mail open in the reader, the Move to pile picker over it.
+                val inbox = allEmails.filter { it.folderId == FolderIds.INBOX }
+                val opened = inbox.first { it.id == "preview-pile-3" }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = opened,
+                    threadEmails = listOf(opened),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.SetAside -> {
                 val setAside = DatabaseService.shared.getSetAsideEmails(mailbox.id)
                 app.applyDebugPreview(
@@ -484,6 +518,10 @@ object PreviewSupport {
         app.setTagsForPreview(previewMailTags)
         if (mode == PreviewMode.TagPicker) app.openTagPicker(app.selectedEmail.value ?: allEmails.first())
         if (mode == PreviewMode.TagList) app.setTagListVisible(true)
+        // Custom piles (AVE-194): only their previews, so other fixtures stay as they were.
+        if (mode in pileModes) app.setCustomPilesForPreview(previewPiles)
+        if (mode == PreviewMode.PilePicker) app.openPilePicker(app.selectedEmail.value ?: allEmails.first())
+        if (mode == PreviewMode.PileList) app.setPileListVisible(true)
         // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
@@ -1003,6 +1041,66 @@ object PreviewSupport {
     """.trimIndent()
 
     const val PREVIEW_TAG_CLIENTS = "tag_clients"
+    const val PREVIEW_PILE_WAITING = "p_waiting"
+
+    /** Custom pile fixtures (iOS `PreviewPiles`): same names, ids and counts. */
+    val previewPiles: List<WorkflowPile> = listOf(
+        WorkflowPile(id = PREVIEW_PILE_WAITING, name = "Waiting on", builtin = false, clearsOnReply = false, count = 2),
+        WorkflowPile(id = "p_topay", name = "To pay", builtin = false, clearsOnReply = false, count = 1),
+        WorkflowPile(id = "p_hiring", name = "Hiring", builtin = false, clearsOnReply = false, count = 0),
+    )
+
+    /** Mail in the custom pile fixtures: two waiting on someone, one to pay (iOS `pileEmails`). */
+    fun pileEmails(you: String = addr("you")): List<Email> = listOf(
+        Email(
+            id = "preview-pile-1",
+            folderId = FolderIds.ARCHIVE,
+            subject = "Re: Contract redlines",
+            sender = "legal@northwind.example",
+            senderName = "Dana at Northwind",
+            recipient = you,
+            date = "2026-09-10T16:40:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Thanks, we'll send the countersigned copy once our counsel signs off.",
+            folderName = "Archive",
+            pileId = PREVIEW_PILE_WAITING,
+            pileAt = "2026-09-10T17:00:00.000Z",
+            listSection = "seen",
+        ),
+        Email(
+            id = "preview-pile-2",
+            folderId = FolderIds.INBOX,
+            subject = "Quote for the kitchen tiles",
+            sender = "hello@tileworks.example",
+            senderName = "Tileworks",
+            recipient = you,
+            date = "2026-09-11T09:15:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "We're checking stock with the supplier and will confirm the delivery date.",
+            pileId = PREVIEW_PILE_WAITING,
+            pileAt = "2026-09-11T09:30:00.000Z",
+            listSection = "seen",
+        ),
+        Email(
+            id = "preview-pile-3",
+            folderId = FolderIds.INBOX,
+            subject = "Invoice #2041 due Sept 30",
+            sender = "billing@studio.example",
+            senderName = "North Studio",
+            recipient = you,
+            date = "2026-09-12T08:00:00.000Z",
+            read = false,
+            starred = false,
+            body = "<p>Your invoice for September is attached. Payment is due by the 30th.</p>",
+            snippet = "Your invoice for September is attached. Payment is due by the 30th.",
+            hasAttachment = true,
+            pileId = "p_topay",
+            pileAt = "2026-09-12T08:05:00.000Z",
+            listSection = "new",
+        ),
+    )
 
     /** Fixture tags (iOS `PreviewSupport.tags`): same names, ids and counts. */
     val previewMailTags: List<MailTag> = listOf(

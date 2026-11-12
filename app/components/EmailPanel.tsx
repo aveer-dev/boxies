@@ -32,7 +32,7 @@ import api from "~/services/api";
 import { useReplyLater } from "~/hooks/useReplyLater";
 import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
-import { useFolders } from "~/queries/folders";
+import { useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
 import { type ShortcutId, useShortcut } from "~/lib/shortcuts";
@@ -92,6 +92,8 @@ export default function EmailPanel({
 	};
 	const { startCompose, openPopOut } = useUIStore();
 	const isReadOnly = useUIStore((s) => s.isReadOnly);
+	const openPileCreator = useUIStore((s) => s.openPileCreator);
+	const { data: workflowPiles = [] } = useWorkflowPiles(mailboxId);
 	const mailboxRef = useMailboxRef();
 	const [tagPickerOpen, setTagPickerOpen] = useState(false);
 	const closePanel = onClose;
@@ -452,6 +454,15 @@ export default function EmailPanel({
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
 				onAddStickyNote={mailboxId && !isDraftFolder ? () => setCreatingSticky(true) : undefined}
+				piling={
+					canTag
+						? {
+								piles: workflowPiles,
+								onSet: (pile) => replyLaterActions.setPile(email, pile),
+								onNew: () => openPileCreator(email),
+							}
+						: undefined
+				}
 				tagging={
 					canTag && threadKey
 						? { threadId: threadKey, tags: threadTags, open: tagPickerOpen, onOpenChange: setTagPickerOpen }

@@ -52,6 +52,7 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater")
                 || ProcessInfo.processInfo.arguments.contains("-previewSetAside")
                 || PreviewSupport.isTagPreview
+                || PreviewSupport.isPilePreview
                 || PreviewSupport.isServiceMailboxPreview {
                 PreviewMailboxRoot()
                     .applyThemeController()

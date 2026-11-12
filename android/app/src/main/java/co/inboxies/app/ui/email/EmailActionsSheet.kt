@@ -1,5 +1,7 @@
 package co.inboxies.app.ui.email
 
+import co.inboxies.app.services.MailPiles
+import co.inboxies.app.ui.piles.PileIcon
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -378,6 +380,16 @@ fun EmailActionsSheet(
                         trailing = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     ) {
                         screen = ActionsScreen.Move
+                    }
+                }
+                // Piles people made (AVE-194): one per mail; the picker ticks the current one.
+                if (!readOnly && !email.isDraft) {
+                    ActionRow(
+                        app.customPileOf(email)?.let { "Pile: ${MailPiles.displayName(it)}" } ?: MailPiles.PICKER_MENU,
+                        PileIcon,
+                    ) {
+                        onDismiss()
+                        app.openPilePicker(email)
                     }
                 }
                 // Tags (AVE-242): the conversation's, in the picker.

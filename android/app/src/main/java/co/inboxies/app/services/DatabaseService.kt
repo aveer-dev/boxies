@@ -120,6 +120,18 @@ class DatabaseService private constructor() {
             it.isSetAside && it.folderId !in setOf("trash", "spam", "draft", "drafts")
         }
 
+    /** Mail in any pile but Reply Later (Set Aside or one people made, AVE-194), oldest first. */
+    fun getPileEmails(mailboxId: String, pileId: String): List<Email> =
+        emailsIn(mailboxId)
+            .filter { it.currentPileId == pileId && it.folderId !in setOf("trash", "spam", "draft", "drafts") }
+            .sortedWith(compareBy<Email> { it.pileAt ?: it.date }.thenByDescending { it.date })
+            .toList()
+
+    fun getPileCount(mailboxId: String, pileId: String): Int =
+        emailsIn(mailboxId).count {
+            it.currentPileId == pileId && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+        }
+
     /** Reply Later mails whose reminder fired and are still unread (AVE-86). */
     fun getReplyLaterDueCount(mailboxId: String): Int =
         emailsIn(mailboxId).count {
@@ -245,6 +257,13 @@ class DatabaseService private constructor() {
     fun updateEmailPile(id: String, pileId: String?) {
         val existing = emails[id] ?: return
         emails[id] = existing.inPile(pileId)
+    }
+
+    /** A deleted pile (AVE-194): its cached mail comes out of it, nothing else changes. */
+    fun clearPile(mailboxId: String, pileId: String) {
+        emailsIn(mailboxId).filter { it.pileId == pileId }.toList().forEach { email ->
+            emails[email.id] = email.copy(pileId = null, pileAt = null)
+        }
     }
 
     /**

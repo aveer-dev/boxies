@@ -47,6 +47,7 @@ import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.EmailListResponse
+import co.inboxies.app.models.WorkflowPile
 import co.inboxies.app.models.WorkflowPilesResponse
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
@@ -1295,6 +1296,24 @@ class ApiClient private constructor() {
             else put("pile", kotlinx.serialization.json.JsonNull)
         },
     )
+
+    private fun pilesPath(mailboxId: String, pileId: String? = null): String {
+        val base = "/api/v1/mailboxes/${pathEncode(mailboxId)}/piles"
+        return if (pileId == null) base else "$base/${pathEncode(pileId)}"
+    }
+
+    /** Makes a pile (AVE-194). 409 when the name is taken (ignoring case), 400 past the cap. */
+    suspend fun createPile(mailboxId: String, name: String): WorkflowPile =
+        request(pilesPath(mailboxId), method = "POST", body = buildJsonObject { put("name", name) })
+
+    /** Renames a pile people made; built-in piles answer 400. */
+    suspend fun renamePile(mailboxId: String, pileId: String, name: String): WorkflowPile =
+        request(pilesPath(mailboxId, pileId), method = "PATCH", body = buildJsonObject { put("name", name) })
+
+    /** 204. Its mail comes out of the pile; nothing else changes. */
+    suspend fun deletePile(mailboxId: String, pileId: String) {
+        request<EmptyResponse>(pilesPath(mailboxId, pileId), method = "DELETE")
+    }
 
     suspend fun listWorkflowPiles(mailboxId: String): WorkflowPilesResponse =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/workflow-piles")
