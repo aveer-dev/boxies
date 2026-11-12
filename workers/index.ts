@@ -62,6 +62,13 @@ import { mailCardsAllowed } from "../shared/mail-cards";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import type { AiSummaryResponse } from "../shared/ai-summaries";
+import {
+	isWritingSuggestionsEnabled,
+	MAX_SUGGESTION_DRAFT_CHARS,
+	writingSuggestionsSettingsError,
+	type ComposeSuggestionResponse,
+} from "../shared/compose-suggestions";
+import { composeSuggestion, type SuggestionAi } from "./lib/compose-suggest";
 import type { MailboxSummaryResult } from "./durableObject";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -451,6 +458,8 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	if (filtersError) return c.json({ error: filtersError }, 400);
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
+	const suggestionsError = writingSuggestionsSettingsError(next);
+	if (suggestionsError) return c.json({ error: suggestionsError }, 400);
 	await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
 	// Turning Screener off (AVE-104) lets waiting mail through: it moves to
 	// Inbox. Turning it back on screens only new mail.
@@ -1165,6 +1174,49 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/summary/generate", async (c: A
 		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy", getPlanTier(c.var.mailboxId)),
 		"Email not found",
 	);
+});
+
+// -- Writing suggestions (AVE-189) ----------------------------------
+// A few words that finish the sentence at the caret. Off unless the mailbox
+// turned `writingSuggestions` on (403 otherwise). Each model run counts one
+// unit of the mailbox's daily `suggest` bucket: over it, 429 with the typed
+// AiQuotaExceededError. Only the draft up to the caret, its subject and the
+// replied-to message reach the model; see lib/compose-suggest.ts.
+
+const ComposeSuggestionBody = z
+	.object({
+		draft: z.string().max(MAX_SUGGESTION_DRAFT_CHARS * 2),
+		subject: z.string().max(1_000).optional(),
+		inReplyTo: z.string().max(512).optional(),
+	})
+	.strict();
+
+app.post("/api/v1/mailboxes/:mailboxId/compose/suggest", async (c: AppContext) => {
+	const parsed = ComposeSuggestionBody.safeParse(await c.req.json().catch(() => null));
+	if (!parsed.success) return c.json({ error: "Invalid suggestion request" }, 400);
+	const settings = await loadMailboxSettingsRaw(c.env, c.var.mailboxId);
+	const tier = getPlanTier(c.var.mailboxId);
+	const outcome = await composeSuggestion({
+		enabled: isWritingSuggestionsEnabled(settings),
+		draft: parsed.data.draft,
+		subject: parsed.data.subject,
+		inReplyTo: parsed.data.inReplyTo,
+		ai: c.env.AI as SuggestionAi | undefined,
+		prepare: (inReplyTo) => c.var.mailboxStub.prepareComposeSuggestion(inReplyTo, tier),
+		signal: c.req.raw.signal,
+	});
+	c.header("Cache-Control", "no-store");
+	switch (outcome.status) {
+		case "disabled":
+			return c.json({ error: "Writing suggestions are off for this mailbox" }, 403);
+		case "quota_exceeded":
+			return c.json({ ...outcome.error, error: outcome.error.message }, 429);
+		case "failed":
+			console.error("Writing suggestion failed:", outcome.error);
+			return c.json({ error: "Couldn't suggest right now" }, 502);
+		default:
+			return c.json({ suggestion: outcome.suggestion } satisfies ComposeSuggestionResponse);
+	}
 });
 
 // -- Notes to self --------------------------------------------------

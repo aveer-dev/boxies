@@ -16,6 +16,7 @@ import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMe, useRecoveryEmail } from "~/queries/account";
 import { isScreenerEnabled } from "~/lib/mailbox-settings";
+import { isWritingSuggestionsEnabled } from "shared/compose-suggestions";
 import { queryKeys } from "~/queries/keys";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
@@ -148,6 +149,8 @@ function SettingsContent() {
 					</div>
 				</div>
 
+				<AiSettingsCard />
+
 				<AiUsageCard mailboxId={mailboxId} />
 
 				{/* Agent System Prompt */}
@@ -278,6 +281,60 @@ function ScreenerToggle() {
 				onCheckedChange={(next) => void handleChange(next)}
 				disabled={!mailbox || updateMailboxMutation.isPending}
 			/>
+		</div>
+	);
+}
+
+/**
+ * Settings → AI. Writing suggestions (AVE-189): grey text that finishes the
+ * sentence as you type, Tab to accept. Off by default; saves on change.
+ */
+function AiSettingsCard() {
+	const mailboxId = useMailboxId();
+	const toastManager = useKumoToastManager();
+	const { data: mailbox } = useMailbox(mailboxId);
+	const updateMailboxMutation = useUpdateMailbox();
+	const saved = isWritingSuggestionsEnabled(mailbox?.settings);
+	const [enabled, setEnabled] = useState(saved);
+
+	useEffect(() => setEnabled(saved), [saved]);
+
+	const handleChange = async (next: boolean) => {
+		if (!mailbox || !mailboxId) return;
+		setEnabled(next);
+		try {
+			await updateMailboxMutation.mutateAsync({
+				mailboxId,
+				settings: { ...mailbox.settings, writingSuggestions: { enabled: next } },
+			});
+			toastManager.add({ title: next ? "Writing suggestions on" : "Writing suggestions off" });
+		} catch (e) {
+			setEnabled(saved);
+			toastManager.add({
+				title: e instanceof Error && e.message ? e.message : "Failed to update writing suggestions",
+				variant: "error",
+			});
+		}
+	};
+
+	return (
+		<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5" data-settings-section="ai">
+			<div className="text-sm font-medium text-kumo-default mb-4">AI</div>
+			<div className="flex items-start gap-3" data-settings-toggle="writing-suggestions">
+				<div className="min-w-0 flex-1">
+					<div className="text-sm text-kumo-default">Writing suggestions</div>
+					<div className="text-xs text-kumo-subtle">
+						Grey text finishes your sentence as you write. Press Tab to keep it. Your draft so far, and
+						the email you're replying to, are sent to the AI model.
+					</div>
+				</div>
+				<Switch
+					aria-label="Writing suggestions"
+					checked={enabled}
+					onCheckedChange={(next) => void handleChange(next)}
+					disabled={!mailbox || updateMailboxMutation.isPending}
+				/>
+			</div>
 		</div>
 	);
 }
@@ -447,6 +504,12 @@ function AiUsageCard({ mailboxId }: { mailboxId: string | undefined }) {
 							Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.
 						</p>
 					</div>
+					{usage.suggest && (
+						<div>
+							<div className="mb-1.5 text-xs font-medium text-kumo-default">Writing suggestions</div>
+							<AiUsageMeter meter={usage.suggest} noun="suggestions" resetsAt={usage.resetsAt} />
+						</div>
+					)}
 				</div>
 			) : (
 				<p className="text-xs text-kumo-subtle">Usage isn't available right now.</p>

@@ -219,6 +219,7 @@ import {
 } from "../lib/outbound-send-sweeper";
 import {
 	deleteSummariesForEmail,
+	messageIneligibility,
 	resolveSummary,
 	shareInflight,
 	SummaryGenerationError,
@@ -227,6 +228,7 @@ import {
 	type SummaryQuotaCheck,
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
+import { buildSuggestionContext, type PrepareSuggestionResult } from "../lib/compose-suggest";
 import {
 	PILE_EXCLUDED_FOLDERS_SQL,
 	PILE_REPLY_LATER,
@@ -510,9 +512,42 @@ export class MailboxDO extends DurableObject<Env> {
 	 * Refused when the bucket is at its plan-tier limit; see lib/ai-quota.ts.
 	 */
 	async consumeAiQuota(bucket: AiQuotaBucket, tier: PlanTier = "free"): Promise<AiQuotaResult> {
-		if (bucket !== "chat" && bucket !== "inbound") throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		if (bucket !== "chat" && bucket !== "inbound" && bucket !== "suggest") {
+			throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		}
 		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
 		return consumeAiQuota(this.ctx.storage.sql, bucket, dailyLimit(planTier, bucket));
+	}
+
+	/**
+	 * Before a writing-suggestion model run (AVE-189): count one unit of the
+	 * `suggest` bucket and load the message being replied to as context. The
+	 * quota check fails open like tryConsumeAiQuota. The replied-to message is
+	 * left out when it isn't mail that reached the mailbox (Spam, Trash,
+	 * Screener, a screened-out sender) or looks like a prompt injection.
+	 */
+	async prepareComposeSuggestion(
+		inReplyTo: string | null,
+		tier: PlanTier = "free",
+	): Promise<PrepareSuggestionResult> {
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		try {
+			const quota = consumeAiQuota(this.ctx.storage.sql, "suggest", dailyLimit(planTier, "suggest"));
+			if (!quota.allowed) return { status: "quota_exceeded", error: quota.error };
+		} catch (e) {
+			console.error("AI quota check failed (suggest), allowing:", (e as Error).message);
+		}
+		if (!inReplyTo || inReplyTo.length > 512) return { status: "ok", context: null };
+		const meta = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, folder_id, sender, sender_name, subject, date FROM emails WHERE id = ?1`,
+				inReplyTo,
+			),
+		][0] as unknown as SummaryMessageMeta | undefined;
+		if (!meta || messageIneligibility(meta, this.#rejectedSendersAmong([meta])) !== null) {
+			return { status: "ok", context: null };
+		}
+		return { status: "ok", context: buildSuggestionContext(meta, await this.#summaryBody(meta.id)) };
 	}
 
 	/** Today's AI usage against the plan-tier limits, for usage meters (AVE-45). */

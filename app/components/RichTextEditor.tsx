@@ -12,6 +12,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useRef } from "react";
 import { Indent } from "~/lib/tiptap-compose";
+import { GhostSuggestion } from "~/lib/tiptap-ghost-suggestion";
 
 interface RichTextEditorProps {
 	value: string;
@@ -39,6 +40,7 @@ export default function RichTextEditor({
 			FontSize,
 			Indent,
 			Color,
+			GhostSuggestion,
 		],
 		content: value,
 		immediatelyRender: false,

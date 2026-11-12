@@ -23,7 +23,7 @@ const shown = (rows: Row[]): ParityRow[] => rows.filter((r) => !r.webOnly || fla
 export const gmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Categories and tabs", ours: "Inbox · Promotions · Updates · Spam", status: "partly", note: "Newsletters from people you’ve emailed are sorted for you; senders you accept go where you choose. No Social or Forums.", src: `${GMAIL}; dev 31c58c6 (classifier files allowed senders without a chosen destination; header rules, not AI)` },
 	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "An email lives in one folder and can carry as many tags as you like. Each tag opens a view of everything with it.", src: `${GMAIL}; AVE-240 #275 (shared/tags.ts); AVE-241 #277 (web); AVE-242 (iOS, Android)` },
-	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives; no suggestions as you type." : "Drafts replies when you ask; no suggestions as you type.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49)` },
+	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives. On the web, grey text can finish your sentence as you type; not yet on iPhone or Android." : "Drafts replies when you ask. On the web, grey text can finish your sentence as you type; not yet on iPhone or Android.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49); AVE-189 (writing suggestions, web only, off by default)` },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins; a one-mailbox export is planned.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Confidential mode", ours: "—", status: "notyet", src: GMAIL },
@@ -54,7 +54,7 @@ export const landingGmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Inbox categories", ours: "Inbox · Promotions · Updates", status: "partly", note: "Sorted for you, or per sender.", landing: true, src: "RM#2; dev 31c58c6" },
 	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "Many tags per email.", landing: true, src: "RM#2; AVE-240..242 (tags on web, iOS, Android)" },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", landing: true, src: "RM#2" },
-	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts when you ask; no suggestions as you type.", landing: true, src: "RM#2" },
+	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts when you ask; suggestions as you type on the web.", landing: true, src: "RM#2; AVE-189" },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins.", landing: true, src: "RM#2" },
 ]);
 
