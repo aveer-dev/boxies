@@ -28,15 +28,19 @@ struct ComposeDockBar: View {
             .padding(.top, 22)
             .padding(.bottom, 28)
             .frame(maxWidth: .infinity)
-                .background(AppTheme.surface)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 36,
-                        topTrailingRadius: 36,
-                        style: .continuous
-                    )
+            .contentShape(Rectangle())
+            // The surface runs past the label into the home-indicator area so the dock
+            // meets the screen bottom; only the top corners are rounded.
+            .background {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 36,
+                    topTrailingRadius: 36,
+                    style: .continuous
                 )
+                .fill(AppTheme.surface)
                 .shadow(color: .black.opacity(0.06), radius: 8, y: -2)
+                .ignoresSafeArea(edges: .bottom)
+            }
         }
         .buttonStyle(.plain)
         .transition(.move(edge: .bottom).combined(with: .opacity))
