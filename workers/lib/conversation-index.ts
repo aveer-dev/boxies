@@ -405,7 +405,7 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 /** Email columns of a threaded list row, in the order the scan returns them. */
 const LIST_EMAIL_COLUMNS = [
 	"id", "subject", "sender", "sender_name", "recipient", "date",
-	"read", "starred", "reply_later", "reply_later_at", "reply_later_remind_at", "reply_later_reminded_at",
+	"read", "starred", "reply_later", "reply_later_at", "reply_later_remind_at", "reply_later_reminded_at", "pile_id",
 	"thread_id", "folder_id",
 	"in_reply_to", "email_references",
 	"provider_message_id", "delivery_status", "delivery_error",
@@ -578,7 +578,7 @@ export function readThreadedListByScan(
 			listed AS (
 			SELECT
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.reply_later_remind_at, lif.reply_later_reminded_at, lif.thread_id, lif.folder_id,
+				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.reply_later_remind_at, lif.reply_later_reminded_at, lif.pile_id, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,

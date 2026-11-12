@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.email
 
+import co.inboxies.app.services.MailPiles
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -98,6 +99,9 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.TagRef
+import co.inboxies.app.ui.tags.AddTagChip
+import co.inboxies.app.ui.tags.ReaderTagChip
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.MailAddress
@@ -255,6 +259,11 @@ fun EmailDetailView(
             if (messageCount > 1) add("$messageCount messages")
         }
     }
+
+    // Tags (AVE-242): the conversation's, as chips that open each tag's view.
+    val conversationTags = remember(current, thread, listEmails) { app.conversationTags(current) }
+    val customPiles by app.customPiles.collectAsState()
+    val canEditTags = !readOnly && !current.isDraft && current.folderId != "draft"
 
     // Compact collapse range so expanded title sits close under the toolbar.
     val titleCollapseRangePx = with(density) { 28.dp.toPx() }
@@ -476,6 +485,13 @@ fun EmailDetailView(
                     starred = current.starred,
                     loading = loading && detailTags.isEmpty(),
                     onToggleStar = { scope.launch { app.toggleStar(current) } },
+                    mailTags = conversationTags,
+                    onOpenTag = { tag ->
+                        app.requestTagView(tag.id)
+                    },
+                    onEditTags = if (canEditTags) ({ app.openTagPicker(current) }) else null,
+                    pileName = customPiles.firstOrNull { it.id == current.currentPileId }?.let(MailPiles::displayName),
+                    onOpenPile = { current.currentPileId?.let { app.requestPileView(it) } },
                 )
 
                 if (loading && messages.isEmpty()) {
@@ -741,6 +757,12 @@ private fun TagsRow(
     starred: Boolean,
     loading: Boolean,
     onToggleStar: () -> Unit,
+    mailTags: List<TagRef> = emptyList(),
+    onOpenTag: (TagRef) -> Unit = {},
+    onEditTags: (() -> Unit)? = null,
+    /** The custom pile the mail is in (AVE-194), opening its view. */
+    pileName: String? = null,
+    onOpenPile: () -> Unit = {},
 ) {
     val colors = inboxiesColors()
     Row(
@@ -769,6 +791,9 @@ private fun TagsRow(
                 }
             }
             tags.forEach { TagChip(it, destructive = it == "Spoofed") }
+            pileName?.let { ReaderTagChip(it, icon = co.inboxies.app.ui.piles.PileIcon, label = "Pile $it", onClick = onOpenPile) }
+            mailTags.forEach { tag -> ReaderTagChip(tag.name) { onOpenTag(tag) } }
+            onEditTags?.let { AddTagChip(hasTags = mailTags.isNotEmpty(), onClick = it) }
         }
     }
 }

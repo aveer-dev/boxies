@@ -3,6 +3,7 @@ package co.inboxies.app.services
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.Mailbox
+import co.inboxies.app.models.PileIds
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -107,6 +108,30 @@ class DatabaseService private constructor() {
             it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
         }
 
+    /** Set Aside mails (AVE-201), oldest set aside first like the Worker's `pile=set_aside`. */
+    fun getSetAsideEmails(mailboxId: String): List<Email> =
+        emailsIn(mailboxId)
+            .filter { it.isSetAside && it.folderId !in setOf("trash", "spam", "draft", "drafts") }
+            .sortedWith(compareBy<Email> { it.pileAt ?: it.date }.thenByDescending { it.date })
+            .toList()
+
+    fun getSetAsideCount(mailboxId: String): Int =
+        emailsIn(mailboxId).count {
+            it.isSetAside && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+        }
+
+    /** Mail in any pile but Reply Later (Set Aside or one people made, AVE-194), oldest first. */
+    fun getPileEmails(mailboxId: String, pileId: String): List<Email> =
+        emailsIn(mailboxId)
+            .filter { it.currentPileId == pileId && it.folderId !in setOf("trash", "spam", "draft", "drafts") }
+            .sortedWith(compareBy<Email> { it.pileAt ?: it.date }.thenByDescending { it.date })
+            .toList()
+
+    fun getPileCount(mailboxId: String, pileId: String): Int =
+        emailsIn(mailboxId).count {
+            it.currentPileId == pileId && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+        }
+
     /** Reply Later mails whose reminder fired and are still unread (AVE-86). */
     fun getReplyLaterDueCount(mailboxId: String): Int =
         emailsIn(mailboxId).count {
@@ -163,6 +188,42 @@ class DatabaseService private constructor() {
         }
     }
 
+    /**
+     * Cached rows carrying [tagId] outside Trash, Spam and Drafts, one per conversation,
+     * newest first: what a tag view shows before its server list lands (AVE-242).
+     */
+    fun getTaggedEmails(mailboxId: String, tagId: String): List<Email> =
+        EmailPaging.collapseThreads(
+            emailsIn(mailboxId)
+                .filter { email ->
+                    email.folderId !in setOf("trash", "spam", "draft", "drafts") &&
+                        email.tags.orEmpty().any { it.id == tagId }
+                }
+                .sortedByDescending { it.date }
+                .toList(),
+        )
+
+    /** Rewrites the tags of every cached message of conversation [threadKey]. */
+    fun updateThreadTags(mailboxId: String, threadKey: String, transform: (List<co.inboxies.app.models.TagRef>?) -> List<co.inboxies.app.models.TagRef>) {
+        emailsIn(mailboxId).filter { MailTags.threadKey(it) == threadKey }.toList().forEach { email ->
+            emails[email.id] = email.copy(tags = transform(email.tags))
+        }
+    }
+
+    /** A tag was renamed or deleted: every cached row follows (`name` null drops it). */
+    fun updateTagEverywhere(mailboxId: String, tagId: String, name: String?) {
+        emailsIn(mailboxId).filter { e -> e.tags.orEmpty().any { it.id == tagId } }.toList().forEach { email ->
+            val next = email.tags.orEmpty().mapNotNull { tag ->
+                when {
+                    tag.id != tagId -> tag
+                    name == null -> null
+                    else -> tag.copy(name = name)
+                }
+            }.sortedWith(MailTags.order)
+            emails[email.id] = email.copy(tags = next)
+        }
+    }
+
     fun updateEmailFlags(
         id: String,
         read: Boolean? = null,
@@ -183,7 +244,26 @@ class DatabaseService private constructor() {
             // Leaving Reply Later clears both reminder fields (server does the same).
             replyLaterRemindAt = if (replyLater == false) null else existing.replyLaterRemindAt,
             replyLaterRemindedAt = if (replyLater == false) null else existing.replyLaterRemindedAt,
+            // One pile at a time (AVE-201): Reply Later moves a Set Aside mail over.
+            pileId = when (replyLater) {
+                true -> PileIds.REPLY_LATER
+                false -> if (existing.currentPileId == PileIds.REPLY_LATER) null else existing.pileId
+                null -> existing.pileId
+            },
         )
+    }
+
+    /** Move the message into [pileId], or out of any pile with `null` (AVE-201). */
+    fun updateEmailPile(id: String, pileId: String?) {
+        val existing = emails[id] ?: return
+        emails[id] = existing.inPile(pileId)
+    }
+
+    /** A deleted pile (AVE-194): its cached mail comes out of it, nothing else changes. */
+    fun clearPile(mailboxId: String, pileId: String) {
+        emailsIn(mailboxId).filter { it.pileId == pileId }.toList().forEach { email ->
+            emails[email.id] = email.copy(pileId = null, pileAt = null)
+        }
     }
 
     /**
@@ -209,6 +289,8 @@ class DatabaseService private constructor() {
             replyLaterAt = if (clearReplyLater) null else existing.replyLaterAt,
             replyLaterRemindAt = if (clearReplyLater) null else existing.replyLaterRemindAt,
             replyLaterRemindedAt = if (clearReplyLater) null else existing.replyLaterRemindedAt,
+            pileId = if (clearReplyLater) null else existing.pileId,
+            pileAt = if (clearReplyLater) null else existing.pileAt,
         )
     }
 
@@ -267,11 +349,30 @@ class DatabaseService private constructor() {
     }
 }
 
+/**
+ * The mail moved into [pileId] (or out of any pile with `null`), keeping the one-pile rule
+ * (AVE-201): leaving Reply Later drops its reminder; Reply Later itself keeps the flag in sync.
+ */
+fun Email.inPile(pileId: String?): Email {
+    if (currentPileId == pileId) return this
+    val now = java.time.Instant.now().toString()
+    val toReplyLater = pileId == PileIds.REPLY_LATER
+    return copy(
+        pileId = pileId,
+        pileAt = if (pileId != null) now else null,
+        replyLater = toReplyLater,
+        replyLaterAt = if (toReplyLater) (replyLaterAt ?: now) else null,
+        replyLaterRemindAt = if (toReplyLater) replyLaterRemindAt else null,
+        replyLaterRemindedAt = if (toReplyLater) replyLaterRemindedAt else null,
+    )
+}
+
 /** The mail with its Reply Later reminder set (`remindAt` = UTC ISO) or cleared (`null`). */
 fun Email.withReplyLaterReminder(remindAt: String?): Email =
     if (remindAt != null) {
         copy(
             replyLater = true,
+            pileId = PileIds.REPLY_LATER,
             replyLaterAt = replyLaterAt ?: java.time.Instant.now().toString(),
             replyLaterRemindAt = remindAt,
             replyLaterRemindedAt = null,

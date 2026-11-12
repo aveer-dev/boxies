@@ -104,6 +104,10 @@ struct HomeFolderColumn: View {
     let selected: HomeTab
     let onSelect: (HomeTab) -> Void
     let onHide: () -> Void
+    /// Create / rename / delete, presented by the home shell.
+    @Binding var tagEditor: TagEditorAction?
+    /// Custom piles (AVE-194): create here, rename / delete on long press.
+    @Binding var pileEditor: PileEditorAction?
 
     var body: some View {
         ScrollView {
@@ -143,17 +147,62 @@ struct HomeFolderColumn: View {
                     row(tab, count: tab.syncFolderId.map { app.unreadCount(forFolderId: $0) } ?? 0, countLabel: "unread")
                 }
 
-                Text("Workflow")
-                    .font(.inter(size: AppTheme.List.sectionHeader, weight: .medium))
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-                    .foregroundStyle(AppTheme.muted)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 20)
-                    .padding(.bottom, 6)
-                    .accessibilityAddTraits(.isHeader)
+                HStack(spacing: 4) {
+                    sectionHeader("Workflow")
+                    Spacer(minLength: 0)
+                    if !app.isReadOnly {
+                        Button {
+                            pileEditor = .create
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.inter(size: 13, weight: .semibold))
+                                .foregroundStyle(AppTheme.muted)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(MailPiles.createLabel)
+                        .padding(.top, 14)
+                    }
+                }
 
                 row(.replyLater, count: app.replyLaterCount, countLabel: "queued", dueCount: app.replyLaterDueCount)
+                row(.setAside, count: app.setAsideCount, countLabel: "set aside")
+                // Piles people made (AVE-194), after the built-in two.
+                if !app.customPiles.isEmpty {
+                    PileGroupList(
+                        selectedPileId: { if case .pile(let id) = selected { return id }; return nil }(),
+                        editor: $pileEditor
+                    ) { pile in
+                        onSelect(.pile(pile.id))
+                    }
+                }
+
+                // Tags (AVE-242): a message can carry several; each opens its view.
+                HStack(spacing: 4) {
+                    sectionHeader(MailTags.groupTitle)
+                    Spacer(minLength: 0)
+                    if !app.isReadOnly {
+                        Button {
+                            tagEditor = .create
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.inter(size: 13, weight: .semibold))
+                                .foregroundStyle(AppTheme.muted)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(MailTags.createLabel)
+                        .padding(.top, 14)
+                    }
+                }
+                TagGroupList(
+                    selectedTagId: { if case .tag(let id) = selected { return id }; return nil }(),
+                    editor: $tagEditor
+                ) { tag in
+                    onSelect(.tag(tag.id))
+                }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 24)
@@ -161,6 +210,18 @@ struct HomeFolderColumn: View {
         .scrollIndicators(.hidden)
         .background(AppTheme.background.ignoresSafeArea())
         .tint(AppTheme.ink)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.inter(size: AppTheme.List.sectionHeader, weight: .medium))
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(AppTheme.muted)
+            .padding(.horizontal, 10)
+            .padding(.top, 20)
+            .padding(.bottom, 6)
+            .accessibilityAddTraits(.isHeader)
     }
 
     /// `dueCount`: Reply Later reminders that fired on unread mail, in the attention color (AVE-86).

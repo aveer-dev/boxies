@@ -41,8 +41,9 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{ id: "swipes", group: "triage", name: "Swipe actions", status: "available", platforms: ["ios", "android"], note: "Up to three per edge.", src: "FC#4.4" },
 	{ id: "undo", group: "triage", name: "Undo for delete, archive and move", status: "available", platforms: ["ios", "android"], note: "About five seconds.", src: "FC#4.4; J (no undo on web)" },
 	{ id: "undo-send", group: "triage", name: "Undo send", status: "available", platforms: ["ios"], note: "A few seconds after you tap Send.", src: "RM#2 (iOS only)" },
-	{ id: "set-aside", group: "triage", name: "Set Aside", status: "planned", lineage: "HEY", platforms: [], note: "A second pile for mail you need to keep handy.", landing: true, src: "RM#1 (4)" },
-	{ id: "tags", group: "triage", name: "Tags and a VIP view", status: "exploring", platforms: [], note: "Today: folders and stars, and your own folders show as tags in every app, one per email.", src: "RM#1 (8); dev FoldersColumn.tsx (custom folders shown as #tags, one per email); AVE-158 0561af7 (Settings → Tags on iOS and Android); no VIP view" },
+	{ id: "set-aside", group: "triage", name: "Set Aside", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "A second pile next to Reply Later, for mail you need to keep handy. Replying doesn’t take a thread out.", landing: true, src: "RM#1 (4); AVE-201 (workers/lib/piles.ts; web, iOS, Android)" },
+	{ id: "piles", group: "triage", name: "Your own piles", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Make piles like “Waiting on” or “To pay” next to Reply Later and Set Aside. A thread sits in one pile at a time, until you take it out.", src: "AVE-194 (shared/piles.ts, workers/routes/piles.ts; web Workflow sidebar + Piles menu, iOS and Android Move to pile… + Piles group)" },
+	{ id: "tags", group: "triage", name: "Tags", status: "available", platforms: ["ios", "android", "web"], note: "Many per email, on top of its one folder. Each tag opens a view of everything with it. No VIP view yet.", src: "RM#1 (8); AVE-240 #275 (shared/tags.ts, workers/routes/tags.ts); AVE-241 #277 (web TagPicker, Tags group, /tagged/:tagId); AVE-242 (iOS, Android: picker, row and reader tags, home Tags group, tag view); VIP view out of scope (AVE-188)" },
 
 	// ── AI ──
 	{ id: "ask-ai", group: "ai", name: "Ask AI", status: "available", platforms: ["ios", "android", "web"], note: flags.webAppPublic ? "Drafts and files; never sends. Several chats in the apps, one on the web." : "Drafts and files; never sends. Several chats at once.", landing: true, src: "FSW#ai-email-agent; FC#4.8; FC#2" },
@@ -252,13 +253,6 @@ const allComingNext: (ComingNext & { hidden?: boolean })[] = [
 		body: "A short summary in the iPhone app: replies you probably owe, as to-dos you can tick off, and topics like purchases, travel and security to catch up on. It’s built, and not switched on yet.",
 		src: "FC#7; FSW#supporting-features (Inbox Brief: rules, not AI)",
 		ownerConfirm: "tease publicly",
-	},
-	{
-		id: "set-aside",
-		title: "Set Aside",
-		status: "planned",
-		body: "A second pile next to Reply Later, for mail you need to keep handy, like tickets or a document you’re waiting on.",
-		src: "RM#1 (4)",
 	},
 	{
 		id: "export",

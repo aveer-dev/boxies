@@ -62,6 +62,13 @@ import { mailCardsAllowed } from "../shared/mail-cards";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import type { AiSummaryResponse } from "../shared/ai-summaries";
+import {
+	isWritingSuggestionsEnabled,
+	MAX_SUGGESTION_DRAFT_CHARS,
+	writingSuggestionsSettingsError,
+	type ComposeSuggestionResponse,
+} from "../shared/compose-suggestions";
+import { composeSuggestion, type SuggestionAi } from "./lib/compose-suggest";
 import type { MailboxSummaryResult } from "./durableObject";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -96,6 +103,7 @@ import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboard
 import { registerAliasRoutes } from "./routes/aliases";
 import { blockSuppressedSend, registerSuppressionRoutes } from "./routes/suppressions";
 import { registerTagRoutes } from "./routes/tags";
+import { registerPileRoutes } from "./routes/piles";
 import {
 	applyInboundDsn,
 	parseDeliveryStatusReport,
@@ -107,6 +115,7 @@ import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./l
 import { dispatchPushToDevices } from "./lib/push-dispatch";
 import { MAIL_NOTIFICATION_CATEGORY } from "./lib/apns";
 import { parseReminderInput } from "./lib/reply-later-reminders";
+import { UNKNOWN_PILE_ERROR } from "./lib/piles";
 import {
 	aliasMetadataKey,
 	allowedMailboxSet,
@@ -306,6 +315,7 @@ registerExportAndOffboardingRoutes(app);
 registerAliasRoutes(app);
 registerSuppressionRoutes(app);
 registerTagRoutes(app);
+registerPileRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -448,6 +458,8 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	if (filtersError) return c.json({ error: filtersError }, 400);
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
+	const suggestionsError = writingSuggestionsSettingsError(next);
+	if (suggestionsError) return c.json({ error: suggestionsError }, 400);
 	await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
 	// Turning Screener off (AVE-104) lets waiting mail through: it moves to
 	// Inbox. Turning it back on screens only new mail.
@@ -471,6 +483,10 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const thread_id = c.req.query("thread_id");
 	const threaded = boolQuery(c, "threaded");
 	const reply_later = boolQuery(c, "reply_later");
+	// A pile list (AVE-201): `pile=set_aside`; `reply_later=true` is the same as `pile=reply_later`.
+	const pileParam = c.req.query("pile");
+	const pile = reply_later ? "reply_later" : pileParam && /^[a-z0-9_]{1,64}$/.test(pileParam) ? pileParam : undefined;
+	if (pileParam && !pile) return c.json({ error: "Invalid pile" }, 400);
 	const include_junk = boolQuery(c, "include_junk");
 	const page = intQuery(c, "page");
 	const limit = intQuery(c, "limit");
@@ -478,7 +494,7 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const sortDirection = c.req.query("sortDirection") as "ASC" | "DESC" | undefined;
 	const stub = c.var.mailboxStub;
 
-	if (threaded && folder && !reply_later) {
+	if (threaded && folder && !pile) {
 		// Inbox: `section=new|seen` lists one section; `new_limit=N` keeps the
 		// newest N New conversations above every Seen one (AVE-23).
 		const inboxSections =
@@ -512,14 +528,14 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		limit,
 		sortColumn,
 		sortDirection,
-		reply_later: reply_later || undefined,
+		pile,
 		include_junk: include_junk || undefined,
 	});
-	if (folder || reply_later) {
+	if (folder || pile) {
 		const totalCount = await stub.countEmails({
 			folder,
 			thread_id,
-			reply_later: reply_later || undefined,
+			pile,
 			include_junk: include_junk || undefined,
 		});
 		return c.json({ emails, totalCount });
@@ -730,20 +746,36 @@ app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 		reply_later?: boolean;
 		/** UTC ISO reminder time, or null to clear (AVE-86). Setting one implies reply_later. */
 		reply_later_remind_at?: string | null;
+		/**
+		 * Pile id to put the message in (`reply_later`, `set_aside`), or null
+		 * to take it out of its pile (AVE-201). A message is in one pile at a
+		 * time: Set Aside on Reply Later mail moves it, dropping its reminder.
+		 */
+		pile?: string | null;
 	};
 	const { read, starred, reply_later } = body;
+	if (body.pile !== undefined && body.pile !== null && typeof body.pile !== "string") {
+		return c.json({ error: "Invalid pile" }, 400);
+	}
 	let reply_later_remind_at: string | null | undefined;
 	if (body.reply_later_remind_at !== undefined) {
 		const parsed = parseReminderInput(body.reply_later_remind_at);
 		if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 		reply_later_remind_at = parsed.remindAt;
 	}
-	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, {
-		read,
-		starred,
-		reply_later,
-		reply_later_remind_at,
-	}, c.var.mailboxId);
+	let email;
+	try {
+		email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, {
+			read,
+			starred,
+			reply_later,
+			reply_later_remind_at,
+			pile: body.pile,
+		}, c.var.mailboxId);
+	} catch (e) {
+		if ((e as Error)?.message?.includes(UNKNOWN_PILE_ERROR)) return c.json({ error: "Unknown pile" }, 400);
+		throw e;
+	}
 	return email ? c.json(email) : c.json({ error: "Email not found" }, 404);
 });
 
@@ -1142,6 +1174,49 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/summary/generate", async (c: A
 		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy", getPlanTier(c.var.mailboxId)),
 		"Email not found",
 	);
+});
+
+// -- Writing suggestions (AVE-189) ----------------------------------
+// A few words that finish the sentence at the caret. Off unless the mailbox
+// turned `writingSuggestions` on (403 otherwise). Each model run counts one
+// unit of the mailbox's daily `suggest` bucket: over it, 429 with the typed
+// AiQuotaExceededError. Only the draft up to the caret, its subject and the
+// replied-to message reach the model; see lib/compose-suggest.ts.
+
+const ComposeSuggestionBody = z
+	.object({
+		draft: z.string().max(MAX_SUGGESTION_DRAFT_CHARS * 2),
+		subject: z.string().max(1_000).optional(),
+		inReplyTo: z.string().max(512).optional(),
+	})
+	.strict();
+
+app.post("/api/v1/mailboxes/:mailboxId/compose/suggest", async (c: AppContext) => {
+	const parsed = ComposeSuggestionBody.safeParse(await c.req.json().catch(() => null));
+	if (!parsed.success) return c.json({ error: "Invalid suggestion request" }, 400);
+	const settings = await loadMailboxSettingsRaw(c.env, c.var.mailboxId);
+	const tier = getPlanTier(c.var.mailboxId);
+	const outcome = await composeSuggestion({
+		enabled: isWritingSuggestionsEnabled(settings),
+		draft: parsed.data.draft,
+		subject: parsed.data.subject,
+		inReplyTo: parsed.data.inReplyTo,
+		ai: c.env.AI as SuggestionAi | undefined,
+		prepare: (inReplyTo) => c.var.mailboxStub.prepareComposeSuggestion(inReplyTo, tier),
+		signal: c.req.raw.signal,
+	});
+	c.header("Cache-Control", "no-store");
+	switch (outcome.status) {
+		case "disabled":
+			return c.json({ error: "Writing suggestions are off for this mailbox" }, 403);
+		case "quota_exceeded":
+			return c.json({ ...outcome.error, error: outcome.error.message }, 429);
+		case "failed":
+			console.error("Writing suggestion failed:", outcome.error);
+			return c.json({ error: "Couldn't suggest right now" }, 502);
+		default:
+			return c.json({ suggestion: outcome.suggestion } satisfies ComposeSuggestionResponse);
+	}
 });
 
 // -- Notes to self --------------------------------------------------

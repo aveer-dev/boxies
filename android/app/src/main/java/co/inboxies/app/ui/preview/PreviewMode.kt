@@ -51,12 +51,18 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Suppressions("suppressions", "previewSuppressions"),
     /** Settings → Outgoing mail → Signature on a web-formatted fixture (iOS `-previewSignature`, AVE-204). */
     Signature("signature", "previewSignature"),
-    /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
+    /** Settings → Folders with fixture custom folders (iOS `-previewTags`, AVE-158; titled Tags until AVE-242). */
     Tags("tags", "previewTags"),
-    /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
+    /** Settings → Folders with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
     TagsRename("tagsRename", "previewTagsRename"),
-    /** Settings → Tags with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
+    /** Settings → Folders with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
     TagsDelete("tagsDelete", "previewTagsDelete"),
+    /** Tag view "Clients": everything with the tag, rows carrying other tags too (iOS `-previewTagView`, AVE-242). */
+    TagView("tagView", "previewTagView"),
+    /** Reader on a tagged thread with the tag picker open (iOS `-previewTagPicker`, AVE-242). */
+    TagPicker("tagPicker", "previewTagPicker"),
+    /** Phone home with the Tags sheet open from the folders menu (iOS `-previewTagList`, AVE-242). */
+    TagList("tagList", "previewTagList"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
@@ -87,6 +93,14 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     /** Reader left open after Accept → Promotions: Screener bar gone, toast pinned (iOS `-previewScreener -previewScreenerUndo -previewScreenerAccept`, AVE-182). */
     ScreenerReaderAccept("screenerReaderAccept", "previewScreenerReaderAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
+    /** Set Aside pile (AVE-201), opened over Inbox (iOS `-previewSetAside`). */
+    SetAside("setAside", "previewSetAside"),
+    /** The "Waiting on" pile someone made, across folders (iOS `-previewPile`, AVE-194). */
+    Pile("pile", "previewPile"),
+    /** Phone home with the Piles sheet open from the folders menu (iOS `-previewPileList`). */
+    PileList("pileList", "previewPileList"),
+    /** Reader on "To pay" mail with the Move to pile picker open (iOS `-previewPilePicker`). */
+    PilePicker("pilePicker", "previewPilePicker"),
     /** Focus & Reply on the first thread in the pile: reply open with "Focus & Reply · 1 of N · Skip" (iOS `-previewReplyLater -previewFocusReply`, AVE-193). */
     FocusReply("focusReply", "previewFocusReply"),
     /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */

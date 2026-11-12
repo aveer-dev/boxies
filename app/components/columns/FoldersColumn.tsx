@@ -5,6 +5,7 @@
 import { Button, Dialog, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { Modal, ModalHeader } from "~/components/Modal";
 import {
+	BookmarkSimpleIcon,
 	ArchiveIcon,
 	AlarmIcon,
 	ClockCounterClockwiseIcon,
@@ -17,6 +18,7 @@ import {
 	PlusIcon,
 	ProhibitIcon,
 	ShieldCheckIcon,
+	StackIcon,
 	TagSimpleIcon,
 	TrashIcon,
 	TrayIcon,
@@ -26,13 +28,16 @@ import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { useContextMenu } from "~/components/ContextMenu";
 import { useTagEditor } from "~/components/TagDialogs";
+import { type PileRef, usePileEditor } from "~/components/PileDialogs";
+import { useUIStore } from "~/hooks/useUIStore";
+import { customPiles } from "~/lib/piles";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import {
 	FOLDER_DISPLAY_NAMES,
 	Folders,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
-import { folderPath, mailboxPath, taggedPath, tagPath } from "~/hooks/useMailNavigation";
+import { folderPath, mailboxPath, pilePath, taggedPath, tagPath } from "~/hooks/useMailNavigation";
 import { isScreenerEnabled } from "~/lib/mailbox-settings";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
@@ -173,6 +178,27 @@ export default function FoldersColumn() {
 			],
 		});
 	};
+	// Piles people made (AVE-194): + in the Workflow header, rename / delete on right-click.
+	const openPileCreator = useUIStore((s) => s.openPileCreator);
+	const pileEditor = usePileEditor(mailboxId, {
+		onDeleted: (pile) => {
+			if (pathname.startsWith(pilePath(mailboxRef, pile.id))) navigate(folderPath(mailboxRef, Folders.INBOX));
+		},
+	});
+	const openPileMenu = (pile: PileRef) => (e: MouseEvent<HTMLAnchorElement>) => {
+		if (mailbox?.readOnly) return;
+		e.preventDefault();
+		openMenu({
+			x: e.clientX,
+			y: e.clientY,
+			label: `Actions for pile ${pile.name}`,
+			returnFocus: e.currentTarget,
+			entries: [
+				{ type: "item", label: "Rename…", icon: PencilSimpleIcon, onSelect: () => pileEditor.startRename(pile) },
+				{ type: "item", label: "Delete pile", icon: TrashIcon, danger: true, onSelect: () => pileEditor.startDelete(pile) },
+			],
+		});
+	};
 	const { railRef, markRef } = useSlidingHighlight<HTMLDivElement>(pathname);
 
 	const unreadById = useMemo(
@@ -201,6 +227,8 @@ export default function FoldersColumn() {
 	const replyLaterPile = workflowPiles.find((p) => p.id === "reply_later");
 	const replyLaterCount = replyLaterPile?.count ?? 0;
 	const replyLaterDue = replyLaterPile?.due_count ?? 0;
+	const setAsideCount = workflowPiles.find((p) => p.id === "set_aside")?.count ?? 0;
+	const ownPiles = useMemo(() => customPiles(workflowPiles), [workflowPiles]);
 
 	const displayName = mailboxDisplayName(mailbox, mailboxId);
 
@@ -241,7 +269,20 @@ export default function FoldersColumn() {
 					))}
 				</nav>
 
-				<SectionLabel>Workflow</SectionLabel>
+				<SectionLabel
+					action={
+						mailbox?.readOnly ? undefined : (
+							<IconButton
+								label="New pile"
+								icon={PlusIcon}
+								onClick={() => openPileCreator()}
+								className="-my-1.5 -mr-1"
+							/>
+						)
+					}
+				>
+					Workflow
+				</SectionLabel>
 				<FolderRow
 					to={`${mailboxPath(mailboxRef)}/reply-later`}
 					icon={
@@ -251,6 +292,25 @@ export default function FoldersColumn() {
 					count={replyLaterCount}
 					attention={replyLaterDue}
 				/>
+				<FolderRow
+					to={`${mailboxPath(mailboxRef)}/set-aside`}
+					icon={<BookmarkSimpleIcon size={16} />}
+					label="Set Aside"
+					count={setAsideCount}
+				/>
+				{ownPiles.map((pile) => {
+					const name = pile.name ?? "Pile";
+					return (
+						<FolderRow
+							key={pile.id}
+							to={pilePath(mailboxRef, pile.id)}
+							icon={<StackIcon size={16} />}
+							label={name}
+							count={pile.count}
+							onContextMenu={openPileMenu({ id: pile.id, name })}
+						/>
+					);
+				})}
 
 				<SectionLabel
 					action={
@@ -320,6 +380,7 @@ export default function FoldersColumn() {
 				</nav>
 			</div>
 			{tagEditor.dialogs}
+			{pileEditor.dialogs}
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
 				<Modal size="sm">

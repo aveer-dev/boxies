@@ -42,9 +42,11 @@ import type {
 	UpdateThreadNoteRequest,
 } from "~/types";
 import type { Tag, ThreadTagsResponse } from "shared/tags";
+import type { WorkflowPile } from "shared/piles";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
 import { reauthChallenge, requestReauth, type ReauthChallenge } from "~/lib/reauth";
 import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import type { ComposeSuggestionRequest, ComposeSuggestionResponse } from "../../shared/compose-suggestions";
 import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -660,6 +662,16 @@ const api = {
 			{ regenerate: opts?.regenerate ?? false },
 			{ signal: opts?.signal },
 		),
+	/**
+	 * Writing suggestion for the draft up to the caret (AVE-189). 403 when the
+	 * mailbox has suggestions off, 429 (AiQuotaExceededError) at the daily cap.
+	 */
+	suggestCompose: (mailboxId: string, body: ComposeSuggestionRequest, opts?: { signal?: AbortSignal }) =>
+		post<ComposeSuggestionResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/compose/suggest`,
+			body,
+			{ signal: opts?.signal },
+		),
 	markThreadRead: (mailboxId: string, threadId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}/read`),
 	// Notes to self (AVE-59): private to the signed-in user.
@@ -708,9 +720,14 @@ const api = {
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
 	listWorkflowPiles: (mailboxId: string) =>
-		get<{ piles: { id: string; count: number; due_count?: number }[] }>(
-			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
-		),
+		get<{ piles: WorkflowPile[] }>(`/api/v1/mailboxes/${mailboxId}/workflow-piles`),
+	// Custom piles (AVE-194, shared/piles.ts): built-in piles can't be renamed or deleted
+	createPile: (mailboxId: string, name: string) =>
+		post<WorkflowPile>(`/api/v1/mailboxes/${mailboxId}/piles`, { name }),
+	renamePile: (mailboxId: string, pileId: string, name: string) =>
+		patch<WorkflowPile>(`/api/v1/mailboxes/${mailboxId}/piles/${encodeURIComponent(pileId)}`, { name }),
+	deletePile: (mailboxId: string, pileId: string) =>
+		del<void>(`/api/v1/mailboxes/${mailboxId}/piles/${encodeURIComponent(pileId)}`),
 	createFolder: (mailboxId: string, name: string) =>
 		post<Folder>(`/api/v1/mailboxes/${mailboxId}/folders`, { name }),
 	updateFolder: (mailboxId: string, id: string, name: string) =>

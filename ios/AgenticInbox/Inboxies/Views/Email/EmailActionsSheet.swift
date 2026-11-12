@@ -91,6 +91,30 @@ struct EmailActionsSheet: View {
                     }
                     .accessibilityIdentifier("emailActionRemindMe")
 
+                    // AVE-201: a second pile for mail to keep handy. One pile per mail, so
+                    // this moves a Reply Later mail over (and Reply later moves it back).
+                    actionRow(
+                        source.isSetAside ? "Remove from Set Aside" : "Set aside",
+                        systemImage: source.isSetAside ? "bookmark.slash" : "bookmark"
+                    ) {
+                        dismiss()
+                        Task { await app.toggleSetAside(on: source) }
+                    }
+                    .accessibilityIdentifier("emailActionSetAside")
+
+                    // AVE-194: piles people make ("Waiting on", "To pay"), one per mail.
+                    if availability.showsTags {
+                        NavigationLink {
+                            PilePickerView(email: source, onClose: dismissSheet)
+                        } label: {
+                            Label(
+                                app.customPile(of: source).map { "Pile: \(MailPiles.displayName($0))" } ?? MailPiles.pickerMenu,
+                                systemImage: "square.stack"
+                            )
+                        }
+                        .accessibilityIdentifier("emailActionPiles")
+                    }
+
                     actionRow(
                         source.read ? "Mark as Unread" : "Mark as Read",
                         systemImage: source.read ? "envelope.badge" : "envelope.open"
@@ -120,6 +144,15 @@ struct EmailActionsSheet: View {
                         } label: {
                             Label("Move to Folder", systemImage: "folder")
                         }
+                    }
+
+                    if availability.showsTags {
+                        NavigationLink {
+                            TagPickerView(email: source, onClose: dismissSheet)
+                        } label: {
+                            Label(MailTags.pickerTitle, systemImage: "tag")
+                        }
+                        .accessibilityIdentifier("emailActionTags")
                     }
 
                     if showsSpamAction, availability.showsNotSpam {

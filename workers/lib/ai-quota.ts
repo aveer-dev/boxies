@@ -9,6 +9,9 @@
  *   (`ai_usage`, migration 41) and keyed by UTC day and bucket:
  *     chat    — one per agent chat turn (any conversation in the mailbox)
  *     inbound — one per inbound AI step: spam/ham classification, auto-draft run
+ *     suggest — one per writing suggestion while composing (AVE-189). Kept in
+ *               its own table (`ai_suggest_usage`, migration 50) because
+ *               migration 41's CHECK only allows 'chat' and 'inbound'.
  * - Limits live here, keyed by plan tier. There is no billing plan concept
  *   yet, so `getPlanTier()` is the single seam and returns "free" for
  *   everyone; wire it to a real plan lookup when paid plans exist.
@@ -32,9 +35,14 @@ export type PlanTier = "free" | "paid";
 
 /** Requests per UTC day, per mailbox. */
 export const AI_DAILY_LIMITS: Record<PlanTier, Record<AiQuotaBucket, number>> = {
-	free: { chat: 50, inbound: 200 },
-	paid: { chat: 500, inbound: 2000 },
+	free: { chat: 50, inbound: 200, suggest: 300 },
+	paid: { chat: 500, inbound: 2000, suggest: 3000 },
 };
+
+/** Table holding a bucket's counters (same columns in both). */
+function usageTable(bucket: AiQuotaBucket): "ai_usage" | "ai_suggest_usage" {
+	return bucket === "suggest" ? "ai_suggest_usage" : "ai_usage";
+}
 
 /** Messages of chat history sent to the model each turn. */
 export const CHAT_HISTORY_LIMIT = 20;
@@ -86,13 +94,14 @@ export function consumeAiQuota(
 	now: number = Date.now(),
 ): AiQuotaResult {
 	const day = utcDay(now);
+	const table = usageTable(bucket);
 	const row =
 		limit > 0
 			? ([
 					...sql.exec(
-						`INSERT INTO ai_usage (day, bucket, count) VALUES (?1, ?2, 1)
+						`INSERT INTO ${table} (day, bucket, count) VALUES (?1, ?2, 1)
 						 ON CONFLICT (day, bucket) DO UPDATE SET count = count + 1
-						   WHERE ai_usage.count < ?3
+						   WHERE ${table}.count < ?3
 						 RETURNING count`,
 						day,
 						bucket,
@@ -101,7 +110,7 @@ export function consumeAiQuota(
 				][0] as { count: number } | undefined)
 			: undefined;
 	if (row) {
-		pruneAiUsage(sql, now);
+		pruneAiUsage(sql, table, now);
 		return { allowed: true, used: Number(row.count), limit };
 	}
 	const used = readAiUsage(sql, bucket, now);
@@ -115,31 +124,48 @@ export function consumeAiQuota(
 
 export function readAiUsage(sql: Sql, bucket: AiQuotaBucket, now: number = Date.now()): number {
 	const row = [
-		...sql.exec(`SELECT count FROM ai_usage WHERE day = ?1 AND bucket = ?2`, utcDay(now), bucket),
+		...sql.exec(
+			`SELECT count FROM ${usageTable(bucket)} WHERE day = ?1 AND bucket = ?2`,
+			utcDay(now),
+			bucket,
+		),
 	][0] as { count: number } | undefined;
 	return row ? Number(row.count) : 0;
 }
 
-/** Today's counters and limits for both buckets (read-only, one query). */
+/** Today's counters and limits for every bucket (read-only, one query). */
 export function aiUsageSnapshot(sql: Sql, tier: PlanTier, now: number = Date.now()): AiUsageSnapshot {
 	const day = utcDay(now);
-	const used: Record<AiQuotaBucket, number> = { chat: 0, inbound: 0 };
-	for (const row of sql.exec(`SELECT bucket, count FROM ai_usage WHERE day = ?1`, day) as Iterable<{
+	const used: Record<AiQuotaBucket, number> = { chat: 0, inbound: 0, suggest: 0 };
+	for (const row of sql.exec(
+		`SELECT bucket, count FROM ai_usage WHERE day = ?1
+		 UNION ALL SELECT bucket, count FROM ai_suggest_usage WHERE day = ?1`,
+		day,
+	) as Iterable<{
 		bucket: string;
 		count: number;
 	}>) {
-		if (row.bucket === "chat" || row.bucket === "inbound") used[row.bucket] = Number(row.count);
+		if (row.bucket === "chat" || row.bucket === "inbound" || row.bucket === "suggest") {
+			used[row.bucket] = Number(row.count);
+		}
 	}
 	const meter = (bucket: AiQuotaBucket) => {
 		const limit = dailyLimit(tier, bucket);
 		return { used: Math.min(used[bucket], limit), limit };
 	};
-	return { tier, day, resetsAt: nextUtcMidnight(now), chat: meter("chat"), inbound: meter("inbound") };
+	return {
+		tier,
+		day,
+		resetsAt: nextUtcMidnight(now),
+		chat: meter("chat"),
+		inbound: meter("inbound"),
+		suggest: meter("suggest"),
+	};
 }
 
-function pruneAiUsage(sql: Sql, now: number): void {
+function pruneAiUsage(sql: Sql, table: ReturnType<typeof usageTable>, now: number): void {
 	const cutoff = utcDay(now - USAGE_RETENTION_DAYS * 86_400_000);
-	sql.exec(`DELETE FROM ai_usage WHERE day < ?1`, cutoff);
+	sql.exec(`DELETE FROM ${table} WHERE day < ?1`, cutoff);
 }
 
 /**

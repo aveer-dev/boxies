@@ -930,6 +930,53 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: Tags (AVE-240, `shared/tags.ts`): many per email, on top of its one folder
+
+    static func tagsPath(mailboxId: String, tagId: String? = nil) -> String {
+        let base = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/tags"
+        guard let tagId else { return base }
+        return "\(base)/\(tagId.urlPathEncoded)"
+    }
+
+    static func threadTagPath(mailboxId: String, threadId: String, tagId: String) -> String {
+        "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/tags/\(tagId.urlPathEncoded)"
+    }
+
+    func listTags(mailboxId: String) async throws -> [MailTag] {
+        let response: TagListResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId))
+        return response.tags
+    }
+
+    /// 409 when the name is taken (ignoring case), 400 when invalid or over the limit.
+    func createTag(mailboxId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId), method: "POST", body: ["name": name])
+    }
+
+    func renameTag(mailboxId: String, tagId: String, name: String) async throws -> MailTag {
+        try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "PATCH", body: ["name": name])
+    }
+
+    /// 204. The tag comes off every email; the emails stay.
+    func deleteTag(mailboxId: String, tagId: String) async throws {
+        let _: EmptyResponse = try await request(path: Self.tagsPath(mailboxId: mailboxId, tagId: tagId), method: "DELETE")
+    }
+
+    /// One row per conversation with a tagged message, outside Trash, Spam and Drafts.
+    func listTaggedEmails(mailboxId: String, tagId: String, page: Int = 1) async throws -> EmailListResponse {
+        try await request(
+            path: "\(Self.tagsPath(mailboxId: mailboxId, tagId: tagId))/emails",
+            query: ["threaded": "true", "page": String(page), "limit": String(EmailListPaging.pageSize)]
+        )
+    }
+
+    /// Tags (`on`) or untags every message of the conversation `threadId`. Idempotent.
+    func setThreadTag(mailboxId: String, threadId: String, tagId: String, on: Bool) async throws -> ThreadTagsResponse {
+        try await request(
+            path: Self.threadTagPath(mailboxId: mailboxId, threadId: threadId, tagId: tagId),
+            method: on ? "PUT" : "DELETE"
+        )
+    }
+
     func getInboxDigest(mailboxId: String) async throws -> InboxDigest {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest")
     }
@@ -997,12 +1044,18 @@ final class APIClient: @unchecked Sendable {
         read: Bool? = nil,
         starred: Bool? = nil,
         replyLater: Bool? = nil,
-        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil
+        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil,
+        pile: PilePatch? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
         if let replyLater { body["reply_later"] = replyLater }
+        switch pile {
+        case .set(let id): body["pile"] = id
+        case .clear: body["pile"] = NSNull()
+        case nil: break
+        }
         switch replyLaterRemindAt {
         case .set(let iso): body["reply_later_remind_at"] = iso
         case .clear: body["reply_later_remind_at"] = NSNull()
@@ -1081,6 +1134,43 @@ final class APIClient: @unchecked Sendable {
                 "limit": "25",
             ]
         )
+    }
+
+    /// One workflow pile's mail, oldest-added first (AVE-201). `reply_later` matches
+    /// `listReplyLaterEmails`; `set_aside` needs a Worker that knows piles.
+    func listPileEmails(mailboxId: String, pileId: String, page: Int = 1) async throws -> EmailListResponse {
+        if pileId == WorkflowPileID.replyLater {
+            return try await listReplyLaterEmails(mailboxId: mailboxId, page: page)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
+            query: [
+                "pile": pileId,
+                "page": String(page),
+                "limit": "25",
+            ]
+        )
+    }
+
+    static func pilesPath(mailboxId: String, pileId: String? = nil) -> String {
+        let base = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/piles"
+        guard let pileId else { return base }
+        return "\(base)/\(pileId.urlPathEncoded)"
+    }
+
+    /// Makes a pile (AVE-194). 409 when the name is taken (ignoring case), 400 past the cap.
+    func createPile(mailboxId: String, name: String) async throws -> WorkflowPile {
+        try await request(path: Self.pilesPath(mailboxId: mailboxId), method: "POST", body: ["name": name])
+    }
+
+    /// Renames a pile people made; built-in piles answer 400.
+    func renamePile(mailboxId: String, pileId: String, name: String) async throws -> WorkflowPile {
+        try await request(path: Self.pilesPath(mailboxId: mailboxId, pileId: pileId), method: "PATCH", body: ["name": name])
+    }
+
+    /// 204. Its mail comes out of the pile; nothing else changes.
+    func deletePile(mailboxId: String, pileId: String) async throws {
+        let _: EmptyResponse = try await request(path: Self.pilesPath(mailboxId: mailboxId, pileId: pileId), method: "DELETE")
     }
 
     func listWorkflowPiles(mailboxId: String) async throws -> WorkflowPilesResponse {
@@ -1706,17 +1796,48 @@ extension Notification.Name {
     static let inboxiesServiceEnded = Notification.Name("inboxiesServiceEnded")
 }
 
-struct WorkflowPile: Decodable {
+struct WorkflowPile: Decodable, Equatable, Identifiable {
     let id: String
-    let count: Int
+    var count: Int
     /// Reply Later mails whose reminder fired and are still unread (AVE-86).
     /// Nil on older Workers that don't send it.
     var dueCount: Int? = nil
+    /// Display name, builtin flag and reply behaviour (AVE-201). Older Workers omit them.
+    var name: String? = nil
+    var builtin: Bool? = nil
+    var clearsOnReply: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, count
+        case id, count, name, builtin
         case dueCount = "due_count"
+        case clearsOnReply = "clears_on_reply"
     }
+
+    init(id: String, count: Int, dueCount: Int? = nil, name: String? = nil, builtin: Bool? = nil, clearsOnReply: Bool? = nil) {
+        self.id = id
+        self.count = count
+        self.dueCount = dueCount
+        self.name = name
+        self.builtin = builtin
+        self.clearsOnReply = clearsOnReply
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        count = (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? 0
+        dueCount = (try? c.decodeIfPresent(Int.self, forKey: .dueCount)) ?? nil
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        builtin = (try? c.decodeIfPresent(Bool.self, forKey: .builtin)) ?? nil
+        clearsOnReply = (try? c.decodeIfPresent(Bool.self, forKey: .clearsOnReply)) ?? nil
+    }
+}
+
+/// `pile` in the email PUT (AVE-201): put the mail in a pile (moving it out of any
+/// other) or take it out of whatever pile it's in.
+enum PilePatch: Equatable {
+    case set(String)
+    case clear
 }
 
 /// `reply_later_remind_at` in the email PUT (AVE-86): set a UTC ISO time (also adds the
@@ -1728,6 +1849,16 @@ enum ReplyLaterRemindAtPatch: Equatable {
 
 struct WorkflowPilesResponse: Decodable {
     let piles: [WorkflowPile]
+
+    /// A pile's entry; nil when the Worker doesn't know it (older Workers send only Reply Later).
+    func pile(_ id: String) -> WorkflowPile? {
+        piles.first(where: { $0.id == id })
+    }
+
+    /// Mail in a pile; 0 when the Worker doesn't list it.
+    func count(of id: String) -> Int {
+        pile(id)?.count ?? 0
+    }
 }
 
 /// Do not follow Cloudflare Access's 302 to the login HTML page — that body is

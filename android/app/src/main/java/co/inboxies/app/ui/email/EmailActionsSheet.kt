@@ -1,5 +1,7 @@
 package co.inboxies.app.ui.email
 
+import co.inboxies.app.services.MailPiles
+import co.inboxies.app.ui.piles.PileIcon
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.WarningAmber
@@ -80,6 +83,8 @@ import androidx.compose.ui.window.DialogProperties
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.services.MailTags
+import co.inboxies.app.ui.tags.TagIcon
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
@@ -350,6 +355,12 @@ fun EmailActionsSheet(
                     scope.launch { app.toggleReplyLater(email); onDismiss() }
                 }
                 ActionRow(
+                    if (email.isSetAside) "Remove from Set Aside" else "Set aside",
+                    Icons.Outlined.BookmarkBorder,
+                ) {
+                    scope.launch { app.toggleSetAside(email); onDismiss() }
+                }
+                ActionRow(
                     if (email.hasPendingReplyLaterReminder) "Change reminder" else "Remind me…",
                     Icons.Outlined.NotificationsActive,
                 ) {
@@ -369,6 +380,23 @@ fun EmailActionsSheet(
                         trailing = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     ) {
                         screen = ActionsScreen.Move
+                    }
+                }
+                // Piles people made (AVE-194): one per mail; the picker ticks the current one.
+                if (!readOnly && !email.isDraft) {
+                    ActionRow(
+                        app.customPileOf(email)?.let { "Pile: ${MailPiles.displayName(it)}" } ?: MailPiles.PICKER_MENU,
+                        PileIcon,
+                    ) {
+                        onDismiss()
+                        app.openPilePicker(email)
+                    }
+                }
+                // Tags (AVE-242): the conversation's, in the picker.
+                if (!readOnly && !email.isDraft) {
+                    ActionRow(MailTags.TITLE, TagIcon) {
+                        onDismiss()
+                        app.openTagPicker(email)
                     }
                 }
                 if (confirmsReportSpam) {

@@ -3,6 +3,10 @@ import UIKit
 
 enum ComposeActionItem: String, Identifiable, CaseIterable {
     case settings
+    /// The home Tags group (AVE-242): opens the Tags sheet.
+    case tags
+    /// The home Piles group (AVE-194): opens the Piles sheet.
+    case piles
     case trash
     case spam
     case archive
@@ -20,6 +24,8 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     var title: String {
         switch self {
         case .settings: return "Settings"
+        case .tags: return MailTags.groupTitle
+        case .piles: return MailPiles.groupTitle
         case .trash: return "Trash"
         case .spam: return "Spam"
         case .archive: return "Archive"
@@ -36,6 +42,8 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     var systemImage: String {
         switch self {
         case .settings: return "gearshape"
+        case .tags: return "tag"
+        case .piles: return "square.stack"
         case .trash: return HomeTab.folder("trash").systemImage
         case .spam: return HomeTab.folder("spam").systemImage
         case .archive: return HomeTab.folder("archive").systemImage
@@ -60,7 +68,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .archive: return .folder("archive")
         case .spam: return .folder("spam")
         case .trash: return .folder("trash")
-        case .settings, .compose: return nil
+        case .settings, .tags, .piles, .compose: return nil
         }
     }
 }

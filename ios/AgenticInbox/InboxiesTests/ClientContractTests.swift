@@ -32,6 +32,209 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(email.aliasId, "al_1")
     }
 
+    // MARK: - Workflow piles (AVE-201)
+
+    func testPilesDecodeSetAsideBesideReplyLater() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[
+          {"id":"reply_later","name":"Reply Later","builtin":true,"clears_on_reply":true,"count":3,"due_count":1},
+          {"id":"set_aside","name":"Set Aside","builtin":true,"clears_on_reply":false,"count":2,"due_count":0}
+        ]}
+        """)
+        XCTAssertEqual(response.count(of: WorkflowPileID.replyLater), 3)
+        XCTAssertEqual(response.pile(WorkflowPileID.replyLater)?.dueCount, 1)
+        XCTAssertEqual(response.pile(WorkflowPileID.replyLater)?.clearsOnReply, true)
+        let setAside = try XCTUnwrap(response.pile(WorkflowPileID.setAside))
+        XCTAssertEqual(setAside.count, 2)
+        XCTAssertEqual(setAside.name, "Set Aside")
+        XCTAssertEqual(setAside.builtin, true)
+        XCTAssertEqual(setAside.clearsOnReply, false)
+    }
+
+    func testOlderWorkersListOnlyReplyLater() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[{"id":"reply_later","count":4,"due_count":0}]}
+        """)
+        XCTAssertEqual(response.count(of: WorkflowPileID.replyLater), 4)
+        XCTAssertNil(response.pile(WorkflowPileID.setAside))
+        XCTAssertEqual(response.count(of: WorkflowPileID.setAside), 0)
+        XCTAssertNil(response.pile(WorkflowPileID.replyLater)?.name)
+        XCTAssertNil(response.pile(WorkflowPileID.replyLater)?.clearsOnReply)
+    }
+
+    func testEmailDecodesPileId() throws {
+        let setAside = try decode(Email.self, """
+        {"id":"p1","folder_id":"archive","subject":"Ticket","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,
+         "pile_id":"set_aside","pile_at":"2026-10-11T09:00:00Z"}
+        """)
+        XCTAssertEqual(setAside.pileId, WorkflowPileID.setAside)
+        XCTAssertEqual(setAside.pileAt, "2026-10-11T09:00:00Z")
+        XCTAssertTrue(setAside.isSetAside)
+        XCTAssertFalse(setAside.replyLater)
+
+        let none = try decode(Email.self, """
+        {"id":"p2","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":null}
+        """)
+        XCTAssertNil(none.pileId)
+        XCTAssertFalse(none.isSetAside)
+    }
+
+    func testOlderWorkersWithoutPileIdFallBackToReplyLater() throws {
+        let queued = try decode(Email.self, """
+        {"id":"p3","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":false,"starred":false,"reply_later":1}
+        """)
+        XCTAssertEqual(queued.pileId, WorkflowPileID.replyLater)
+        XCTAssertFalse(queued.isSetAside)
+
+        let plain = try decode(Email.self, """
+        {"id":"p4","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":false,"starred":false}
+        """)
+        XCTAssertNil(plain.pileId)
+    }
+
+    @MainActor
+    func testSettingAsideMovesMailOutOfReplyLater() {
+        var email = Email(
+            id: "p5", subject: "Contract", sender: "a@x.com", recipient: "b@x.com",
+            date: "2026-10-10T10:00:00Z", read: true, starred: false,
+            replyLater: true, replyLaterAt: "2026-10-10T11:00:00Z",
+            replyLaterRemindAt: "2026-10-12T09:00:00Z"
+        )
+        email.pileId = WorkflowPileID.replyLater
+        let aside = AppModel.settingAside(email, true)
+        XCTAssertTrue(aside.isSetAside)
+        XCTAssertFalse(aside.replyLater)
+        XCTAssertNil(aside.replyLaterAt)
+        XCTAssertNil(aside.replyLaterRemindAt)
+        XCTAssertNotNil(aside.pileAt)
+
+        let back = AppModel.settingAside(aside, false)
+        XCTAssertNil(back.pileId)
+        XCTAssertNil(back.pileAt)
+        XCTAssertFalse(back.replyLater)
+    }
+
+    func testCacheKeepsOnePilePerMail() throws {
+        let db = DatabaseService(inMemory: true)
+        let mb = "mb@x.com"
+        let email = try decode(Email.self, """
+        {"id":"p6","folder_id":"inbox","subject":"Boarding pass","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":"set_aside"}
+        """)
+        db.upsertEmails(mailboxId: mb, emails: [email])
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getSetAsideEmails(mailboxId: mb).map(\.id), ["p6"])
+        XCTAssertEqual(db.getEmail(id: "p6")?.pileId, WorkflowPileID.setAside)
+        XCTAssertNotNil(db.getEmail(id: "p6")?.pileAt, "joining a pile without pile_at stamps one")
+
+        // Reply later moves it over.
+        db.updateEmailFlags(id: "p6", replyLater: true)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+        XCTAssertEqual(db.getReplyLaterCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getEmail(id: "p6")?.pileId, WorkflowPileID.replyLater)
+
+        // Set aside moves it back and drops Reply Later.
+        db.updateEmailPile(id: "p6", pileId: WorkflowPileID.setAside)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+        XCTAssertEqual(db.getReplyLaterCount(mailboxId: mb), 0)
+        XCTAssertEqual(db.getEmail(id: "p6")?.replyLater, false)
+
+        // Leaving Reply Later doesn't touch Set Aside.
+        db.updateEmailFlags(id: "p6", replyLater: false)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 1)
+
+        db.updateEmailPile(id: "p6", pileId: nil)
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+        XCTAssertNil(db.getEmail(id: "p6")?.pileId)
+    }
+
+    // MARK: - Custom piles (AVE-194)
+
+    func testCustomPilesDecodeAfterTheBuiltInOnes() throws {
+        let response = try decode(WorkflowPilesResponse.self, """
+        {"piles":[
+          {"id":"reply_later","name":"Reply Later","builtin":true,"clears_on_reply":true,"count":3,"due_count":1},
+          {"id":"set_aside","name":"Set Aside","builtin":true,"clears_on_reply":false,"count":2,"due_count":0},
+          {"id":"p_0a1b","name":"Waiting on","builtin":false,"clears_on_reply":false,"count":4,"due_count":0}
+        ]}
+        """)
+        let custom = MailPiles.custom(response.piles)
+        XCTAssertEqual(custom.map(\.id), ["p_0a1b"])
+        XCTAssertEqual(custom.first?.name, "Waiting on")
+        XCTAssertEqual(custom.first?.count, 4)
+        // A newly made pile (POST /piles) decodes the same way.
+        let made = try decode(WorkflowPile.self, """
+        {"id":"p_ff","name":"To pay","position":3,"builtin":false,"clears_on_reply":false,"count":0,"due_count":0}
+        """)
+        XCTAssertEqual(MailPiles.custom([made]).count, 1)
+        // Older Workers send no `builtin`: only the two known ids are built in.
+        let legacy = [WorkflowPile(id: "reply_later", count: 1), WorkflowPile(id: "p_x", count: 0)]
+        XCTAssertEqual(MailPiles.custom(legacy).map(\.id), ["p_x"])
+    }
+
+    func testPileNamesMatchTheWorker() {
+        XCTAssertEqual(MailPiles.normalizeName("  Waiting   on \n"), .ok(name: "Waiting on", key: "waiting on"))
+        XCTAssertEqual(MailPiles.normalizeName("   "), .invalid("Pile name is required"))
+        XCTAssertEqual(MailPiles.normalizeName("bad\u{0007}name"), .invalid("Pile name contains invalid characters"))
+        XCTAssertEqual(MailPiles.normalizeName(String(repeating: "x", count: 41)), .invalid("Pile name must be at most 40 characters"))
+        let waiting = WorkflowPile(id: "p_1", count: 0, name: "Waiting on", builtin: false)
+        XCTAssertEqual(MailPiles.validate("waiting ON", existing: [waiting]), MailPiles.duplicateName)
+        XCTAssertEqual(MailPiles.validate("Set aside", existing: []), MailPiles.duplicateName, "built-in names are taken")
+        XCTAssertNil(MailPiles.validate("Waiting On", existing: [waiting], renaming: waiting), "a new spelling of its own name")
+        XCTAssertNil(MailPiles.validate("To pay", existing: [waiting]))
+        let full = (0..<MailPiles.maxCustom).map { WorkflowPile(id: "p_\($0)", count: 0, name: "Pile \($0)", builtin: false) }
+        XCTAssertEqual(MailPiles.validate("One more", existing: full), MailPiles.tooMany)
+    }
+
+    @MainActor
+    func testMovingToACustomPileLeavesReplyLater() {
+        var email = Email(
+            id: "p7", subject: "Quote", sender: "a@x.com", recipient: "b@x.com",
+            date: "2026-10-10T10:00:00Z", read: true, starred: false,
+            replyLater: true, replyLaterAt: "2026-10-10T11:00:00Z",
+            replyLaterRemindAt: "2026-10-12T09:00:00Z"
+        )
+        email.pileId = WorkflowPileID.replyLater
+        let moved = AppModel.movingToPile(email, "p_waiting")
+        XCTAssertEqual(moved.pileId, "p_waiting")
+        XCTAssertFalse(moved.replyLater)
+        XCTAssertNil(moved.replyLaterRemindAt)
+        XCTAssertNotNil(moved.pileAt)
+        let out = AppModel.movingToPile(moved, nil)
+        XCTAssertNil(out.pileId)
+        XCTAssertNil(out.pileAt)
+    }
+
+    func testCacheListsAndClearsCustomPiles() throws {
+        let db = DatabaseService(inMemory: true)
+        let mb = "mb@x.com"
+        let emails = try ["c1", "c2"].map { id in
+            try decode(Email.self, """
+            {"id":"\(id)","folder_id":"inbox","subject":"S","sender":"a@x.com","recipient":"b@x.com",
+             "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,"pile_id":"p_waiting"}
+            """)
+        }
+        db.upsertEmails(mailboxId: mb, emails: emails)
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 2)
+        XCTAssertEqual(Set(db.getPileEmails(mailboxId: mb, pileId: "p_waiting").map(\.id)), ["c1", "c2"])
+        XCTAssertEqual(db.getSetAsideCount(mailboxId: mb), 0)
+
+        db.updateEmailPile(id: "c1", pileId: "p_topay")
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 1)
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_topay"), 1)
+
+        // Deleting a pile takes its mail out and nothing else.
+        db.clearPile(mailboxId: mb, pileId: "p_waiting")
+        XCTAssertEqual(db.getPileCount(mailboxId: mb, pileId: "p_waiting"), 0)
+        XCTAssertNil(db.getEmail(id: "c2")?.pileId)
+        XCTAssertEqual(db.getEmail(id: "c2")?.folderId, "inbox")
+        XCTAssertEqual(db.getEmail(id: "c1")?.pileId, "p_topay")
+    }
+
     // MARK: - Tracking pixels (AVE-195)
 
     func testEmailDecodesBlockedTrackers() throws {
@@ -577,11 +780,130 @@ final class ClientContractTests: XCTestCase {
         XCTAssertNil(CustomFolders.validateRename("Bills", folder: receipts, existing: existing))
     }
 
-    func testTagCopy() {
-        let tag = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
-        XCTAssertEqual(CustomFolders.displayName(tag), "#Receipts")
+    /// Custom folders read as Folders, no "#" (web relabel, AVE-241/242).
+    func testFolderCopy() {
+        let folder = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
+        XCTAssertEqual(CustomFolders.displayName(folder), "Receipts")
         XCTAssertEqual(CustomFolders.normalizedName("  #Receipts "), "Receipts")
-        XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
+        XCTAssertEqual(CustomFolders.deleteConfirmTitle(folder), "Delete Receipts?")
+        XCTAssertEqual(CustomFolders.pageTitle, "Folders")
+        XCTAssertEqual(CustomFolders.createFailed, "Failed to create folder")
+    }
+
+    // MARK: - Tags (AVE-240 / AVE-242)
+
+    func testEmailDecodesTagsAndToleratesOlderWorkers() throws {
+        let tagged = try decode(Email.self, """
+        {"id":"e1","thread_id":"t1","folder_id":"inbox","subject":"Hi","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-10T10:00:00Z","read":0,"starred":0,
+         "tags":[{"id":"tag_a","name":"Clients"},{"id":"tag_b","name":"Q3 planning"}]}
+        """)
+        XCTAssertEqual(tagged.tags, [TagRef(id: "tag_a", name: "Clients"), TagRef(id: "tag_b", name: "Q3 planning")])
+
+        let older = try decode(Email.self, #"{"id":"e2","subject":"Hi","sender":"a@x.com","recipient":"b@x.com","date":"","read":true,"starred":false}"#)
+        XCTAssertNil(older.tags)
+        // A malformed list never fails the email.
+        let malformed = try decode(Email.self, #"{"id":"e3","subject":"","sender":"","recipient":"","date":"","read":true,"starred":false,"tags":"oops"}"#)
+        XCTAssertNil(malformed.tags)
+    }
+
+    func testTagRouteShapesDecode() throws {
+        // GET /tags (`Tag` in shared/tags.ts).
+        let list = try decode(TagListResponse.self, """
+        {"tags":[{"id":"tag_a","name":"Clients","emailCount":3,"unreadCount":1,
+                  "createdAt":"2026-11-10T00:00:00Z","updatedAt":"2026-11-10T00:00:00Z"}]}
+        """)
+        XCTAssertEqual(list.tags, [MailTag(id: "tag_a", name: "Clients", emailCount: 3, unreadCount: 1)])
+        // PUT / DELETE /threads/:threadId/tags/:tagId.
+        let thread = try decode(ThreadTagsResponse.self, #"{"threadId":"t1","tags":[{"id":"tag_a","name":"Clients"}],"emailIds":["e1","e2"]}"#)
+        XCTAssertEqual(thread.threadId, "t1")
+        XCTAssertEqual(thread.tags.map(\.id), ["tag_a"])
+        XCTAssertEqual(thread.emailIds, ["e1", "e2"])
+    }
+
+    func testTagPathsEncodeSegments() {
+        XCTAssertEqual(APIClient.tagsPath(mailboxId: "me@acme.com"), "/api/v1/mailboxes/me@acme.com/tags")
+        XCTAssertEqual(APIClient.tagsPath(mailboxId: "me@acme.com", tagId: "tag_1"), "/api/v1/mailboxes/me@acme.com/tags/tag_1")
+        XCTAssertEqual(
+            APIClient.threadTagPath(mailboxId: "me@acme.com", threadId: "a/b", tagId: "tag_1"),
+            "/api/v1/mailboxes/me@acme.com/threads/a%2Fb/tags/tag_1"
+        )
+    }
+
+    /// `normalizeTagName` in shared/tags.ts: same names, same sentences.
+    func testTagNameNormalizationMatchesWorker() {
+        XCTAssertEqual(MailTags.normalizeName("  Q3   planning \n"), .ok(name: "Q3 planning", key: "q3 planning"))
+        XCTAssertEqual(MailTags.normalizeName("   "), .invalid("Tag name is required"))
+        XCTAssertEqual(MailTags.normalizeName("bad\u{0007}name"), .invalid("Tag name contains invalid characters"))
+        XCTAssertEqual(MailTags.normalizeName("rtl\u{202E}trick"), .invalid("Tag name contains invalid characters"))
+        XCTAssertEqual(MailTags.normalizeName(String(repeating: "a", count: 65)), .invalid("Tag name must be at most 64 characters"))
+        if case .ok = MailTags.normalizeName(String(repeating: "é", count: 64)) {} else { XCTFail("64 characters is allowed") }
+        // Emoji sequences keep their zero-width joiners.
+        if case .ok = MailTags.normalizeName("👩‍💻 Work") {} else { XCTFail("ZWJ emoji is allowed") }
+    }
+
+    func testTagValidationIsCaseInsensitiveAndIgnoresTheRenamedTag() {
+        let clients = MailTag(id: "tag_a", name: "Clients")
+        let existing = [clients, MailTag(id: "tag_b", name: "Travel")]
+        XCTAssertEqual(MailTags.validate("clients", existing: existing), MailTags.duplicateName)
+        XCTAssertNil(MailTags.validate("CLIENTS", existing: existing, renaming: clients))
+        XCTAssertEqual(MailTags.validate("travel", existing: existing, renaming: clients), MailTags.duplicateName)
+        XCTAssertNil(MailTags.validate("Receipts", existing: existing))
+    }
+
+    /// Web `tagPickerOptions`.
+    func testTagPickerOptions() {
+        let tags = [MailTag(id: "a", name: "Clients"), MailTag(id: "b", name: "Client calls"), MailTag(id: "c", name: "Travel")]
+        let all = MailTags.pickerOptions(tags, query: "")
+        XCTAssertEqual(all.matches.map(\.id), ["a", "b", "c"])
+        XCTAssertNil(all.create)
+
+        let partial = MailTags.pickerOptions(tags, query: "  client ")
+        XCTAssertEqual(partial.matches.map(\.id), ["a", "b"])
+        XCTAssertEqual(partial.create, "client")
+
+        XCTAssertNil(MailTags.pickerOptions(tags, query: "CLIENTS").create)
+        XCTAssertEqual(MailTags.pickerOptions(tags, query: "New   one").create, "New one")
+    }
+
+    func testThreadTagPatchTouchesOnlyThatConversation() {
+        let clients = TagRef(id: "a", name: "Clients")
+        let zed = TagRef(id: "z", name: "zed")
+        func email(_ id: String, thread: String?, tags: [TagRef]?) -> Email {
+            Email(id: id, threadId: thread, folderId: "inbox", subject: "", sender: "", recipient: "", date: "", read: true, starred: false, tags: tags)
+        }
+        let rows = [email("1", thread: "t1", tags: [zed]), email("2", thread: "t2", tags: nil), email("3", thread: nil, tags: nil)]
+
+        let tagged = MailTags.patchThread(rows, threadId: "t1", tag: clients, on: true)
+        XCTAssertEqual(tagged[0].tags, [clients, zed])
+        XCTAssertNil(tagged[1].tags)
+        // Mail stored without a thread id is its own conversation.
+        XCTAssertEqual(MailTags.threadKey(rows[2]), "3")
+        XCTAssertEqual(MailTags.patchThread(rows, threadId: "3", tag: clients, on: true)[2].tags, [clients])
+
+        let untagged = MailTags.patchThread(tagged, threadId: "t1", tag: clients, on: false)
+        XCTAssertEqual(untagged[0].tags, [zed])
+        XCTAssertEqual(MailTags.union(tagged + [email("4", thread: "t1", tags: [clients])]), [clients, zed])
+        XCTAssertEqual(MailTags.replacing(tagged, tagId: "a", with: "Accounts")[0].tags?.map(\.name), ["Accounts", "zed"])
+        XCTAssertEqual(MailTags.replacing(tagged, tagId: "a", with: nil)[0].tags, [zed])
+    }
+
+    func testCacheRoundTripsTagsAndKeepsThemForTaglessPayloads() throws {
+        let db = DatabaseService(inMemory: true)
+        var email = try decode(Email.self, """
+        {"id":"e9","thread_id":"t9","folder_id":"inbox","subject":"S","sender":"a@x.com","recipient":"b@x.com",
+         "date":"2026-11-10T10:00:00Z","read":false,"starred":false,"tags":[{"id":"tag_a","name":"Clients"}]}
+        """)
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [email])
+        XCTAssertEqual(db.getEmails(mailboxId: "mb@x.com", folderId: "inbox").first?.tags, [TagRef(id: "tag_a", name: "Clients")])
+
+        // An older Worker's payload (no `tags`) keeps the cached ones.
+        email.tags = nil
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [email])
+        XCTAssertEqual(db.getEmail(id: "e9")?.tags, [TagRef(id: "tag_a", name: "Clients")])
+
+        db.updateEmailTags(["e9": []])
+        XCTAssertEqual(db.getEmail(id: "e9")?.tags, [])
     }
 
     // MARK: - Onboarding setup-users (AVE-243)

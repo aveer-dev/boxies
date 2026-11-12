@@ -15,8 +15,19 @@ struct HomeShellView: View {
     @State private var showChat = false
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
-    @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
-    /// Entering or leaving Reply Later or the Screening room is a push, not a folder-tab slide.
+    /// Folder a pile (Reply Later or Set Aside) was opened from; popping returns here.
+    @State private var previousTabBeforePile: HomeTab = .folder("inbox")
+    /// Where Back leaves a tag view for (AVE-242). Tag → tag keeps the first parent.
+    @State private var previousTabBeforeTag: HomeTab = .folder("inbox")
+    /// Phone home Tags group, opened from the folders menu.
+    @State private var showTagList = false
+    /// Rename / delete from the tag view's menu, create from the folder column.
+    @State private var tagEditor: TagEditorAction?
+    /// Phone home Piles group (AVE-194), opened from the folders menu.
+    @State private var showPileList = false
+    /// Rename / delete from a custom pile's view menu, create from the folder column.
+    @State private var pileEditor: PileEditorAction?
+    /// Entering or leaving a pile, a tag view or the Screening room is a push, not a folder-tab slide.
     @State private var isPushTransition = false
     @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
@@ -83,8 +94,11 @@ struct HomeShellView: View {
 
     /// Tabs that push over the list instead of sliding between folders.
     private static func isPushedTab(_ tab: HomeTab) -> Bool {
-        tab == .replyLater || tab == screeningRoomTab
+        if case .tag = tab { return true }
+        return tab.isPile || tab == screeningRoomTab
     }
+
+    private var isTagView: Bool { app.openTagId != nil }
 
     private var hasMinimizedCompose: Bool {
         app.composeSession?.isMinimized == true
@@ -158,6 +172,21 @@ struct HomeShellView: View {
             }) {
                 chatSheet
             }
+            .sheet(isPresented: $showTagList) {
+                TagListSheet()
+            }
+            .sheet(isPresented: $showPileList) {
+                PileListSheet()
+            }
+            .tagEditorDialogs($tagEditor)
+            .pileEditorDialogs($pileEditor)
+            .onChange(of: app.requestedTab) { _, tab in
+                guard let tab else { return }
+                app.requestedTab = nil
+                showTagList = false
+                showPileList = false
+                selectTab(tab)
+            }
             .onChange(of: isComposeExpanded) { _, expanded in
                 showComposeSheet = expanded
             }
@@ -169,6 +198,14 @@ struct HomeShellView: View {
                     openChat()
                 }
                 #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-previewPileList") {
+                    // AVE-194: the phone home Piles group, as the folders menu opens it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPileList = true }
+                }
+                if ProcessInfo.processInfo.arguments.contains("-previewTagList") {
+                    // AVE-242: the phone home Tags group, as the folders menu opens it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showTagList = true }
+                }
                 if ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                     // `-previewReplyLater -previewFocusReply` (AVE-193): Focus & Reply on the first thread.
                     if ProcessInfo.processInfo.arguments.contains("-previewFocusReply") {
@@ -207,7 +244,9 @@ struct HomeShellView: View {
                 folders: folderTabs,
                 selected: app.selectedTab,
                 onSelect: selectTab,
-                onHide: { setFolderColumnVisible(false) }
+                onHide: { setFolderColumnVisible(false) },
+                tagEditor: $tagEditor,
+                pileEditor: $pileEditor
             )
         } list: {
             shell
@@ -307,6 +346,10 @@ struct HomeShellView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         if isScreeningRoom {
                             screeningRoomBackButton
+                        } else if isTagView {
+                            tagBackButton
+                        } else if app.openPileId != nil {
+                            pileBackButton
                         } else {
                             mailboxControl
                         }
@@ -345,6 +388,10 @@ struct HomeShellView: View {
         }
         .onChange(of: app.selectedMailboxId) { _, _ in
             showAllNew = false
+            // Tags and piles belong to the mailbox: their views don't follow a switch.
+            if isTagView || app.openPileId != nil {
+                selectTab(.inbox)
+            }
             // The room belongs to the mailbox it was opened from (and may be off in the next).
             if isScreeningRoom {
                 popScreeningRoom()
@@ -474,6 +521,77 @@ struct HomeShellView: View {
     }
 
     /// Leading toolbar control inside the Screening room: back to Inbox.
+    private var tagBackButton: some View {
+        Button {
+            popTagView()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: Self.mailboxAvatarSize, height: Self.mailboxAvatarSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to \(app.title(for: previousTabBeforeTag))")
+    }
+
+    /// Leading toolbar control in a custom pile (AVE-194): back to the folder it came from.
+    private var pileBackButton: some View {
+        Button {
+            popPile()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: Self.mailboxAvatarSize, height: Self.mailboxAvatarSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to \(app.title(for: previousTabBeforePile))")
+        .accessibilityIdentifier("pileBackButton")
+    }
+
+    /// Custom pile header menu (AVE-194): rename or delete the pile on screen.
+    @ViewBuilder
+    private var pileMenuButton: some View {
+        if let pileId = app.openPileId, let pile = app.customPile(id: pileId), !app.isReadOnly {
+            Menu {
+                Button(MailPiles.renameMenu, systemImage: "pencil") { pileEditor = .rename(pile) }
+                Button(MailPiles.deleteMenu, systemImage: "trash", role: .destructive) { pileEditor = .delete(pile) }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions for pile \(MailPiles.displayName(pile))")
+            .accessibilityIdentifier("pileMenuButton")
+        }
+    }
+
+    /// Tag view header menu: rename or delete the tag on screen.
+    @ViewBuilder
+    private var tagMenuButton: some View {
+        if let tagId = app.openTagId, let tag = app.tag(id: tagId), !app.isReadOnly {
+            Menu {
+                Button(MailTags.renameMenu, systemImage: "pencil") { tagEditor = .rename(tag) }
+                Button(MailTags.deleteMenu, systemImage: "trash", role: .destructive) { tagEditor = .delete(tag) }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions for tag \(tag.name)")
+        }
+    }
+
     private var screeningRoomBackButton: some View {
         Button {
             popScreeningRoom()
@@ -662,7 +780,7 @@ struct HomeShellView: View {
             }
             return "Hi 👋"
         }
-        return app.selectedTab.title
+        return app.title(for: app.selectedTab)
     }
 
     private var filteredEmails: [Email] {
@@ -678,11 +796,22 @@ struct HomeShellView: View {
             }
             return app.isDigestLoading ? "Loading…" : ""
         }
+        if let tagId = app.openTagId {
+            return MailTags.unreadLabel(app.tag(id: tagId)?.unreadCount ?? 0)
+        }
         if case .replyLater = app.selectedTab {
             let count = app.replyLaterCount
             if count == 0 { return "Nothing queued" }
             if count == 1 { return "1 to reply" }
             return "\(count) to reply"
+        }
+        if case .setAside = app.selectedTab {
+            let count = app.setAsideCount
+            if count == 0 { return "Nothing set aside" }
+            return "\(count) set aside"
+        }
+        if let pileId = app.openPileId {
+            return MailPiles.subtitle(count: app.pileCount(pileId))
         }
         guard case .folder = app.selectedTab else { return "" }
         if isScreeningRoom, !isSelectMode, !filterState.isActive {
@@ -789,6 +918,76 @@ struct HomeShellView: View {
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
+            case .setAside:
+                // Set Aside (AVE-201): Reply Later's list without Focus & Reply or reminders.
+                EmailListView(
+                    emails: filteredEmails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: isSelectMode,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: false,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: "Nothing set aside",
+                    emptyMessage: "Keep mail you need handy, like tickets or a document you're waiting on.",
+                    emptySystemImage: "bookmark"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
+            case .pile(let pileId):
+                // A pile people made (AVE-194): Set Aside's list under its own name.
+                let name = app.title(for: .pile(pileId))
+                EmailListView(
+                    emails: filteredEmails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: isSelectMode,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: false,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: MailPiles.emptyViewTitle(name),
+                    emptyMessage: MailPiles.emptyViewMessage,
+                    emptySystemImage: "square.stack"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
+            case .tag(let tagId):
+                let name = app.title(for: .tag(tagId))
+                EmailListView(
+                    emails: app.emails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: false,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: true,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: MailTags.emptyViewTitle(name),
+                    emptyMessage: MailTags.emptyViewMessage,
+                    emptySystemImage: "tag"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
             case .chats:
                 ContentUnavailableView(
                     "AI chats",
@@ -840,12 +1039,19 @@ struct HomeShellView: View {
             selectedEmailIDs.removeAll()
         }
         isPushTransition = Self.isPushedTab(tab) || Self.isPushedTab(app.selectedTab)
-        if tab == .replyLater {
-            if app.selectedTab != .replyLater {
-                previousTabBeforeReplyLater = app.selectedTab
+        if case .tag = tab {
+            if !isTagView {
+                previousTabBeforeTag = app.selectedTab
             }
             tabNavigatingForward = true
-        } else if app.selectedTab == .replyLater {
+        } else if isTagView {
+            tabNavigatingForward = false
+        } else if tab.isPile {
+            if !app.selectedTab.isPile {
+                previousTabBeforePile = app.selectedTab
+            }
+            tabNavigatingForward = true
+        } else if app.selectedTab.isPile {
             tabNavigatingForward = false
         } else if tab == Self.screeningRoomTab {
             tabNavigatingForward = true
@@ -861,10 +1067,18 @@ struct HomeShellView: View {
         }
     }
 
-    /// Back out of Reply Later to the folder it was opened from (Android: system back).
-    private func popReplyLater() {
-        guard app.selectedTab == .replyLater else { return }
-        let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
+    /// Back out of a pile to the folder it was opened from (Android: system back).
+    private func popPile() {
+        guard app.selectedTab.isPile else { return }
+        let target = previousTabBeforePile.isPile ? .folder("inbox") : previousTabBeforePile
+        selectTab(target)
+    }
+
+    /// Back out of a tag view to where it was opened from.
+    private func popTagView() {
+        guard isTagView else { return }
+        let target: HomeTab
+        if case .tag = previousTabBeforeTag { target = .inbox } else { target = previousTabBeforeTag }
         selectTab(target)
     }
 
@@ -891,14 +1105,18 @@ struct HomeShellView: View {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 let threshold: CGFloat = 40
-                if app.selectedTab == .replyLater {
-                    // Reply Later is pushed over a folder: swipe right pops back.
-                    if value.translation.width > threshold { popReplyLater() }
+                if app.selectedTab.isPile {
+                    // Piles are pushed over a folder: swipe right pops back.
+                    if value.translation.width > threshold { popPile() }
                     return
                 }
                 if isScreeningRoom {
                     // The Screening room is pushed over Inbox: swipe right pops back.
                     if value.translation.width > threshold { popScreeningRoom() }
+                    return
+                }
+                if isTagView {
+                    if value.translation.width > threshold { popTagView() }
                     return
                 }
                 if value.translation.width < -threshold {
@@ -913,10 +1131,19 @@ struct HomeShellView: View {
         app.replyLaterCount > 0 || app.selectedTab == .replyLater
     }
 
+    /// Set Aside sits right beside Reply Later and shows on the same terms (AVE-201).
+    private var showSetAsideButton: Bool {
+        app.setAsideCount > 0 || app.selectedTab == .setAside
+    }
+
     private var bottomBar: some View {
         HStack(spacing: 10) {
             if showReplyLaterButton {
                 replyLaterPileButton
+                    .transition(.scale.combined(with: .opacity))
+            }
+            if showSetAsideButton {
+                setAsidePileButton
                     .transition(.scale.combined(with: .opacity))
             }
             // The AI agent is part of the service; a read-only mailbox has no Ask AI.
@@ -928,6 +1155,7 @@ struct HomeShellView: View {
             composeButton
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showReplyLaterButton)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showSetAsideButton)
     }
 
     /// A Reply Later reminder fired on mail that's still unread (AVE-86).
@@ -953,12 +1181,11 @@ struct HomeShellView: View {
                 return
             }
             if app.selectedTab == .replyLater {
-                popReplyLater()
+                popPile()
             } else if app.replyLaterCount == 0 {
                 app.showToast("There is no reply later mail")
                 Task { await app.refreshReplyLaterCount() }
             } else {
-                previousTabBeforeReplyLater = app.selectedTab
                 selectTab(.replyLater)
             }
         } label: {
@@ -997,6 +1224,43 @@ struct HomeShellView: View {
         .accessibilityValue(replyLaterAccessibilityValue)
         .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : (app.replyLaterCount == 0 ? "Shows status toast when empty" : "Opens Reply Later pile"))
         .accessibilityIdentifier("replyLaterPileButton")
+    }
+
+    /// Set Aside pile (AVE-201): Reply Later's pill without the due state.
+    private var setAsidePileButton: some View {
+        Button {
+            if showComposeActions {
+                dismissComposeActions()
+                return
+            }
+            if app.selectedTab == .setAside {
+                popPile()
+            } else if app.setAsideCount == 0 {
+                app.showToast("Nothing set aside")
+                Task { await app.refreshReplyLaterCount() }
+            } else {
+                selectTab(.setAside)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: HomeTab.setAside.systemImage)
+                    .font(.inter(size: 15, weight: .medium))
+                if app.setAsideCount > 0 {
+                    Text("\(app.setAsideCount)")
+                        .font(.inter(size: 13, weight: .semibold))
+                        .contentTransition(.numericText())
+                }
+            }
+            .foregroundStyle(app.selectedTab == .setAside ? AppTheme.accent : AppTheme.ink)
+            .padding(.horizontal, 14)
+            .frame(height: HomeChromeMetrics.actionBarHeight)
+            .liquidGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Set Aside")
+        .accessibilityValue(app.setAsideCount == 0 ? "Nothing set aside" : "\(app.setAsideCount) set aside")
+        .accessibilityHint(app.selectedTab == .setAside ? "Returns to previous folder" : (app.setAsideCount == 0 ? "Shows status toast when empty" : "Opens Set Aside pile"))
+        .accessibilityIdentifier("setAsidePileButton")
     }
 
     /// Presents the reminder picker for `app.reminderPickerEmail` (toast "Add reminder",
@@ -1129,6 +1393,10 @@ struct HomeShellView: View {
             startComposeFromBar()
         case .settings:
             showSettings = true
+        case .tags:
+            showTagList = true
+        case .piles:
+            showPileList = true
         default:
             if let tab = item.folderTab {
                 selectTab(tab)
@@ -1182,7 +1450,11 @@ struct HomeShellView: View {
 
     @ViewBuilder
     private var trailingToolbarItems: some View {
-        if case .chats = app.selectedTab, !app.isReadOnly {
+        if isTagView {
+            tagMenuButton
+        } else if app.openPileId != nil {
+            pileMenuButton
+        } else if case .chats = app.selectedTab, !app.isReadOnly {
             Button {
                 openChat(resumeActive: false)
             } label: {

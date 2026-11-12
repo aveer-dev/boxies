@@ -7,10 +7,11 @@ import { Link } from "react-router";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "shared/folders";
 import EmailPanel from "~/components/EmailPanel";
-import { folderHref as folderHrefFor, useMailNavigation } from "~/hooks/useMailNavigation";
+import { folderHref as folderHrefFor, pilePath, useMailNavigation } from "~/hooks/useMailNavigation";
 import { useListFolderId } from "~/hooks/useListFolder";
+import { customPileOf, isSetAside } from "~/lib/piles";
 import { useEmail } from "~/queries/emails";
-import { useFolders } from "~/queries/folders";
+import { useFolders, useWorkflowPiles } from "~/queries/folders";
 import type { Email } from "~/types";
 import ColumnPane from "./ColumnPane";
 import QuickReplyBar from "./QuickReplyBar";
@@ -38,6 +39,8 @@ export default function ReaderColumn({
 	const close = onClose ?? closeEmail;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: piles = [] } = useWorkflowPiles(mailboxId);
+	const ownPile = email ? customPileOf(email, piles) : null;
 	// The subject on screen, kept while the column stays open, so moving to
 	// another message morphs the title from it instead of re-revealing the reader.
 	const shownSubject = useRef<string | null>(null);
@@ -71,6 +74,12 @@ export default function ReaderColumn({
 			)}
 			{email?.starred && <ThreadChip>Starred</ThreadChip>}
 			{email?.reply_later && <ThreadChip>Reply later</ThreadChip>}
+			{email && isSetAside(email) && <ThreadChip>Set aside</ThreadChip>}
+			{ownPile && (
+				<Link to={pilePath(mailboxRef, ownPile.id)} className="no-underline">
+					<ThreadChip>{ownPile.name ?? "Pile"}</ThreadChip>
+				</Link>
+			)}
 		</>
 	);
 

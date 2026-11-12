@@ -32,6 +32,10 @@ export const emails = sqliteTable("emails", {
 	reply_later_remind_at: text("reply_later_remind_at"),
 	/** When the reminder fired (UTC ISO). Unread + set = due; also lifts Inbox order. */
 	reply_later_reminded_at: text("reply_later_reminded_at"),
+	/** Pile the message is in (`piles.id`: reply_later, set_aside), or null (AVE-201). Mirrors reply_later both ways. */
+	pile_id: text("pile_id"),
+	/** ISO timestamp when the message joined its pile; pile lists are oldest first. */
+	pile_at: text("pile_at"),
 	/** @deprecated Full HTML/text lives in R2; kept nullable for legacy rows during lazy offload. */
 	body: text("body"),
 	/** List/search preview; full body is in R2 (`emails/{id}/body.html`). */
