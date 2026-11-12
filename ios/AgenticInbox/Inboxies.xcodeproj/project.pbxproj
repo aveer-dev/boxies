@@ -26,6 +26,7 @@
 		18C1AF544271CACCDA4D8149 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A1EA00A322BC72F5FC673D /* LiquidGlass.swift */; };
 		19FF107330BBB6FAE09E8D8E /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 535A10A47F117AD7E23E77B5 /* AppDelegate.swift */; };
 		1B8052C319418C877DA65E00 /* PaymentCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED60F739533D7F2E3DCC74F6 /* PaymentCallback.swift */; };
+		1CFE67C2643B2AB602B9D1BC /* MorphingTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3320C836942667E18EC17C6E /* MorphingTitle.swift */; };
 		1E150E5F5DCA4F586ED99CD2 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF4FD5C59586C8DB4C992196 /* AppleSignIn.swift */; };
 		1EEE9157E1D9DCD331AF96E6 /* HardeningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB26EA100736B5C531C2586D /* HardeningTests.swift */; };
 		1F20522DD4AA7068625488CC /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3485CC457F14D933E111031 /* FlowLayout.swift */; };
@@ -256,6 +257,7 @@
 		2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormModel.swift; sourceTree = "<group>"; };
 		300D3D02EBDAB55AB5441309 /* ReauthSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReauthSheetView.swift; sourceTree = "<group>"; };
 		314F2EDE47FA06C2E532BC0E /* InboxiesWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesWidget.entitlements; sourceTree = "<group>"; };
+		3320C836942667E18EC17C6E /* MorphingTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MorphingTitle.swift; sourceTree = "<group>"; };
 		37786A9610B8F787C5525CA8 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceStatusBanner.swift; sourceTree = "<group>"; };
 		41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasskeysSettingsSection.swift; sourceTree = "<group>"; };
@@ -528,6 +530,7 @@
 				F211DF2CCEC3E36A1E03B5CF /* InboxiesToast.swift */,
 				6602B0CDD566F14EDA4F3E1B /* LoadFailedViews.swift */,
 				7DA1E3393B9B60E61F888638 /* MarkdownContentView.swift */,
+				3320C836942667E18EC17C6E /* MorphingTitle.swift */,
 				12613485B3CE7F30A1BA6DDE /* TextFlowLayout.swift */,
 			);
 			path = Components;
@@ -1025,6 +1028,7 @@
 				D58D3EF1F02A06F20A858B41 /* MailboxSyncService.swift in Sources */,
 				2A94071C618491B2926E1A38 /* MarkdownContentView.swift in Sources */,
 				56341FB47D85681AFC883737 /* Models.swift in Sources */,
+				1CFE67C2643B2AB602B9D1BC /* MorphingTitle.swift in Sources */,
 				41BEF3D18588BBDC46F34C46 /* NoteEditorSheet.swift in Sources */,
 				5132C35E8D5354EEEC478D83 /* OutboundAttachments.swift in Sources */,
 				3C72EC4E0AB026763B5FD0CA /* OutboxQueueWorker.swift in Sources */,

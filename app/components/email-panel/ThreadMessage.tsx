@@ -40,6 +40,8 @@ interface ThreadMessageProps {
     onAddNote?: () => void;
     /** Offer a quick summary (AVE-20): only for messages in a multi-message thread. */
     quickSummary?: boolean;
+    /** Shown on moving to another message: appear at once, reveal only on the user's own expand. */
+    quietOpen?: boolean;
 }
 
 /** Inline AI summary of one thread message, fetched once the user asks for it. */
@@ -119,7 +121,7 @@ function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolea
     );
 }
 
-export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage, quickSummary, notes, onAddNote }: ThreadMessageProps) {
+export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage, quickSummary, notes, onAddNote, quietOpen = false }: ThreadMessageProps) {
     const isSelf = email.sender === mailboxEmail;
     const deliveryFailed = isDeliveryFailure(email.delivery_status);
     const spoofed = isAuthSpoofed(email);
@@ -135,11 +137,16 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     const canSummarize = Boolean(quickSummary && !isDraft && mailboxId);
     const [summaryOpen, setSummaryOpen] = useState(false);
     const toggleSummary = useCallback(() => setSummaryOpen((v) => !v), []);
+    const [revealOnExpand, setRevealOnExpand] = useState(!quietOpen);
+    const toggleExpand = () => {
+        setRevealOnExpand(true);
+        onToggleExpand();
+    };
 
     if (!isExpanded) {
         return (
             <div className={containerClassName}>
-                <button type="button" onClick={onToggleExpand} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-2xl text-left transition-colors">
+                <button type="button" onClick={toggleExpand} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-2xl text-left transition-colors">
                     <Avatar isDraft={isDraft} isSelf={isSelf} sender={senderName} />
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
@@ -161,11 +168,11 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     }
 
     return (
-        <div className={`group/thread-msg animate-reveal ${containerClassName}`}>
+        <div className={`group/thread-msg ${revealOnExpand ? 'animate-reveal' : ''} ${containerClassName}`}>
             <div className="px-4 py-4 md:px-6">
                 <div className="flex items-center justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0">
-                        <button type="button" onClick={onToggleExpand} className="shrink-0" aria-label="Collapse message">
+                        <button type="button" onClick={toggleExpand} className="shrink-0" aria-label="Collapse message">
                             <div className="cursor-pointer hover:ring-2 hover:ring-[var(--border-control)] transition-shadow rounded-full">
                                 <Avatar isDraft={isDraft} isSelf={isSelf} sender={senderName} />
                             </div>
@@ -198,7 +205,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                             />
                         )}
                         <MessageOptionsMenu onSummarize={canSummarize ? toggleSummary : undefined} summaryOpen={summaryOpen} onViewSource={onViewSource} />
-                        <IconButton label="Collapse message" icon={CaretUpIcon} onClick={onToggleExpand} />
+                        <IconButton label="Collapse message" icon={CaretUpIcon} onClick={toggleExpand} />
                     </div>
                 </div>
 

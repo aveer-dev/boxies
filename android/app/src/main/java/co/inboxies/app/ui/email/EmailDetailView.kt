@@ -122,6 +122,7 @@ import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuHeader
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.components.MorphingTitle
 import co.inboxies.app.ui.notes.InlineNotesView
 import co.inboxies.app.ui.notes.NoteEditorSheet
 import co.inboxies.app.ui.notes.NoteEditorTarget
@@ -361,7 +362,8 @@ fun EmailDetailView(
                         )
                     }
                 }
-                Text(
+                // Previous / next morph the subject letter by letter (web `MorphText`).
+                MorphingTitle(
                     subjectText,
                     fontFamily = InterFontFamily,
                     fontWeight = titleWeight,
