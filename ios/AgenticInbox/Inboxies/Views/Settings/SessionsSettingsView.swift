@@ -447,6 +447,8 @@ struct SessionsSettingsView: View {
         }
         if session.scope == "aliases" {
             parts.append("Private emails only")
+        } else if session.scope == "watch" {
+            parts.append("Inbox and replies only")
         }
         return parts.joined(separator: " · ")
     }
@@ -456,6 +458,7 @@ struct SessionsSettingsView: View {
         if session.scope == "aliases" {
             return title.contains("extension") ? "puzzlepiece.extension" : "key.fill"
         }
+        if session.scope == "watch" { return "applewatch" }
         if title.contains("iphone") || title.contains("android") { return "iphone" }
         if title.contains("ipad") { return "ipad" }
         return "laptopcomputer"

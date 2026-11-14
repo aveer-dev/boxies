@@ -103,6 +103,8 @@ export interface AccountSession {
 	lastActiveAt: string;
 	expiresAt: string;
 	current: boolean;
+	/** For a "watch" session, the phone session it signs out with (AVE-143). */
+	parentSessionId?: string | null;
 }
 
 /** An app connected over MCP OAuth (Settings → Devices → Connected apps). */
