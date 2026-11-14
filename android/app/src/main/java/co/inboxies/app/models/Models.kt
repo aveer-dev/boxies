@@ -1151,6 +1151,8 @@ data class WorkflowPilesResponse(
 object PileIds {
     const val REPLY_LATER = "reply_later"
     const val SET_ASIDE = "set_aside"
+
+    fun isBuiltin(id: String): Boolean = id == REPLY_LATER || id == SET_ASIDE
 }
 
 @Serializable
@@ -1341,15 +1343,27 @@ sealed class HomeTab {
     /** Everything with one tag (AVE-242): pushed like Reply Later; the UI names it. */
     data class Tag(val id: String) : HomeTab()
 
-    /** Reply Later or Set Aside: a workflow pile, pushed over the folder it was opened from. */
+    /** A pile people made (AVE-194), by id (`p_…`): pushed like Set Aside; the UI names it. */
+    data class Pile(val id: String) : HomeTab()
+
+    /** Reply Later, Set Aside or a custom pile: pushed over the folder it was opened from. */
     val isPile: Boolean
-        get() = this == ReplyLater || this == SetAside
+        get() = this == ReplyLater || this == SetAside || this is Pile
+
+    /** The pile this tab lists, null for folders, tags and chats. */
+    val pileId: String?
+        get() = when (this) {
+            ReplyLater -> PileIds.REPLY_LATER
+            SetAside -> PileIds.SET_ASIDE
+            is Pile -> id
+            else -> null
+        }
 
     val syncFolderId: String?
         get() = when (this) {
             is Folder -> id
             AiInbox -> "inbox"
-            Chats, ReplyLater, SetAside, is Tag -> null
+            Chats, ReplyLater, SetAside, is Tag, is Pile -> null
         }
 
     val title: String
@@ -1372,6 +1386,7 @@ sealed class HomeTab {
             ReplyLater -> "Reply Later"
             SetAside -> "Set Aside"
             is Tag -> "Tag"
+            is Pile -> "Pile"
         }
 
     companion object {

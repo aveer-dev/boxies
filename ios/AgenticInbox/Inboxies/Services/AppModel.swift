@@ -100,6 +100,8 @@ final class AppModel {
     var replyLaterDueCount: Int = 0
     /// Count for the Set Aside pile beside Reply Later (AVE-201).
     var setAsideCount: Int = 0
+    /// Piles people made (AVE-194), in the Worker's order, with their counts.
+    var customPiles: [WorkflowPile] = []
     /// Mail the Reply Later reminder picker is open for (toast "Add reminder", list menu).
     var reminderPickerEmail: Email?
     /// Cached sign-in identities for settings navigation.
@@ -889,8 +891,8 @@ final class AppModel {
         if isDebugPreview {
             if tab == .replyLater {
                 emails = PreviewSupport.emails.filter(\.replyLater)
-            } else if tab == .setAside {
-                emails = PreviewSupport.emails.filter(\.isSetAside)
+            } else if let pileId = tab.pileId, pileId != WorkflowPileID.replyLater {
+                emails = (PreviewSupport.emails + PreviewSupport.pileEmails).filter { $0.pileId == pileId }
             } else if case .tag(let tagId) = tab {
                 emails = PreviewSupport.emails.filter { ($0.tags ?? []).contains { $0.id == tagId } }
             } else if let folderId = tab.syncFolderId {
@@ -1076,20 +1078,27 @@ final class AppModel {
 
     /// Cached rows for a workflow pile (AVE-201).
     private func cachedPileEmails(mailboxId: String, pileId: String) -> [Email] {
-        pileId == WorkflowPileID.setAside
-            ? db.getSetAsideEmails(mailboxId: mailboxId, limit: 50)
-            : db.getReplyLaterEmails(mailboxId: mailboxId, limit: 50)
+        pileId == WorkflowPileID.replyLater
+            ? db.getReplyLaterEmails(mailboxId: mailboxId, limit: 50)
+            : db.getPileEmails(mailboxId: mailboxId, pileId: pileId, limit: 50)
     }
 
     func pileCount(_ pileId: String) -> Int {
-        pileId == WorkflowPileID.setAside ? setAsideCount : replyLaterCount
+        switch pileId {
+        case WorkflowPileID.replyLater: return replyLaterCount
+        case WorkflowPileID.setAside: return setAsideCount
+        default: return customPile(id: pileId)?.count ?? 0
+        }
     }
 
-    private func setPileCount(_ pileId: String, _ count: Int) {
-        if pileId == WorkflowPileID.setAside {
-            setAsideCount = count
-        } else {
-            replyLaterCount = count
+    func setPileCount(_ pileId: String, _ count: Int) {
+        switch pileId {
+        case WorkflowPileID.replyLater: replyLaterCount = count
+        case WorkflowPileID.setAside: setAsideCount = count
+        default:
+            if let index = customPiles.firstIndex(where: { $0.id == pileId }) {
+                customPiles[index].count = max(0, count)
+            }
         }
     }
 
@@ -1236,6 +1245,8 @@ final class AppModel {
     /// Set Aside's count from the piles list (AVE-201). An older Worker without the pile
     /// reports none; the cache can't hold Set Aside mail there either.
     private func applySetAsideCount(from piles: WorkflowPilesResponse, mailboxId: String) {
+        // Custom piles (AVE-194) ride the same list.
+        customPiles = MailPiles.custom(piles.piles)
         if piles.pile(WorkflowPileID.setAside) != nil {
             setAsideCount = piles.count(of: WorkflowPileID.setAside)
         } else {
@@ -1246,7 +1257,7 @@ final class AppModel {
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder, .aiInbox, .replyLater, .setAside, .tag:
+        case .folder, .aiInbox, .replyLater, .setAside, .tag, .pile:
             await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -2072,6 +2083,7 @@ final class AppModel {
         replyLaterCount = 0
         replyLaterDueCount = 0
         setAsideCount = 0
+        customPiles = []
         tags = []
         reminderPickerEmail = nil
         identities = nil
@@ -2460,7 +2472,8 @@ final class AppModel {
         if selectedTab == .replyLater && !updated.replyLater {
             emails.removeAll(where: { $0.id == updated.id })
         }
-        if selectedTab == .setAside && !updated.isSetAside {
+        // Any pile but Reply Later (above): a row that left the pile on screen goes.
+        if let pileId = selectedTab.pileId, pileId != WorkflowPileID.replyLater, updated.pileId != pileId {
             emails.removeAll(where: { $0.id == updated.id })
         }
         if selectedTab.syncFolderId == "inbox" {
@@ -2958,6 +2971,8 @@ enum HomeTab: Hashable {
     case setAside
     /// Everything with one tag (AVE-242), pushed over the folders like Reply Later.
     case tag(String)
+    /// A pile people made (AVE-194), by its id (`p_…`), pushed like Set Aside.
+    case pile(String)
 
     static var inbox: HomeTab { .folder("inbox") }
 
@@ -2966,11 +2981,12 @@ enum HomeTab: Hashable {
         switch self {
         case .replyLater: return WorkflowPileID.replyLater
         case .setAside: return WorkflowPileID.setAside
+        case .pile(let id): return id
         default: return nil
         }
     }
 
-    /// Reply Later and Set Aside: piles pushed over a folder, popped back to it.
+    /// Reply Later, Set Aside and custom piles: pushed over a folder, popped back to it.
     var isPile: Bool { pileId != nil }
 
     /// Folder id used for cache/sync when this tab shows mail-backed content.
@@ -2978,7 +2994,7 @@ enum HomeTab: Hashable {
         switch self {
         case .folder(let id): return id
         case .aiInbox: return "inbox"
-        case .chats, .replyLater, .setAside, .tag: return nil
+        case .chats, .replyLater, .setAside, .tag, .pile: return nil
         }
     }
 
@@ -3009,6 +3025,9 @@ enum HomeTab: Hashable {
         case .tag:
             // The tag's name lives on AppModel (`tagTitle`); this is the fallback.
             return "Tag"
+        case .pile:
+            // The pile's name lives on AppModel (`customPiles`); this is the fallback.
+            return "Pile"
         }
     }
 
@@ -3038,6 +3057,8 @@ enum HomeTab: Hashable {
             return "bookmark"
         case .tag:
             return "tag"
+        case .pile:
+            return "square.stack"
         }
     }
 }

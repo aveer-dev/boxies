@@ -51,6 +51,9 @@ class PreviewModeNamesTest {
         assertEquals("previewTagView", PreviewMode.TagView.intentExtra)
         assertEquals("previewTagPicker", PreviewMode.TagPicker.intentExtra)
         assertEquals("previewTagList", PreviewMode.TagList.intentExtra)
+        assertEquals("previewPile", PreviewMode.Pile.intentExtra)
+        assertEquals("previewPileList", PreviewMode.PileList.intentExtra)
+        assertEquals("previewPilePicker", PreviewMode.PilePicker.intentExtra)
     }
 
     @Test
@@ -63,6 +66,9 @@ class PreviewModeNamesTest {
         assertEquals("mailbox", PreviewMode.Mailbox.cliName)
         assertEquals("setAside", PreviewMode.SetAside.cliName)
         assertEquals("tagView", PreviewMode.TagView.cliName)
+        assertEquals("pile", PreviewMode.Pile.cliName)
+        assertEquals("pileList", PreviewMode.PileList.cliName)
+        assertEquals("pilePicker", PreviewMode.PilePicker.cliName)
         assertEquals("tagPicker", PreviewMode.TagPicker.cliName)
         assertEquals("tagList", PreviewMode.TagList.cliName)
         assertEquals("loadMore", PreviewMode.LoadMore.cliName)

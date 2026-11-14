@@ -1,5 +1,8 @@
 package co.inboxies.app.ui.email
 
+import co.inboxies.app.services.MailPiles
+import co.inboxies.app.ui.piles.PileIcon
+import co.inboxies.app.models.PileIds
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -880,6 +883,15 @@ private fun MailRow(
                     },
                 )
                 if (!readOnly && !email.isDraft) {
+                    // Piles people made (AVE-194): one per mail.
+                    InboxiesMenuItem(
+                        text = MailPiles.PICKER_MENU,
+                        icon = PileIcon,
+                        onClick = {
+                            showMenu = false
+                            app.openPilePicker(email)
+                        },
+                    )
                     InboxiesMenuItem(
                         text = "Tags…",
                         icon = TagIcon,
@@ -1415,6 +1427,14 @@ fun EmailRowView(
                         Icon(
                             Icons.Outlined.BookmarkBorder,
                             contentDescription = "Set aside",
+                            tint = colors.accent,
+                            modifier = Modifier.size(list.badge.value.dp),
+                        )
+                    } else if (email.currentPileId?.let { !PileIds.isBuiltin(it) } == true) {
+                        // A pile people made (AVE-194).
+                        Icon(
+                            PileIcon,
+                            contentDescription = "In a pile",
                             tint = colors.accent,
                             modifier = Modifier.size(list.badge.value.dp),
                         )

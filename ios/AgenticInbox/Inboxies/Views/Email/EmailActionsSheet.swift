@@ -102,6 +102,19 @@ struct EmailActionsSheet: View {
                     }
                     .accessibilityIdentifier("emailActionSetAside")
 
+                    // AVE-194: piles people make ("Waiting on", "To pay"), one per mail.
+                    if availability.showsTags {
+                        NavigationLink {
+                            PilePickerView(email: source, onClose: dismissSheet)
+                        } label: {
+                            Label(
+                                app.customPile(of: source).map { "Pile: \(MailPiles.displayName($0))" } ?? MailPiles.pickerMenu,
+                                systemImage: "square.stack"
+                            )
+                        }
+                        .accessibilityIdentifier("emailActionPiles")
+                    }
+
                     actionRow(
                         source.read ? "Mark as Unread" : "Mark as Read",
                         systemImage: source.read ? "envelope.badge" : "envelope.open"

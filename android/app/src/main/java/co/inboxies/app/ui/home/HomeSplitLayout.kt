@@ -82,6 +82,10 @@ import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.models.MailTag
+import co.inboxies.app.models.WorkflowPile
+import co.inboxies.app.ui.piles.CreatePileButton
+import co.inboxies.app.ui.piles.PileIcon
+import co.inboxies.app.ui.piles.PileListRow
 import co.inboxies.app.services.MailTags
 import co.inboxies.app.ui.tags.CreateTagButton
 import co.inboxies.app.ui.tags.TagListRow
@@ -276,6 +280,11 @@ fun HomeFolderColumn(
     onCreateTag: () -> Unit = {},
     onRenameTag: (MailTag) -> Unit = {},
     onDeleteTag: (MailTag) -> Unit = {},
+    /** Piles people made (AVE-194), after Reply Later and Set Aside; + in the Workflow header. */
+    customPiles: List<WorkflowPile> = emptyList(),
+    onCreatePile: () -> Unit = {},
+    onRenamePile: (WorkflowPile) -> Unit = {},
+    onDeletePile: (WorkflowPile) -> Unit = {},
 ) {
     val colors = inboxiesColors()
     Column(
@@ -348,18 +357,27 @@ fun HomeFolderColumn(
             )
         }
 
-        Text(
-            "WORKFLOW",
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = AppThemeDims.List.sectionHeader,
-            letterSpacing = 0.6.sp,
-            color = colors.muted,
+        Row(
             modifier = Modifier
-                .padding(horizontal = 10.dp)
-                .padding(top = 20.dp, bottom = 6.dp)
-                .semantics { heading() },
-        )
+                .fillMaxWidth()
+                .padding(start = 10.dp)
+                .padding(top = 20.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "WORKFLOW",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.List.sectionHeader,
+                letterSpacing = 0.6.sp,
+                color = colors.muted,
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { heading() },
+            )
+            // Same rights as tags: a read-only mailbox can't make piles either.
+            if (canEditTags) CreatePileButton(onClick = onCreatePile, size = 32.dp)
+        }
         FolderColumnRow(
             tab = HomeTab.ReplyLater,
             count = replyLaterCount,
@@ -374,6 +392,17 @@ fun HomeFolderColumn(
             isSelected = selected == HomeTab.SetAside,
             onClick = { onSelect(HomeTab.SetAside) },
         )
+        customPiles.forEach { pile ->
+            PileListRow(
+                pile = pile,
+                isSelected = selected == HomeTab.Pile(pile.id),
+                canEdit = canEditTags,
+                onOpen = { onSelect(HomeTab.Pile(pile.id)) },
+                onRename = { onRenamePile(pile) },
+                onDelete = { onDeletePile(pile) },
+                compact = true,
+            )
+        }
 
         Row(
             modifier = Modifier
@@ -475,6 +504,7 @@ private val HomeTab.folderColumnIcon: ImageVector
     get() = when (this) {
         HomeTab.ReplyLater -> Icons.Outlined.Schedule
         HomeTab.SetAside -> Icons.Outlined.BookmarkBorder
+        is HomeTab.Pile -> PileIcon
         else -> ComposeActionItem.entries.firstOrNull { it.folderTab == this }?.icon ?: Icons.Outlined.Folder
     }
 

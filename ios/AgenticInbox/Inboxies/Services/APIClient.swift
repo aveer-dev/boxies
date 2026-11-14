@@ -1152,6 +1152,27 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    static func pilesPath(mailboxId: String, pileId: String? = nil) -> String {
+        let base = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/piles"
+        guard let pileId else { return base }
+        return "\(base)/\(pileId.urlPathEncoded)"
+    }
+
+    /// Makes a pile (AVE-194). 409 when the name is taken (ignoring case), 400 past the cap.
+    func createPile(mailboxId: String, name: String) async throws -> WorkflowPile {
+        try await request(path: Self.pilesPath(mailboxId: mailboxId), method: "POST", body: ["name": name])
+    }
+
+    /// Renames a pile people made; built-in piles answer 400.
+    func renamePile(mailboxId: String, pileId: String, name: String) async throws -> WorkflowPile {
+        try await request(path: Self.pilesPath(mailboxId: mailboxId, pileId: pileId), method: "PATCH", body: ["name": name])
+    }
+
+    /// 204. Its mail comes out of the pile; nothing else changes.
+    func deletePile(mailboxId: String, pileId: String) async throws {
+        let _: EmptyResponse = try await request(path: Self.pilesPath(mailboxId: mailboxId, pileId: pileId), method: "DELETE")
+    }
+
     func listWorkflowPiles(mailboxId: String) async throws -> WorkflowPilesResponse {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/workflow-piles")
     }
@@ -1775,9 +1796,9 @@ extension Notification.Name {
     static let inboxiesServiceEnded = Notification.Name("inboxiesServiceEnded")
 }
 
-struct WorkflowPile: Decodable, Equatable {
+struct WorkflowPile: Decodable, Equatable, Identifiable {
     let id: String
-    let count: Int
+    var count: Int
     /// Reply Later mails whose reminder fired and are still unread (AVE-86).
     /// Nil on older Workers that don't send it.
     var dueCount: Int? = nil

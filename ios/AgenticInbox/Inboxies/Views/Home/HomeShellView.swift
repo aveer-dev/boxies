@@ -23,6 +23,10 @@ struct HomeShellView: View {
     @State private var showTagList = false
     /// Rename / delete from the tag view's menu, create from the folder column.
     @State private var tagEditor: TagEditorAction?
+    /// Phone home Piles group (AVE-194), opened from the folders menu.
+    @State private var showPileList = false
+    /// Rename / delete from a custom pile's view menu, create from the folder column.
+    @State private var pileEditor: PileEditorAction?
     /// Entering or leaving a pile, a tag view or the Screening room is a push, not a folder-tab slide.
     @State private var isPushTransition = false
     @State private var tabContentWidth: CGFloat = 390
@@ -171,11 +175,16 @@ struct HomeShellView: View {
             .sheet(isPresented: $showTagList) {
                 TagListSheet()
             }
+            .sheet(isPresented: $showPileList) {
+                PileListSheet()
+            }
             .tagEditorDialogs($tagEditor)
+            .pileEditorDialogs($pileEditor)
             .onChange(of: app.requestedTab) { _, tab in
                 guard let tab else { return }
                 app.requestedTab = nil
                 showTagList = false
+                showPileList = false
                 selectTab(tab)
             }
             .onChange(of: isComposeExpanded) { _, expanded in
@@ -189,6 +198,10 @@ struct HomeShellView: View {
                     openChat()
                 }
                 #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-previewPileList") {
+                    // AVE-194: the phone home Piles group, as the folders menu opens it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPileList = true }
+                }
                 if ProcessInfo.processInfo.arguments.contains("-previewTagList") {
                     // AVE-242: the phone home Tags group, as the folders menu opens it.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showTagList = true }
@@ -232,7 +245,8 @@ struct HomeShellView: View {
                 selected: app.selectedTab,
                 onSelect: selectTab,
                 onHide: { setFolderColumnVisible(false) },
-                tagEditor: $tagEditor
+                tagEditor: $tagEditor,
+                pileEditor: $pileEditor
             )
         } list: {
             shell
@@ -334,6 +348,8 @@ struct HomeShellView: View {
                             screeningRoomBackButton
                         } else if isTagView {
                             tagBackButton
+                        } else if app.openPileId != nil {
+                            pileBackButton
                         } else {
                             mailboxControl
                         }
@@ -372,8 +388,8 @@ struct HomeShellView: View {
         }
         .onChange(of: app.selectedMailboxId) { _, _ in
             showAllNew = false
-            // Tags belong to the mailbox: its tag view doesn't follow a switch.
-            if isTagView {
+            // Tags and piles belong to the mailbox: their views don't follow a switch.
+            if isTagView || app.openPileId != nil {
                 selectTab(.inbox)
             }
             // The room belongs to the mailbox it was opened from (and may be off in the next).
@@ -517,6 +533,43 @@ struct HomeShellView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Back to \(app.title(for: previousTabBeforeTag))")
+    }
+
+    /// Leading toolbar control in a custom pile (AVE-194): back to the folder it came from.
+    private var pileBackButton: some View {
+        Button {
+            popPile()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: Self.mailboxAvatarSize, height: Self.mailboxAvatarSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to \(app.title(for: previousTabBeforePile))")
+        .accessibilityIdentifier("pileBackButton")
+    }
+
+    /// Custom pile header menu (AVE-194): rename or delete the pile on screen.
+    @ViewBuilder
+    private var pileMenuButton: some View {
+        if let pileId = app.openPileId, let pile = app.customPile(id: pileId), !app.isReadOnly {
+            Menu {
+                Button(MailPiles.renameMenu, systemImage: "pencil") { pileEditor = .rename(pile) }
+                Button(MailPiles.deleteMenu, systemImage: "trash", role: .destructive) { pileEditor = .delete(pile) }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Actions for pile \(MailPiles.displayName(pile))")
+            .accessibilityIdentifier("pileMenuButton")
+        }
     }
 
     /// Tag view header menu: rename or delete the tag on screen.
@@ -757,6 +810,9 @@ struct HomeShellView: View {
             if count == 0 { return "Nothing set aside" }
             return "\(count) set aside"
         }
+        if let pileId = app.openPileId {
+            return MailPiles.subtitle(count: app.pileCount(pileId))
+        }
         guard case .folder = app.selectedTab else { return "" }
         if isScreeningRoom, !isSelectMode, !filterState.isActive {
             let count = app.screenerSenderCount
@@ -882,6 +938,30 @@ struct HomeShellView: View {
                     emptyTitle: "Nothing set aside",
                     emptyMessage: "Keep mail you need handy, like tickets or a document you're waiting on.",
                     emptySystemImage: "bookmark"
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
+            case .pile(let pileId):
+                // A pile people made (AVE-194): Set Aside's list under its own name.
+                let name = app.title(for: .pile(pileId))
+                EmailListView(
+                    emails: filteredEmails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: isSelectMode,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil,
+                    showsTags: false,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() },
+                    emptyTitle: MailPiles.emptyViewTitle(name),
+                    emptyMessage: MailPiles.emptyViewMessage,
+                    emptySystemImage: "square.stack"
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -1315,6 +1395,8 @@ struct HomeShellView: View {
             showSettings = true
         case .tags:
             showTagList = true
+        case .piles:
+            showPileList = true
         default:
             if let tab = item.folderTab {
                 selectTab(tab)
@@ -1370,6 +1452,8 @@ struct HomeShellView: View {
     private var trailingToolbarItems: some View {
         if isTagView {
             tagMenuButton
+        } else if app.openPileId != nil {
+            pileMenuButton
         } else if case .chats = app.selectedTab, !app.isReadOnly {
             Button {
                 openChat(resumeActive: false)

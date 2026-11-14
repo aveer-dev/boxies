@@ -56,6 +56,8 @@ struct EmailListView: View {
     @State private var actionsSheetEmail: ActionsSheetEmail?
     /// Conversation the Tags picker is open for (row context menu, AVE-242).
     @State private var tagPickerEmail: ActionsSheetEmail?
+    /// Piles people made (AVE-194): the "Move to pile…" picker for a row.
+    @State private var pilePickerEmail: ActionsSheetEmail?
     @State private var isRetrying = false
 
     private var visibleEmails: [Email] {
@@ -80,6 +82,9 @@ struct EmailListView: View {
         }
         .sheet(item: $tagPickerEmail) { item in
             TagPickerSheet(email: item.email)
+        }
+        .sheet(item: $pilePickerEmail) { item in
+            PilePickerSheet(email: item.email)
         }
         .onChange(of: emails.map(\.id)) { _, _ in
             hiddenEmailIDs = hiddenEmailIDs.filter { id in
@@ -541,6 +546,18 @@ struct EmailListView: View {
 
         if availability.showsTags {
             Button {
+                pilePickerEmail = ActionsSheetEmail(email: email)
+            } label: {
+                Label(MailPiles.pickerMenu, systemImage: "square.stack")
+            }
+            if let pileId = app.openPileId, email.pileId == pileId, let pile = app.customPile(id: pileId) {
+                Button {
+                    Task { await app.setPile(nil, on: email) }
+                } label: {
+                    Label(MailPiles.removeAction(MailPiles.displayName(pile)), systemImage: "minus.square")
+                }
+            }
+            Button {
                 tagPickerEmail = ActionsSheetEmail(email: email)
             } label: {
                 Label("Tags…", systemImage: "tag")
@@ -921,6 +938,12 @@ struct EmailRowView: View {
                         .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                         .accessibilityLabel("Set aside")
+                } else if let pileId = email.pileId, !MailPiles.isBuiltin(pileId) {
+                    // A pile people made (AVE-194).
+                    Image(systemName: "square.stack.fill")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .accessibilityLabel("In a pile")
                 }
                 
                 if email.starred {

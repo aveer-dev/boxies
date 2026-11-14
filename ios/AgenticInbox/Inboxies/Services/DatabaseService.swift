@@ -742,6 +742,11 @@ final class DatabaseService: @unchecked Sendable {
 
     /// Set Aside pile, oldest-added first like the Worker (AVE-201).
     func getSetAsideEmails(mailboxId: String, limit: Int = 50, offset: Int = 0) -> [Email] {
+        getPileEmails(mailboxId: mailboxId, pileId: WorkflowPileID.setAside, limit: limit, offset: offset)
+    }
+
+    /// Any pile but Reply Later (Set Aside or one people made, AVE-194), oldest-added first.
+    func getPileEmails(mailboxId: String, pileId: String, limit: Int = 50, offset: Int = 0) -> [Email] {
         return queue.sync {
             var result: [Email] = []
             var stmt: OpaquePointer?
@@ -758,14 +763,15 @@ final class DatabaseService: @unchecked Sendable {
                 alias_active, auth_tier, classification_reason, matched_rule_id,
                 reply_later_remind_at, reply_later_reminded_at, pile_id, pile_at, tags_json
             FROM emails
-            WHERE mailbox_id = ? AND pile_id = 'set_aside' AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
+            WHERE mailbox_id = ? AND pile_id = ? AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY COALESCE(pile_at, date) ASC, date DESC
             LIMIT ? OFFSET ?;
             """
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(stmt, 2, Int32(limit))
-                sqlite3_bind_int(stmt, 3, Int32(offset))
+                sqlite3_bind_text(stmt, 2, (pileId as NSString).utf8String, -1, nil)
+                sqlite3_bind_int(stmt, 3, Int32(limit))
+                sqlite3_bind_int(stmt, 4, Int32(offset))
 
                 while sqlite3_step(stmt) == SQLITE_ROW {
                     if let email = parseEmailRow(stmt) {
@@ -779,12 +785,18 @@ final class DatabaseService: @unchecked Sendable {
     }
 
     func getSetAsideCount(mailboxId: String) -> Int {
+        getPileCount(mailboxId: mailboxId, pileId: WorkflowPileID.setAside)
+    }
+
+    /// Cached mail in a pile (not Reply Later; that one keeps `getReplyLaterCount`).
+    func getPileCount(mailboxId: String, pileId: String) -> Int {
         return queue.sync {
             var count = 0
             var stmt: OpaquePointer?
-            let sql = "SELECT COUNT(*) FROM emails WHERE mailbox_id = ? AND pile_id = 'set_aside' AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'));"
+            let sql = "SELECT COUNT(*) FROM emails WHERE mailbox_id = ? AND pile_id = ? AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'));"
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (pileId as NSString).utf8String, -1, nil)
                 if sqlite3_step(stmt) == SQLITE_ROW {
                     count = Int(sqlite3_column_int(stmt, 0))
                 }
@@ -822,6 +834,20 @@ final class DatabaseService: @unchecked Sendable {
                 } else {
                     sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
                 }
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    /// A deleted pile (AVE-194): its cached mail comes out of it, nothing else changes.
+    func clearPile(mailboxId: String, pileId: String) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = "UPDATE emails SET pile_id = NULL, pile_at = NULL WHERE mailbox_id = ? AND pile_id = ?;"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (pileId as NSString).utf8String, -1, nil)
                 sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)

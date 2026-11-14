@@ -156,6 +156,12 @@ import co.inboxies.app.ui.compose.ComposeActionListOverlay
 import co.inboxies.app.services.MailTags
 import co.inboxies.app.ui.tags.LocalHiddenTagId
 import co.inboxies.app.ui.tags.TagEditorDialogs
+import co.inboxies.app.ui.piles.PileEditorDialogs
+import co.inboxies.app.ui.piles.PileIcon
+import co.inboxies.app.ui.piles.PileListSheet
+import co.inboxies.app.ui.piles.PilePickerSheet
+import co.inboxies.app.ui.piles.rememberPileEditor
+import co.inboxies.app.services.MailPiles
 import co.inboxies.app.ui.tags.TagListSheet
 import co.inboxies.app.ui.tags.TagPickerSheet
 import co.inboxies.app.ui.tags.rememberTagEditor
@@ -216,6 +222,12 @@ fun HomeShellView(
     val showsTagList by appModel.showsTagList.collectAsState()
     val tagViewRequest by appModel.tagViewRequest.collectAsState()
     val tagEditor = rememberTagEditor()
+    // Piles people made (AVE-194).
+    val customPiles by appModel.customPiles.collectAsState()
+    val pilePickerEmail by appModel.pilePickerEmail.collectAsState()
+    val showsPileList by appModel.showsPileList.collectAsState()
+    val pileViewRequest by appModel.pileViewRequest.collectAsState()
+    val pileEditor = rememberPileEditor()
     val isLoading by appModel.isLoading.collectAsState()
     val paging by appModel.paging.collectAsState()
     val inboxNewTotal by appModel.inboxNewTotal.collectAsState()
@@ -319,6 +331,7 @@ fun HomeShellView(
     val isScreeningRoom = selectedTab == screeningRoomTab
     fun isPushedTab(tab: HomeTab) = tab.isPile || tab is HomeTab.Tag || tab == screeningRoomTab
     val openTag = (selectedTab as? HomeTab.Tag)?.let { appModel.tag(it.id) }
+    val openPile = (selectedTab as? HomeTab.Pile)?.let { tab -> customPiles.firstOrNull { it.id == tab.id } }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
     // Inbox "N waiting to be screened" row (AVE-136); 0 hides it (Screener off or nobody waiting).
@@ -344,6 +357,7 @@ fun HomeShellView(
     val navigationTitle = when (val tab = selectedTab) {
         screeningRoomTab -> ScreeningRoom.TITLE
         is HomeTab.Tag -> mailTags.firstOrNull { it.id == tab.id }?.name ?: tab.title
+        is HomeTab.Pile -> customPiles.firstOrNull { it.id == tab.id }?.let(MailPiles::displayName) ?: tab.title
         HomeTab.AiInbox -> {
             val name = digest?.greetingName.orEmpty()
             if (name.isNotBlank()) "Hi $name \uD83D\uDC4B" else "Hi \uD83D\uDC4B"
@@ -394,6 +408,7 @@ fun HomeShellView(
                 else -> "$setAsideCount set aside"
             }
         }
+        is HomeTab.Pile -> MailPiles.subtitle(customPiles.firstOrNull { it.id == tab.id }?.count ?: 0)
         else -> ""
     }
 
@@ -454,6 +469,19 @@ fun HomeShellView(
         selectTab(HomeTab.Tag(tagId))
     }
 
+    fun openPileView(pileId: String) {
+        appModel.setPileListVisible(false)
+        selectTab(HomeTab.Pile(pileId))
+    }
+
+    // Reader chip → that pile's view (AVE-194); the phone's reader sheet closes first.
+    LaunchedEffect(pileViewRequest) {
+        val id = pileViewRequest ?: return@LaunchedEffect
+        appModel.consumePileViewRequest()
+        appModel.closeEmail()
+        openPileView(id)
+    }
+
     // Reader chip → that tag's view; the phone's reader sheet closes first.
     LaunchedEffect(tagViewRequest) {
         val id = tagViewRequest ?: return@LaunchedEffect
@@ -509,6 +537,7 @@ fun HomeShellView(
             ComposeActionItem.Compose -> scope.launch { appModel.startCompose(ComposeMode.New) }
             ComposeActionItem.Settings -> showSettings = true
             ComposeActionItem.Tags -> appModel.setTagListVisible(true)
+            ComposeActionItem.Piles -> appModel.setPileListVisible(true)
             else -> item.folderTab?.let { selectTab(it) }
         }
     }
@@ -579,6 +608,10 @@ fun HomeShellView(
                     onCreateTag = { tagEditor.startCreate { openTagView(it.id) } },
                     onRenameTag = { tagEditor.renaming = it },
                     onDeleteTag = { tagEditor.deleting = it },
+                    customPiles = customPiles,
+                    onCreatePile = { pileEditor.startCreate { openPileView(it.id) } },
+                    onRenamePile = { pileEditor.renaming = it },
+                    onDeletePile = { pileEditor.deleting = it },
                 )
             },
             list = {
@@ -618,6 +651,14 @@ fun HomeShellView(
                             icon = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = "Back",
                             onClick = { popTagView() },
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    } else if (selectedTab is HomeTab.Pile) {
+                        // A pile people made has no bottom-bar button to pop it (AVE-194).
+                        HomeChromeToolbarButton(
+                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Back",
+                            onClick = { popReplyLater() },
                             modifier = Modifier.padding(8.dp),
                         )
                     } else Box {
@@ -676,6 +717,28 @@ fun HomeShellView(
                                 InboxiesMenuItem(text = MailTags.DELETE_BUTTON, icon = Icons.Outlined.Delete, destructive = true, onClick = {
                                     showTagMenu = false
                                     tagEditor.deleting = openTag
+                                })
+                            }
+                        }
+                    }
+
+                    // Custom pile: rename / delete it (AVE-194; not on a read-only mailbox).
+                    if (openPile != null && !isReadOnly) {
+                        var showPileMenu by remember { mutableStateOf(false) }
+                        Box(modifier = Modifier.padding(end = 8.dp)) {
+                            HomeChromeToolbarButton(
+                                icon = Icons.Outlined.MoreHoriz,
+                                contentDescription = "Pile actions",
+                                onClick = { showPileMenu = true },
+                            )
+                            InboxiesDropdownMenu(expanded = showPileMenu, onDismiss = { showPileMenu = false }) {
+                                InboxiesMenuItem(text = MailPiles.RENAME_MENU, icon = Icons.Outlined.Edit, onClick = {
+                                    showPileMenu = false
+                                    pileEditor.renaming = openPile
+                                })
+                                InboxiesMenuItem(text = MailPiles.DELETE_BUTTON, icon = Icons.Outlined.Delete, destructive = true, onClick = {
+                                    showPileMenu = false
+                                    pileEditor.deleting = openPile
                                 })
                             }
                         }
@@ -1109,6 +1172,39 @@ fun HomeShellView(
                                     message = "Keep mail you need handy, like tickets or a document you're waiting on.",
                                 ),
                             )
+                            // A pile people made (AVE-194): Set Aside's list under its own name.
+                            is HomeTab.Pile -> {
+                                val name = customPiles.firstOrNull { it.id == tab.id }?.let(MailPiles::displayName) ?: tab.title
+                                EmailListView(
+                                    emails = tabEmails,
+                                    isLoading = tabLoading,
+                                    bottomInset = listBottomInset,
+                                    fallbackFolderId = null,
+                                    showsTags = false,
+                                    isSelectMode = isSelectMode,
+                                    selectedEmailIds = selectedEmailIds,
+                                    onToggleSelect = { id ->
+                                        selectedEmailIds = if (selectedEmailIds.contains(id)) {
+                                            selectedEmailIds - id
+                                        } else {
+                                            selectedEmailIds + id
+                                        }
+                                    },
+                                    isFiltered = false,
+                                    onClearFilters = null,
+                                    filterChipsBar = null,
+                                    onRefresh = { appModel.refreshCurrentTab() },
+                                    loadError = emailListError,
+                                    paging = paging,
+                                    onLoadMore = { appModel.loadMoreEmails() },
+                                    onOpen = { email -> scope.launch { appModel.openEmail(email) } },
+                                    emptyState = EmptyStateCopy(
+                                        icon = PileIcon,
+                                        title = MailPiles.viewEmptyTitle(name),
+                                        message = MailPiles.VIEW_EMPTY_MESSAGE,
+                                    ),
+                                )
+                            }
                             is HomeTab.Tag -> CompositionLocalProvider(LocalHiddenTagId provides tab.id) {
                                 val name = mailTags.firstOrNull { it.id == tab.id }?.name ?: tab.title
                                 EmailListView(
@@ -1509,6 +1605,19 @@ fun HomeShellView(
         TagPickerSheet(email = email, onDismiss = { appModel.dismissTagPicker() })
     }
     TagEditorDialogs(tagEditor)
+
+    // Piles people made (AVE-194): home's Piles group on phones, and the Move to pile picker.
+    if (showsPileList) {
+        PileListSheet(
+            selectedPileId = (selectedTab as? HomeTab.Pile)?.id,
+            onOpenPile = { openPileView(it.id) },
+            onDismiss = { appModel.setPileListVisible(false) },
+        )
+    }
+    pilePickerEmail?.let { email ->
+        PilePickerSheet(email = email, onDismiss = { appModel.dismissPilePicker() })
+    }
+    PileEditorDialogs(pileEditor)
 
     if (showAddMailbox) {
         Dialog(onDismissRequest = { if (!isCreatingMailbox) showAddMailbox = false }) {

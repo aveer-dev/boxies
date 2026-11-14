@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import type { WorkflowPile } from "shared/piles";
 import {
 	useMutation,
 	useQueries,
@@ -40,7 +41,8 @@ export function useInboxUnreadCounts(mailboxIds: string[]) {
 }
 
 export function useWorkflowPiles(mailboxId: string | undefined) {
-	return useQuery<{ id: string; count: number; due_count?: number }[]>({
+	// Older Workers send only `id`, `count` and `due_count` (see `pileName`).
+	return useQuery<(Pick<WorkflowPile, "id" | "count"> & Partial<WorkflowPile>)[]>({
 		queryKey: mailboxId
 			? queryKeys.workflowPiles.list(mailboxId)
 			: ["workflow-piles", "_disabled"],
