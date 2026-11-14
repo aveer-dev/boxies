@@ -5,6 +5,7 @@
 import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import RichTextEditor from "~/components/RichTextEditor";
+import { useWritingSuggestions, type WritingSuggestionsOptions } from "~/hooks/useWritingSuggestions";
 import type { PreparedAttachment } from "~/lib/prepare-compose-attachment";
 import ComposeAttachChips from "./ComposeAttachChips";
 import ComposeAttachSourceMenu from "./ComposeAttachSourceMenu";
@@ -17,7 +18,10 @@ export default function ComposeBodyChrome({
 	attachments,
 	onAddFiles,
 	onRemoveAttachment,
+	suggestions,
 }: {
+	/** Writing suggestions (AVE-189); off when omitted. */
+	suggestions?: WritingSuggestionsOptions;
 	body: string;
 	onBodyChange: (html: string) => void;
 	attachments: PreparedAttachment[];
@@ -42,6 +46,8 @@ export default function ComposeBodyChrome({
 	const handleEditor = useCallback((next: Editor | null) => {
 		setEditor(next);
 	}, []);
+
+	useWritingSuggestions(editor, suggestions ?? { mailboxId: undefined, enabled: false });
 
 	const onPicked = (list: FileList | null) => {
 		if (!list?.length) return;

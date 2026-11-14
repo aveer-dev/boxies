@@ -1034,9 +1034,24 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Writing suggestions quota (AVE-189, workers/lib/ai-quota.ts): the
+		// 'suggest' bucket's daily counter. Same columns as ai_usage (41), whose
+		// CHECK only allows 'chat' and 'inbound', so the bucket gets its own
+		// table instead of a rebuild of ai_usage. Pruned on write like ai_usage.
+		// Additive only: a new table. Numbered 50, after 49_piles.
+		name: "50_ai_suggest_usage",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS ai_suggest_usage (
+                day TEXT NOT NULL,
+                bucket TEXT NOT NULL CHECK (bucket = 'suggest'),
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, bucket)
+            );
+        `),
+	},
+	{
 		// Paper Trail (AVE-192): a system folder for senders you send there.
-		// Named 51_ because the writing-suggestions PR claims 50_; the runner
-		// tracks migrations by name, so the gap is harmless. A custom folder
+		// Runs after 50_ai_suggest_usage (AVE-189). A custom folder
 		// already named "Paper Trail" (any case) keeps its id and mail and is
 		// renamed, like 16_ did for Promotions / Updates (folder names are
 		// unique).

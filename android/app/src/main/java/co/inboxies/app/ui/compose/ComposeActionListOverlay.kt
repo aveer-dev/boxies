@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Newspaper
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -84,6 +85,8 @@ enum class ComposeActionItem {
     Settings,
     /** Opens the Tags sheet (AVE-242): home's Tags group on phones. */
     Tags,
+    /** Opens the Piles sheet (AVE-194): piles people made, beside Reply Later and Set Aside. */
+    Piles,
     Trash,
     Spam,
     Archive,
@@ -103,6 +106,7 @@ enum class ComposeActionItem {
         get() = when (this) {
             Settings -> "Settings"
             Tags -> "Tags"
+            Piles -> "Piles"
             Trash -> "Trash"
             Spam -> "Spam"
             Archive -> "Archive"
@@ -120,6 +124,7 @@ enum class ComposeActionItem {
         get() = when (this) {
             Settings -> Icons.Filled.Settings
             Tags -> Icons.Filled.Sell
+            Piles -> Icons.Filled.Layers
             Trash -> Icons.Filled.Delete
             Spam -> Icons.Filled.Warning
             Archive -> Icons.Filled.Archive
@@ -145,7 +150,7 @@ enum class ComposeActionItem {
             Archive -> HomeTab.Folder(FolderIds.ARCHIVE)
             Spam -> HomeTab.Folder(FolderIds.SPAM)
             Trash -> HomeTab.Folder(FolderIds.TRASH)
-            Settings, Tags, Compose -> null
+            Settings, Tags, Piles, Compose -> null
         }
 }
 

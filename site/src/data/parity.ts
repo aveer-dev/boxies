@@ -23,7 +23,7 @@ const shown = (rows: Row[]): ParityRow[] => rows.filter((r) => !r.webOnly || fla
 export const gmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Categories and tabs", ours: "Inbox · Promotions · Updates · Spam", status: "partly", note: "Newsletters from people you’ve emailed are sorted for you; senders you accept go where you choose. No Social or Forums.", src: `${GMAIL}; dev 31c58c6 (classifier files allowed senders without a chosen destination; header rules, not AI)` },
 	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "An email lives in one folder and can carry as many tags as you like. Each tag opens a view of everything with it.", src: `${GMAIL}; AVE-240 #275 (shared/tags.ts); AVE-241 #277 (web); AVE-242 (iOS, Android)` },
-	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives; no suggestions as you type." : "Drafts replies when you ask; no suggestions as you type.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49)` },
+	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives. On the web, grey text can finish your sentence as you type; not yet on iPhone or Android." : "Drafts replies when you ask. On the web, grey text can finish your sentence as you type; not yet on iPhone or Android.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49); AVE-189 (writing suggestions, web only, off by default)` },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins; a one-mailbox export is planned.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Confidential mode", ours: "—", status: "notyet", src: GMAIL },
@@ -36,7 +36,7 @@ export const hey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Paper Trail", status: "available", note: "Its own folder. Send a sender there from the Screener, or when you move their mail; it’s listed by month and never notifies you.", src: `${HEY}; AVE-192 (shared/folders.ts PAPER_TRAIL, shared/paper-trail.ts; shouldSendPush skips Paper Trail; DO migration 51_paper_trail_folder; web, iOS, Android)` },
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", src: HEY },
 	{ competitor: "hey", theirs: "Focus & Reply", ours: "Focus & Reply", status: "available", note: "One thread at a time, with the reply open.", src: `${HEY}; AVE-193 (iOS, Android)` },
-	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later and Set Aside", status: "partly", note: "Two piles so far; no piles of your own yet.", src: `${HEY}; AVE-201` },
+	{ competitor: "hey", theirs: "Workflows", ours: "Piles", status: "available", note: "Make your own, like “Waiting on” or “To pay”, next to Reply Later and Set Aside. A thread sits in one pile at a time; no stages inside a pile.", src: `${HEY}; AVE-201; AVE-194 (shared/piles.ts, workers/routes/piles.ts; web, iOS, Android)` },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "available", note: "Next to Reply Later. Replying doesn’t take a thread out.", src: `${HEY}; AVE-201 (web, iOS, Android)` },
 	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Tracker blocking", status: "available", note: "Known tracking pixels are removed in every folder, and the message says who tried. Other images still load; in Spam, remote images stay hidden until you load them.", src: `${HEY}; dev AVE-195 (shared/tracking-pixels.ts: MailboxDO getEmail / getThreadEmails strip known pixels, blocked_trackers → reader note on web, iOS, Android); AVE-132 (#168, shared/remote-images.ts)` },
@@ -54,7 +54,7 @@ export const landingGmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Inbox categories", ours: "Inbox · Promotions · Updates", status: "partly", note: "Sorted for you, or per sender.", landing: true, src: "RM#2; dev 31c58c6" },
 	{ competitor: "gmail", theirs: "Labels", ours: "Folders and tags", status: "available", note: "Many tags per email.", landing: true, src: "RM#2; AVE-240..242 (tags on web, iOS, Android)" },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", landing: true, src: "RM#2" },
-	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts when you ask; no suggestions as you type.", landing: true, src: "RM#2" },
+	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts when you ask; suggestions as you type on the web.", landing: true, src: "RM#2; AVE-189" },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins.", landing: true, src: "RM#2" },
 ]);
 

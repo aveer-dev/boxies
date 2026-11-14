@@ -63,6 +63,9 @@
 #   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Folders, delete confirmation open
 #   ./scripts/run-debug-preview.sh tagView             # tag view "Clients" (AVE-242)
 #   ./scripts/run-debug-preview.sh tagPicker           # reader with the tag picker open
+#   ./scripts/run-debug-preview.sh pile                # custom pile "Waiting on" (AVE-194)
+#   ./scripts/run-debug-preview.sh pileList            # home Piles sheet
+#   ./scripts/run-debug-preview.sh pilePicker          # reader with the Move to pile picker open
 #   ./scripts/run-debug-preview.sh tagList             # home with the Tags sheet open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
@@ -138,6 +141,9 @@ case "$mode" in
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
   setAside|SetAside|set-aside|previewSetAside) extra=previewSetAside; label=setAside ;;
+  pile|Pile|previewPile) extra=previewPile; label=pile ;;
+  pileList|PileList|previewPileList) extra=previewPileList; label=pileList ;;
+  pilePicker|PilePicker|previewPilePicker) extra=previewPilePicker; label=pilePicker ;;
   focusReply|FocusReply|focus-reply|previewFocusReply) extra=previewFocusReply; label=focusReply ;;
   focusReplyDone|FocusReplyDone|previewFocusReplyDone) extra=previewFocusReplyDone; label=focusReplyDone ;;
   paperTrail|PaperTrail|previewPaperTrail) extra=previewPaperTrail; label=paperTrail ;;
@@ -177,7 +183,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

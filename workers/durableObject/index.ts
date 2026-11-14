@@ -219,6 +219,7 @@ import {
 } from "../lib/outbound-send-sweeper";
 import {
 	deleteSummariesForEmail,
+	messageIneligibility,
 	resolveSummary,
 	shareInflight,
 	SummaryGenerationError,
@@ -227,16 +228,22 @@ import {
 	type SummaryQuotaCheck,
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
+import { buildSuggestionContext, type PrepareSuggestionResult } from "../lib/compose-suggest";
 import {
 	PILE_EXCLUDED_FOLDERS_SQL,
 	PILE_REPLY_LATER,
 	UNKNOWN_PILE_ERROR,
 	clearOtherPilesInThread,
 	countPile,
+	createPile,
+	deletePile,
 	isPileId,
 	listPiles,
+	renamePile,
 	setEmailPile,
+	type CreatePileResult,
 	type PileChange,
+	type RenamePileResult,
 } from "../lib/piles";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
 import type { AiQuotaExceededError, AiUsageSnapshot } from "../../shared/ai-quota";
@@ -505,9 +512,42 @@ export class MailboxDO extends DurableObject<Env> {
 	 * Refused when the bucket is at its plan-tier limit; see lib/ai-quota.ts.
 	 */
 	async consumeAiQuota(bucket: AiQuotaBucket, tier: PlanTier = "free"): Promise<AiQuotaResult> {
-		if (bucket !== "chat" && bucket !== "inbound") throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		if (bucket !== "chat" && bucket !== "inbound" && bucket !== "suggest") {
+			throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		}
 		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
 		return consumeAiQuota(this.ctx.storage.sql, bucket, dailyLimit(planTier, bucket));
+	}
+
+	/**
+	 * Before a writing-suggestion model run (AVE-189): count one unit of the
+	 * `suggest` bucket and load the message being replied to as context. The
+	 * quota check fails open like tryConsumeAiQuota. The replied-to message is
+	 * left out when it isn't mail that reached the mailbox (Spam, Trash,
+	 * Screener, a screened-out sender) or looks like a prompt injection.
+	 */
+	async prepareComposeSuggestion(
+		inReplyTo: string | null,
+		tier: PlanTier = "free",
+	): Promise<PrepareSuggestionResult> {
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		try {
+			const quota = consumeAiQuota(this.ctx.storage.sql, "suggest", dailyLimit(planTier, "suggest"));
+			if (!quota.allowed) return { status: "quota_exceeded", error: quota.error };
+		} catch (e) {
+			console.error("AI quota check failed (suggest), allowing:", (e as Error).message);
+		}
+		if (!inReplyTo || inReplyTo.length > 512) return { status: "ok", context: null };
+		const meta = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, folder_id, sender, sender_name, subject, date FROM emails WHERE id = ?1`,
+				inReplyTo,
+			),
+		][0] as unknown as SummaryMessageMeta | undefined;
+		if (!meta || messageIneligibility(meta, this.#rejectedSendersAmong([meta])) !== null) {
+			return { status: "ok", context: null };
+		}
+		return { status: "ok", context: buildSuggestionContext(meta, await this.#summaryBody(meta.id)) };
 	}
 
 	/** Today's AI usage against the plan-tier limits, for usage meters (AVE-45). */
@@ -1421,6 +1461,39 @@ export class MailboxDO extends DurableObject<Env> {
 			// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
 			due_count: pile.id === PILE_REPLY_LATER ? countDueReplyLater(sql) : 0,
 		}));
+	}
+
+	// ── Custom piles (AVE-194; see shared/piles) ──────────────────
+	// Shared by the whole mailbox: `piles_changed` after a pile is created,
+	// renamed or deleted; deleting also sends `email_updated` per message
+	// that came out of it.
+
+	async createPile(name: unknown): Promise<CreatePileResult> {
+		await this.#assertMailboxWritable();
+		const result = createPile(this.ctx.storage.sql, name);
+		if (result.ok) this.broadcastEvent("piles_changed", {});
+		return result;
+	}
+
+	async renamePile(pileId: string, name: unknown): Promise<RenamePileResult> {
+		await this.#assertMailboxWritable();
+		const result = renamePile(this.ctx.storage.sql, pileId, name);
+		if (result.ok && result.changed) this.broadcastEvent("piles_changed", {});
+		return result;
+	}
+
+	/** Delete a custom pile; its mail comes out of it and is otherwise untouched. */
+	async deletePile(pileId: string): Promise<"ok" | "not_found" | "builtin"> {
+		const result = this.ctx.storage.transactionSync(() => deletePile(this.ctx.storage.sql, pileId));
+		if (!result.ok) return result.error;
+		// A big pile is left to `piles_changed` (clients refetch) rather than one event per message.
+		if (result.emailIds.length <= 100) {
+			for (const id of result.emailIds) {
+				this.broadcastEvent("email_updated", { id, pile_id: null, reply_later: false });
+			}
+		}
+		this.broadcastEvent("piles_changed", {});
+		return "ok";
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──

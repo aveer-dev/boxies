@@ -19,6 +19,7 @@ import PopOutReader from "~/components/PopOutReader";
 import TextSizeWheelHost from "~/components/TextSizeWheel";
 import ShortcutSheet from "~/components/ShortcutSheet";
 import ReplyLaterReminderDialog from "~/components/ReplyLaterReminderDialog";
+import { PileCreateDialog } from "~/components/PileDialogs";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
 import { forgetLastMailbox, readLastMailbox, rememberLastMailbox } from "~/lib/last-mailbox";
@@ -184,6 +185,7 @@ function MailboxShell() {
 			<PopOutReader />
 			<TextSizeWheelHost />
 			<ReplyLaterReminderDialog />
+			<PileCreateDialog />
 		</>
 	);
 }

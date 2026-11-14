@@ -9,7 +9,7 @@ import { TagPicker } from "~/components/TagPicker";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import { isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
-import { isSetAside } from "~/lib/piles";
+import { customPiles, isSetAside, pileOf, type PileSummary } from "~/lib/piles";
 import { keysFor } from "~/lib/shortcuts";
 import {
 	BookmarkSimpleIcon,
@@ -20,6 +20,7 @@ import {
 	ArrowLeftIcon,
 	ArrowsOutSimpleIcon,
 	ChatCircleIcon,
+	CheckIcon,
 	ClockCounterClockwiseIcon,
 	CodeIcon,
 	EnvelopeOpenIcon,
@@ -28,7 +29,9 @@ import {
 	NotePencilIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
+	PlusIcon,
 	ShieldCheckIcon,
+	StackIcon,
 	StarIcon,
 	TagSimpleIcon,
 	TrashIcon,
@@ -71,6 +74,12 @@ interface EmailPanelToolbarProps {
 	onDelete: () => void;
 	/** Pins a new sticky note to the conversation (AVE-60). */
 	onAddStickyNote?: () => void;
+	/** Piles people made (AVE-194): absent hides the button. */
+	piling?: {
+		piles: readonly PileSummary[];
+		onSet: (pile: { id: string; name: string } | null) => void;
+		onNew: () => void;
+	};
 	/** Tags (AVE-241): the conversation's key and tags; absent hides the button. */
 	tagging?: {
 		threadId: string;
@@ -106,6 +115,7 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 	onAddStickyNote,
+	piling,
 	tagging,
 }: EmailPanelToolbarProps) {
 	// Icons pop when switched on (not when a starred message first renders).
@@ -217,6 +227,7 @@ export default function EmailPanelToolbar({
 				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
 			)}
 			{!isReadOnly && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
+			{!isReadOnly && piling && <PileMenu email={email} piling={piling} />}
 			{!isReadOnly && tagging && (
 				<TagButton mailboxId={mailboxId} tagging={tagging} />
 			)}
@@ -338,6 +349,88 @@ function MoveToFolderMenu({ folders, onMove }: { folders: Folder[]; onMove: (id:
 						{f.name}
 					</button>
 				))}
+			</FloatingPanel>
+		</>
+	);
+}
+
+/**
+ * Piles people made (AVE-194): tick shows the one the message is in; picking
+ * it again takes it out. "New pile…" names one and puts the message in it.
+ */
+function PileMenu({
+	email,
+	piling,
+}: {
+	email: Email;
+	piling: NonNullable<EmailPanelToolbarProps["piling"]>;
+}) {
+	const [open, setOpen] = useState(false);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const close = useCallback(() => setOpen(false), []);
+	const current = pileOf(email);
+	const piles = customPiles(piling.piles);
+	const inCustom = piles.some((p) => p.id === current);
+	const itemClass =
+		"w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-lg text-sm text-kumo-default hover:bg-kumo-overlay focus-visible:bg-kumo-overlay focus-visible:outline-none transition-colors duration-100";
+
+	return (
+		<>
+			<IconButton
+				ref={triggerRef}
+				label="Piles"
+				icon={StackIcon}
+				size="md"
+				weight={inCustom ? "fill" : "regular"}
+				iconClassName={inCustom ? "text-kumo-default" : ""}
+				onClick={() => setOpen((o) => !o)}
+				aria-haspopup="menu"
+				aria-expanded={open}
+			/>
+			<FloatingPanel
+				anchorRef={triggerRef}
+				open={open}
+				onClose={close}
+				align="left"
+				role="menu"
+				aria-label="Piles"
+				className="min-w-[200px]"
+			>
+				<div className="px-2.5 py-1.5 text-xs font-medium text-kumo-subtle">Put in pile</div>
+				<div className="h-px bg-kumo-line my-1 -mx-1" />
+				{piles.map((p) => {
+					const on = p.id === current;
+					const name = p.name ?? "Pile";
+					return (
+						<button
+							key={p.id}
+							type="button"
+							role="menuitemcheckbox"
+							aria-checked={on}
+							className={itemClass}
+							onClick={() => {
+								piling.onSet(on ? null : { id: p.id, name });
+								setOpen(false);
+							}}
+						>
+							<span className="flex-1 truncate">{name}</span>
+							{on && <CheckIcon size={14} className="text-kumo-subtle" />}
+						</button>
+					);
+				})}
+				{piles.length > 0 && <div className="h-px bg-kumo-line my-1 -mx-1" />}
+				<button
+					type="button"
+					role="menuitem"
+					className={itemClass}
+					onClick={() => {
+						setOpen(false);
+						piling.onNew();
+					}}
+				>
+					<PlusIcon size={14} className="text-kumo-subtle" />
+					New pile…
+				</button>
 			</FloatingPanel>
 		</>
 	);

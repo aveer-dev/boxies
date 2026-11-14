@@ -19,6 +19,7 @@ extension AppModel {
     /// Title for a tab, using the tag's live name for tag views.
     func title(for tab: HomeTab) -> String {
         if case .tag(let id) = tab { return tag(id: id)?.name ?? tab.title }
+        if case .pile(let id) = tab { return customPile(id: id).map(MailPiles.displayName) ?? tab.title }
         return tab.title
     }
 

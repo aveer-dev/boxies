@@ -16,6 +16,8 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
+	PlusIcon,
+	StackIcon,
 	StarIcon,
 	TagSimpleIcon,
 	TrashIcon,
@@ -26,9 +28,9 @@ import { Folders } from "shared/folders";
 import { type MenuEntry, useContextMenu } from "~/components/ContextMenu";
 import { type EmailActions, hasUnread } from "~/hooks/useEmailActions";
 import { pendingReminder } from "~/lib/reply-later-reminders";
-import { isSetAside } from "~/lib/piles";
+import { customPiles, isSetAside, pileOf, type PileSummary } from "~/lib/piles";
 import { keysFor } from "~/lib/shortcuts";
-import { useFolders } from "~/queries/folders";
+import { useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useSetThreadTag, useTags } from "~/queries/tags";
 import { useUIStore } from "~/hooks/useUIStore";
 import { tagThreadKey } from "~/lib/tags";
@@ -45,6 +47,8 @@ export function buildEmailMenu(
 	moveTargets: { id: string; name: string }[],
 	/** Tags (AVE-241): the mailbox's tags and how to set one on the row's conversation. */
 	tagging?: { tags: readonly TagRef[]; set: (email: Email, tag: TagRef, on: boolean) => void },
+	/** Piles people made (AVE-194); the "Piles" submenu shows when the mailbox is writable. */
+	piles?: readonly PileSummary[],
 ): MenuEntry[] {
 	const isDraft = email.folder_id === Folders.DRAFT;
 	const unread = hasUnread(email);
@@ -88,6 +92,7 @@ export function buildEmailMenu(
 			shortcut: keysFor("setAside"),
 			onSelect: () => actions.toggleSetAside(email),
 		},
+		...pileMenu(email, actions, piles),
 		{
 			type: "item",
 			label: pendingReminder(email) ? "Change reminder" : "Remind me…",
@@ -162,12 +167,36 @@ export function buildEmailMenu(
 }
 
 /**
+ * "Piles" submenu (AVE-194): the piles people made, ticked when the message
+ * is in one (choosing it again takes it out), and "New pile…". Empty when
+ * piles aren't offered (read-only mailbox).
+ */
+function pileMenu(email: Email, actions: EmailActions, piles: readonly PileSummary[] | undefined): MenuEntry[] {
+	if (!piles || email.folder_id === Folders.DRAFT) return [];
+	const current = pileOf(email);
+	const items: MenuEntry[] = customPiles(piles).map((pile) => {
+		const on = current === pile.id;
+		const name = pile.name ?? "Pile";
+		return {
+			type: "item",
+			label: name,
+			icon: on ? CheckIcon : undefined,
+			onSelect: () => actions.setPile(email, on ? null : { id: pile.id, name }),
+		};
+	});
+	if (items.length > 0) items.push({ type: "separator" });
+	items.push({ type: "item", label: "New pile…", icon: PlusIcon, onSelect: () => actions.newPile(email) });
+	return [{ type: "submenu", label: "Piles", icon: StackIcon, items }];
+}
+
+/**
  * Opens the mail-row menu at the pointer (right-click), beside the ⋯ button,
  * or under a focused row (context-menu key / ⇧F10).
  */
 export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 	const { data: folders = [] } = useFolders(mailboxId);
 	const { data: tags = [] } = useTags(mailboxId);
+	const { data: piles = [] } = useWorkflowPiles(mailboxId);
 	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	const setThreadTag = useSetThreadTag();
 	const open = useContextMenu((s) => s.open);
@@ -186,7 +215,7 @@ export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 								on,
 							}),
 					};
-			const entries = buildEmailMenu(email, actions, folders, tagging);
+			const entries = buildEmailMenu(email, actions, folders, tagging, isReadOnly ? undefined : piles);
 			const label = `Actions for ${email.subject || "message"}`;
 			if (from instanceof HTMLElement) {
 				// Keyboard (row) or the ⋯ button: anchor to the element.
@@ -214,6 +243,6 @@ export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 				viaKeyboard: from.detail === 0 && from.clientX === 0 && from.clientY === 0,
 			});
 		},
-		[actions, folders, tags, isReadOnly, setThreadTag.mutate, mailboxId, open],
+		[actions, folders, tags, piles, isReadOnly, setThreadTag.mutate, mailboxId, open],
 	);
 }

@@ -67,8 +67,8 @@ const quiet = async (fn) => {
 
 // ── Config: one seam, everyone Free ─────────────────────────────
 assert.equal(getPlanTier("ada@example.com"), "free");
-assert.deepEqual(AI_DAILY_LIMITS.free, { chat: 50, inbound: 200 });
-assert.deepEqual(AI_DAILY_LIMITS.paid, { chat: 500, inbound: 2000 });
+assert.deepEqual(AI_DAILY_LIMITS.free, { chat: 50, inbound: 200, suggest: 300 });
+assert.deepEqual(AI_DAILY_LIMITS.paid, { chat: 500, inbound: 2000, suggest: 3000 });
 assert.equal(CHAT_HISTORY_LIMIT, 20);
 
 // ── History beyond the cap isn't sent ───────────────────────────
@@ -329,6 +329,7 @@ async function setup() {
 		resetsAt: "2026-10-29T00:00:00.000Z",
 		chat: { used: 0, limit: 50 },
 		inbound: { used: 0, limit: 200 },
+		suggest: { used: 0, limit: 300 },
 	});
 	for (let i = 0; i < 12; i++) consumeAiQuota(sql, "chat", 50, now);
 	for (let i = 0; i < 3; i++) consumeAiQuota(sql, "inbound", 200, now);

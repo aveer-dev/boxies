@@ -9,7 +9,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { formatReminderLong } from "~/lib/reply-later-reminders";
 import { queryKeys } from "~/queries/keys";
 import { useUpdateEmail } from "~/queries/emails";
-import { PILE_SET_ASIDE, isSetAside } from "~/lib/piles";
+import { PILE_REPLY_LATER, PILE_SET_ASIDE, isSetAside, pileOf } from "~/lib/piles";
 import type { Email } from "~/types";
 
 /**
@@ -88,6 +88,39 @@ export function useReplyLater(mailboxId: string | undefined) {
 		[mailboxId, updateEmail, refreshPiles, toastManager],
 	);
 
+	/**
+	 * Any pile, including the ones people make (AVE-194): `pile` null takes
+	 * the message out of its pile. One pile at a time, so joining moves it out
+	 * of Reply Later or Set Aside (and drops a reminder). `name` is for the toast.
+	 */
+	const setPile = useCallback(
+		(email: Email, pile: { id: string; name: string } | null) => {
+			if (!mailboxId) return;
+			if (pile?.id === PILE_REPLY_LATER) {
+				if (!email.reply_later) toggleReplyLater(email);
+				return;
+			}
+			const current = pileOf(email);
+			if (pile && current === pile.id) return;
+			if (!pile && !current) return;
+			updateEmail.mutate(
+				{
+					mailboxId,
+					id: email.id,
+					data: pile
+						? { pile: pile.id, pile_id: pile.id, reply_later: false, reply_later_remind_at: null }
+						: { pile: null, pile_id: null, reply_later: false },
+				},
+				{
+					onSettled: refreshPiles,
+					onError: () => toastManager.add({ title: "Couldn't update the pile", variant: "error" }),
+				},
+			);
+			toastManager.add({ title: pile ? `Moved to ${pile.name}` : "Removed from pile" });
+		},
+		[mailboxId, updateEmail, refreshPiles, toastManager, toggleReplyLater],
+	);
+
 	/** `at` sets (and adds to Reply Later); null removes the pending reminder. */
 	const setReminder = useCallback(
 		(email: Email, at: Date | null) => {
@@ -112,7 +145,7 @@ export function useReplyLater(mailboxId: string | undefined) {
 	);
 
 	return useMemo(
-		() => ({ toggleReplyLater, toggleSetAside, setReminder, openReminderPicker }),
-		[toggleReplyLater, toggleSetAside, setReminder, openReminderPicker],
+		() => ({ toggleReplyLater, toggleSetAside, setPile, setReminder, openReminderPicker }),
+		[toggleReplyLater, toggleSetAside, setPile, setReminder, openReminderPicker],
 	);
 }

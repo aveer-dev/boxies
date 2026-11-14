@@ -14,8 +14,14 @@
  * columns, mirrored by triggers, so writes to either side stay in step.
  */
 
-export const PILE_REPLY_LATER = "reply_later";
-export const PILE_SET_ASIDE = "set_aside";
+import {
+	MAX_CUSTOM_PILES,
+	PILE_REPLY_LATER,
+	PILE_SET_ASIDE,
+	normalizePileName,
+} from "../../shared/piles";
+
+export { PILE_REPLY_LATER, PILE_SET_ASIDE };
 
 /** Thrown by MailboxDO.updateEmail for a pile id that doesn't exist (route answers 400). */
 export const UNKNOWN_PILE_ERROR = "Unknown pile";
@@ -132,4 +138,90 @@ export function setEmailPile(
 	}
 	changes.push(...clearOtherPilesInThread(sql, emailId, pileId));
 	return changes;
+}
+
+// ── Custom piles (AVE-194) ───────────────────────────────────────
+
+export type CreatePileResult =
+	| { ok: true; pile: Pile }
+	| { ok: false; error: "invalid"; message: string }
+	| { ok: false; error: "conflict" | "limit" };
+
+export type RenamePileResult =
+	| { ok: true; pile: Pile; changed: boolean }
+	| { ok: false; error: "invalid"; message: string }
+	| { ok: false; error: "not_found" | "conflict" | "builtin" };
+
+export type DeletePileResult =
+	| { ok: true; emailIds: string[] }
+	| { ok: false; error: "not_found" | "builtin" };
+
+/** Custom pile ids: `p_` + 32 hex, inside the `[a-z0-9_]{1,64}` the list route accepts. */
+export function newCustomPileId(): string {
+	return `p_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+function nameTaken(sql: SqlLike, key: string, exceptId?: string): boolean {
+	return listPiles(sql).some((p) => p.id !== exceptId && p.name.toLowerCase() === key);
+}
+
+function getPile(sql: SqlLike, id: string): Pile | null {
+	return listPiles(sql).find((p) => p.id === id) ?? null;
+}
+
+/** Make a named pile at the end of the list. Names are unique ignoring case (built-ins included). */
+export function createPile(
+	sql: SqlLike,
+	rawName: unknown,
+	options: { id?: string; now?: string } = {},
+): CreatePileResult {
+	const name = normalizePileName(rawName);
+	if (!name.ok) return { ok: false, error: "invalid", message: name.error };
+	if (nameTaken(sql, name.key)) return { ok: false, error: "conflict" };
+	const custom = Number(
+		rows<{ n: number }>(sql, `SELECT COUNT(*) AS n FROM piles WHERE builtin = 0`)[0]?.n ?? 0,
+	);
+	if (custom >= MAX_CUSTOM_PILES) return { ok: false, error: "limit" };
+	const position =
+		Number(rows<{ p: number | null }>(sql, `SELECT MAX(position) AS p FROM piles`)[0]?.p ?? 0) + 1;
+	const id = options.id ?? newCustomPileId();
+	sql.exec(
+		`INSERT INTO piles (id, name, position, builtin, clears_on_reply, created_at) VALUES (?1, ?2, ?3, 0, 0, ?4)`,
+		id,
+		name.name,
+		position,
+		options.now ?? new Date().toISOString(),
+	);
+	const pile = getPile(sql, id);
+	if (!pile) throw new Error("pile insert failed");
+	return { ok: true, pile };
+}
+
+/** Rename a custom pile. A new spelling of the same name (case) is allowed. */
+export function renamePile(sql: SqlLike, pileId: string, rawName: unknown): RenamePileResult {
+	const existing = getPile(sql, pileId);
+	if (!existing) return { ok: false, error: "not_found" };
+	if (existing.builtin) return { ok: false, error: "builtin" };
+	const name = normalizePileName(rawName);
+	if (!name.ok) return { ok: false, error: "invalid", message: name.error };
+	if (nameTaken(sql, name.key, pileId)) return { ok: false, error: "conflict" };
+	const changed = existing.name !== name.name;
+	if (changed) sql.exec(`UPDATE piles SET name = ?1 WHERE id = ?2`, name.name, pileId);
+	return { ok: true, pile: { ...existing, name: name.name }, changed };
+}
+
+/**
+ * Delete a custom pile. Its mail only comes out of the pile: folders, read
+ * state and everything else stay. Returns the messages that were in it.
+ */
+export function deletePile(sql: SqlLike, pileId: string): DeletePileResult {
+	const existing = getPile(sql, pileId);
+	if (!existing) return { ok: false, error: "not_found" };
+	if (existing.builtin) return { ok: false, error: "builtin" };
+	const emailIds = rows<{ id: string }>(sql, `SELECT id FROM emails WHERE pile_id = ?1`, pileId).map(
+		(r) => r.id,
+	);
+	sql.exec(`UPDATE emails SET pile_id = NULL, pile_at = NULL WHERE pile_id = ?1`, pileId);
+	sql.exec(`DELETE FROM piles WHERE id = ?1`, pileId);
+	return { ok: true, emailIds };
 }

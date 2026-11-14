@@ -10,7 +10,11 @@
  * send the same fields as a 429 JSON body, with `error` set to `message`.
  */
 
-export type AiQuotaBucket = "chat" | "inbound";
+/**
+ * `suggest` (AVE-189) counts writing suggestions while composing: a separate,
+ * cheaper bucket with its own daily cap, so typing can't use up agent chat.
+ */
+export type AiQuotaBucket = "chat" | "inbound" | "suggest";
 
 export interface AiQuotaExceededError {
 	type: "ai_quota_exceeded";
@@ -29,7 +33,12 @@ export function aiQuotaExceededError(
 	resetsAt: string,
 ): AiQuotaExceededError {
 	// AI summaries count against the chat bucket too (AVE-215).
-	const what = bucket === "chat" ? "AI chat messages and summaries" : "inbound AI checks";
+	const what =
+		bucket === "chat"
+			? "AI chat messages and summaries"
+			: bucket === "suggest"
+				? "writing suggestions"
+				: "inbound AI checks";
 	return {
 		type: "ai_quota_exceeded",
 		bucket,
@@ -73,10 +82,12 @@ export interface AiUsageSnapshot {
 	tier: "free" | "paid";
 	/** UTC day the counters cover, `YYYY-MM-DD`. */
 	day: string;
-	/** ISO timestamp of the next UTC midnight, when both counters reset. */
+	/** ISO timestamp of the next UTC midnight, when the counters reset. */
 	resetsAt: string;
 	chat: AiUsageMeter;
 	inbound: AiUsageMeter;
+	/** Writing suggestions (AVE-189). Absent from Workers older than this field. */
+	suggest?: AiUsageMeter;
 }
 
 /** Fraction of the meter at which clients switch to the warning tint. */

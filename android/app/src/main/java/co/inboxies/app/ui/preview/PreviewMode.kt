@@ -95,6 +95,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ReplyLater("replyLater", "previewReplyLater"),
     /** Set Aside pile (AVE-201), opened over Inbox (iOS `-previewSetAside`). */
     SetAside("setAside", "previewSetAside"),
+    /** The "Waiting on" pile someone made, across folders (iOS `-previewPile`, AVE-194). */
+    Pile("pile", "previewPile"),
+    /** Phone home with the Piles sheet open from the folders menu (iOS `-previewPileList`). */
+    PileList("pileList", "previewPileList"),
+    /** Reader on "To pay" mail with the Move to pile picker open (iOS `-previewPilePicker`). */
+    PilePicker("pilePicker", "previewPilePicker"),
     /** Focus & Reply on the first thread in the pile: reply open with "Focus & Reply · 1 of N · Skip" (iOS `-previewReplyLater -previewFocusReply`, AVE-193). */
     FocusReply("focusReply", "previewFocusReply"),
     /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */

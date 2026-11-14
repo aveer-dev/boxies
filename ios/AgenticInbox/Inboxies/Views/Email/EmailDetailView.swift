@@ -16,6 +16,8 @@ struct EmailDetailView: View {
     @State private var noteToDelete: ThreadNote?
     /// Tags picker for the open conversation (AVE-242).
     @State private var showsTagPicker = false
+    /// Move to pile picker (AVE-194), DEBUG `-previewPilePicker` only.
+    @State private var showsPilePicker = false
     @Namespace private var actionsNamespace
 
     private var email: Email? {
@@ -144,6 +146,11 @@ struct EmailDetailView: View {
                     try? await Task.sleep(nanoseconds: 600_000_000)
                     showsTagPicker = true
                 }
+                // `-previewPilePicker` (AVE-194): the Move to pile picker open on this mail.
+                if ProcessInfo.processInfo.arguments.contains("-previewPilePicker") {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    showsPilePicker = true
+                }
             }
             #endif
             .task(id: noteThreadKey) {
@@ -166,6 +173,14 @@ struct EmailDetailView: View {
                                 )
                             } : nil
                         )
+                    }
+            }
+            .background {
+                Color.clear
+                    .sheet(isPresented: $showsPilePicker) {
+                        if let email {
+                            PilePickerSheet(email: email)
+                        }
                     }
             }
             .background {
@@ -352,6 +367,20 @@ struct EmailDetailView: View {
 
                         ForEach(detailTags, id: \.self) { tag in
                             tagChip(tag, destructive: tag == "Spoofed")
+                        }
+
+                        // A pile people made (AVE-194): opens the pile's view.
+                        if let email, let pile = app.customPile(of: email) {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                app.selectedEmail = nil
+                                app.openPileView(pile.id)
+                            } label: {
+                                tagChip(MailPiles.displayName(pile))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Shows everything in \(MailPiles.displayName(pile))")
+                            .accessibilityIdentifier("readerPileChip")
                         }
 
                         // Tags (AVE-242): the conversation's, each opening its tag view.
