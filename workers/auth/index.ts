@@ -36,6 +36,7 @@ import type { Env } from "../types";
 import { isHostedEmailDomain, pruneSessionDeviceTokens } from "./hooks";
 import * as schema from "./schema";
 import { noteSessionCreated } from "./security-activity";
+import { extendWatchSessions } from "./watch-session";
 
 export const AUTH_BASE_PATH = "/api/auth";
 const DAY_SECONDS = 24 * 60 * 60;
@@ -158,6 +159,8 @@ export function createAuth(env: Env) {
 				// Set only by our own routes (extension / AutoFill tokens).
 				scope: { type: "string", required: false, input: false },
 				label: { type: "string", required: false, input: false },
+				// A "watch" session's phone session (AVE-143, `auth/watch-session.ts`).
+				parentSessionId: { type: "string", required: false, input: false },
 			},
 		},
 		databaseHooks: {
@@ -185,6 +188,14 @@ export function createAuth(env: Env) {
 					// activity and the new-device notice (AVE-151).
 					after: async (session) => {
 						noteSessionCreated({ id: String(session.id), userId: String(session.userId) });
+					},
+				},
+				update: {
+					// A phone session's refresh carries its watch sessions along, so
+					// a watch stays signed in exactly while the phone does (AVE-143).
+					after: async (session) => {
+						if (!session?.id || !session.expiresAt) return;
+						await extendWatchSessions(env, String(session.id), new Date(session.expiresAt));
 					},
 				},
 				delete: {

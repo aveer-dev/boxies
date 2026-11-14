@@ -2,20 +2,60 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-const MAILBOX_ALIASES_PATH = /^\/api\/v1\/mailboxes\/[^/]+\/aliases$/;
+import type { SessionScope } from "../auth/principal";
+
+const SEGMENT = "[^/]+";
+const MAILBOX = `^/api/v1/mailboxes/${SEGMENT}`;
+const MAILBOX_ALIASES_PATH = new RegExp(`${MAILBOX}/aliases$`);
 
 /**
- * What a scoped session token may call. Browser-extension tokens live in a
- * less trusted place than the app, so they can list mailboxes and create or
- * list private emails — never read mail, send, or reach agents/MCP.
+ * What a "watch" session may call (AVE-143, docs/watch-companion-plan.md):
+ * read the inbox and threads, the phone notification actions (mark read,
+ * Reply Later, archive / spam / back to Inbox) and quick reply. Nothing
+ * else: no full reply or compose (no choosing a From address), no
+ * forwarding, attachments, aliases, agents, MCP, admin, billing, settings,
+ * device tokens or session management. Route handlers narrow some of these
+ * further (`moveAllowedForWatch`).
  */
-export function isPathAllowedForTokenScope(
-	scope: "aliases",
-	method: string,
-	pathname: string,
-): boolean {
-	if (scope !== "aliases") return false;
+const WATCH_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+	["GET", /^\/api\/v1\/me$/],
+	["GET", /^\/api\/v1\/config$/],
+	["GET", /^\/api\/v1\/mailboxes$/],
+	// Folder list with unread counts (complications / tiles).
+	["GET", new RegExp(`${MAILBOX}/folders$`)],
+	["GET", new RegExp(`${MAILBOX}/emails$`)],
+	["GET", new RegExp(`${MAILBOX}/emails/${SEGMENT}$`)],
+	// read / starred / Reply Later flags.
+	["PUT", new RegExp(`${MAILBOX}/emails/${SEGMENT}$`)],
+	["POST", new RegExp(`${MAILBOX}/emails/${SEGMENT}/move$`)],
+	["POST", new RegExp(`${MAILBOX}/emails/${SEGMENT}/quick-reply$`)],
+	["GET", new RegExp(`${MAILBOX}/threads/${SEGMENT}$`)],
+	["POST", new RegExp(`${MAILBOX}/threads/${SEGMENT}/read$`)],
+	// A scoped session may end itself.
+	["POST", /^\/api\/v1\/auth\/logout$/],
+];
+
+/** Folders a watch may move mail into: Archive, Report spam, and back to Inbox (undo / Not spam). */
+export const WATCH_MOVE_FOLDERS: ReadonlySet<string> = new Set(["archive", "spam", "inbox"]);
+
+/** A watch session's move: only to `WATCH_MOVE_FOLDERS`, and never with the one-click unsubscribe. */
+export function moveAllowedForWatch(body: { folderId?: unknown; unsubscribe?: unknown }): boolean {
+	return typeof body.folderId === "string" && WATCH_MOVE_FOLDERS.has(body.folderId) && body.unsubscribe !== true;
+}
+
+/**
+ * What a scoped session token may call. Deny by default: anything not
+ * listed for the token's scope is refused.
+ * - "aliases" (browser extension, AutoFill): list mailboxes and create or
+ *   list private emails — never read mail, send, or reach agents/MCP.
+ * - "watch" (Apple Watch, Wear OS): `WATCH_ROUTES`.
+ */
+export function isPathAllowedForTokenScope(scope: SessionScope, method: string, pathname: string): boolean {
 	const verb = method.toUpperCase();
+	if (scope === "watch") {
+		return WATCH_ROUTES.some(([routeVerb, pattern]) => routeVerb === verb && pattern.test(pathname));
+	}
+	if (scope !== "aliases") return false;
 	if (verb === "GET" && (pathname === "/api/v1/mailboxes" || pathname === "/api/v1/me" || pathname === "/api/v1/config")) {
 		return true;
 	}

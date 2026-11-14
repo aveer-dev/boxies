@@ -70,19 +70,32 @@ export type MintedSession = { id: string; token: string; expiresAt: Date };
 export async function createSessionForUser(
 	env: Env,
 	userId: string,
-	opts: { scope?: SessionScope; label?: string; headers?: Headers } = {},
+	opts: {
+		scope?: SessionScope;
+		label?: string;
+		headers?: Headers;
+		/** A watch session's phone session (AVE-143). */
+		parentSessionId?: string;
+		/** Instead of Better Auth's 30 days (a watch session takes its phone session's). */
+		expiresAt?: Date;
+	} = {},
 ): Promise<MintedSession> {
 	const ctx = await getAuth(env).$context;
-	const session = await ctx.internalAdapter.createSession(userId, false, {
+	const override = {
 		...(opts.scope ? { scope: opts.scope } : {}),
 		...(opts.label ? { label: opts.label } : {}),
+		...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
+		...(opts.expiresAt ? { expiresAt: opts.expiresAt } : {}),
 		...(opts.headers
 			? {
 					ipAddress: opts.headers.get("cf-connecting-ip") ?? "",
 					userAgent: opts.headers.get("user-agent") ?? "",
 				}
 			: {}),
-	});
+	};
+	// `overrideAll` lets `expiresAt` win over Better Auth's default; without
+	// one, keep the library's normal path.
+	const session = await ctx.internalAdapter.createSession(userId, false, override, Boolean(opts.expiresAt));
 	if (!session) throw new Error("Failed to create session");
 	return { id: session.id, token: session.token, expiresAt: new Date(session.expiresAt) };
 }

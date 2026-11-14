@@ -7,6 +7,7 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { isDevRuntime } from "./lib/dev-runtime";
+import { moveAllowedForWatch } from "./lib/auth-paths";
 import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
@@ -820,6 +821,10 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 		/** Report spam: also move the sender's Inbox / Promotions / Updates mail to Spam. Default true (AVE-98). */
 		refileSender?: boolean;
 	};
+	// A watch session may only archive, report spam or put back in Inbox (AVE-143).
+	if (c.get("principal")?.scope === "watch" && !moveAllowedForWatch(body)) {
+		return c.json({ error: "This watch session can only archive, report spam or move to Inbox" }, 403);
+	}
 	const { folderId, setSenderPreference } = body;
 	const emailId = c.req.param("id")!;
 	const stub = c.var.mailboxStub;
