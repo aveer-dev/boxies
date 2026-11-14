@@ -18,7 +18,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -120,6 +123,8 @@ fun SettingsSheetView(
     onThemeModeChange: (ThemeMode) -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     initialDomainAdmin: Boolean = false,
+    /** DEBUG `aiUsageSettings` preview: open scrolled to the AI usage section. */
+    previewScrollToAiUsage: Boolean = false,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -236,6 +241,7 @@ fun SettingsSheetView(
             when (currentPage) {
                 SettingsPage.Root -> SettingsRootPage(
                     mailbox = current,
+                    scrollToAiUsage = previewScrollToAiUsage,
                     notificationsEnabled = notificationsEnabled,
                     onClose = onClose,
                     onOpenTheme = { page = SettingsPage.Theme },
@@ -327,6 +333,7 @@ fun SettingsSheetView(
 @Composable
 private fun SettingsRootPage(
     mailbox: Mailbox?,
+    scrollToAiUsage: Boolean,
     notificationsEnabled: Boolean,
     onClose: () -> Unit,
     onOpenTheme: () -> Unit,
@@ -615,7 +622,7 @@ private fun SettingsRootPage(
                 onClick = onOpenSuppressions,
             )
 
-            AiUsageSettingsSection(mailboxId = mailbox?.id)
+            AiUsageSettingsSection(mailboxId = mailbox?.id, bringIntoView = scrollToAiUsage)
 
             SettingsSectionHeader("Display")
             SettingsNavRow(
@@ -823,66 +830,78 @@ private fun mailboxDisplayName(mailbox: Mailbox?): String {
  * "AI usage" (AVE-45): today's agent-chat and inbound-AI counters for this mailbox,
  * with the plan and the UTC-midnight reset. Twin of the web/iOS settings section.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AiUsageSettingsSection(mailboxId: String?) {
+private fun AiUsageSettingsSection(mailboxId: String?, bringIntoView: Boolean = false) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val usage by app.aiUsage.collectAsState()
     LaunchedEffect(mailboxId) { app.refreshAiUsage() }
     val snapshot = usage ?: return
 
-    SettingsSectionHeader("AI usage")
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            snapshot.planLabel,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 16.sp,
-            color = colors.ink,
-        )
-        Text(
-            "Daily limits for this mailbox. Counters reset at midnight UTC.",
-            fontFamily = InterFontFamily,
-            fontSize = 13.sp,
-            color = colors.muted,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Agent chat",
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
-            color = colors.ink,
-        )
-        AiUsageMeter(
-            counter = snapshot.chat,
-            noun = "AI chats",
-            resetsAt = snapshot.resetsAtInstant,
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "Inbound AI",
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 14.sp,
-            color = colors.ink,
-        )
-        AiUsageMeter(
-            counter = snapshot.inbound,
-            noun = "AI checks",
-            resetsAt = snapshot.resetsAtInstant,
-        )
-        Text(
-            "Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.",
-            fontFamily = InterFontFamily,
-            fontSize = 12.sp,
-            color = colors.muted,
-            modifier = Modifier.padding(top = 2.dp),
-        )
+    val requester = remember { BringIntoViewRequester() }
+    if (bringIntoView) {
+        LaunchedEffect(Unit) {
+            // After the sheet has laid out, like the security-activity preview.
+            kotlinx.coroutines.delay(400)
+            requester.bringIntoView()
+        }
+    }
+
+    Column(modifier = Modifier.bringIntoViewRequester(requester)) {
+        SettingsSectionHeader("AI usage")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                snapshot.planLabel,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 16.sp,
+                color = colors.ink,
+            )
+            Text(
+                "Daily limits for this mailbox. Counters reset at midnight UTC.",
+                fontFamily = InterFontFamily,
+                fontSize = 13.sp,
+                color = colors.muted,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Agent chat",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp,
+                color = colors.ink,
+            )
+            AiUsageMeter(
+                counter = snapshot.chat,
+                noun = "AI chats",
+                resetsAt = snapshot.resetsAtInstant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Inbound AI",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp,
+                color = colors.ink,
+            )
+            AiUsageMeter(
+                counter = snapshot.inbound,
+                noun = "AI checks",
+                resetsAt = snapshot.resetsAtInstant,
+            )
+            Text(
+                "Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.",
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }

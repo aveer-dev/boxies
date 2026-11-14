@@ -201,8 +201,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | --- | --- | --- | --- |
 | Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
 | Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
-| 2FA code step | `previewTwoFactorChallenge` | `twoFactorChallenge` | Email sign-in at the authenticator / backup code step (fixture challenge, verify hits the network and fails) |
-| Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
+| 2FA code step | `previewTwoFactorChallenge` | `twoFactorChallenge` | Email sign-in at the authenticator / backup code step (fixture challenge; verify fails offline) |
+| Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out in memory (code + create account); the account stored on the device is not shown or touched |
 | Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
 | Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
 | Confirm it's you | `previewReauth` · `previewReauthTwoFactor` · `previewReauthPasskey` · `previewReauthEmailCode` | `reauth` · `reauthTwoFactor` · `reauthPasskey` · `reauthEmailCode` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API: password · password + authenticator code · passkey · emailed code. Peer of iOS `-previewSignInMethods -previewReauth <password\|twoFactor\|passkey\|emailCode>` (AVE-171) |
@@ -221,7 +221,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
 | AI limit reached | `previewAiUsageLimit` | `aiUsageLimit` | Agent chat at 50 / 50: limit notice, composer disabled |
-| AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
+| AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section (42 / 50 chats, 37 / 200 checks) |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
 | Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
 | Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
@@ -245,13 +245,18 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
 | Widget mocks | `previewWidgets` | `widgets` | "Today's inbox" widget design mocks, 2×2/4×2 × new mail/inbox zero, grey-scale palette only (ink bloom, no `accent`); Light/Dark pill flips the screen (AVE-138, `ui/widget/`) |
-| Widget data | `--es previewWidgetData mail` / `zero` (not a `PreviewMode`) | `widgetData` / `widgetZero` (`PIN=1` asks the launcher to add the widget) | Writes the sample snapshot so the real Glance "Today's inbox" widget (`widget/TodayInboxWidget.kt`) shows data without signing in; place it from the launcher's widget picker, then flip system dark mode to check both themes (AVE-150) |
+| Widget data | `previewWidgetData` · `previewWidgetZero` (older `--es previewWidgetData mail\|zero` still works) | `widgetData` / `widgetZero` (`PIN=1` asks the launcher to add the widget) | Writes the sample snapshot so the real Glance "Today's inbox" widget (`widget/TodayInboxWidget.kt`) shows data; the app shows a signed-out notice and never loads the stored account. Place the widget from the launcher's widget picker, then flip system dark mode to check both themes (AVE-150, AVE-235) |
 | Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |
 | Service ended (member) | `previewServiceEndedMember` | `serviceEndedMember` | Read-only inbox + "Ask an admin" |
 | Service ending | `previewServiceEnding` | `serviceEnding` | Admin "Keep subscription" notice |
+| DNS console | `previewDomainDns` | `domainDns` | DNS console on `example.com`: fixture zone, email health audit (DMARC missing) and records, no API |
 | DNS, service ended | `previewDomainDnsEnded` | `domainDnsEnded` | Subscription card, DNS edits frozen |
 
-Code: `ui/preview/PreviewMode.kt`, `PreviewSupport.kt`, `PreviewRoots.kt`. Wired from `MainActivity` when `BuildConfig.DEBUG` and an extra is present. Fixtures never persist session (`AuthStore.applyEphemeralSession`); normal launches call `resyncFromStorage()`.
+Code: `ui/preview/PreviewMode.kt`, `PreviewSupport.kt`, `PreviewRoots.kt`. Wired from `MainActivity` when `BuildConfig.DEBUG` and an extra is present. Previews are hermetic (AVE-235):
+
+- **No network.** `services/PreviewNetworkGuard` fails every OkHttp call (REST, SSE, agent chat) while a preview runs; a normal cold launch turns it off. A view that still calls the API in preview shows an offline error, never a production call with the fixture token. Give the view fixtures (for example `previewDomains` / `previewHealth` / `previewRecords` on `DomainAdminDNSView`) or an `app.isDebugPreview` branch.
+- **No stored session.** Signed-in fixtures use `AuthStore.applyEphemeralSession`; signed-out ones (`passwordSignIn`, `inviteAccept`, `widgetData`, …) use `applyEphemeralSignedOut` + `AppModel.resetForSignedOutPreview`, which leave the real account's session, cache and preferences on disk. `signOut()` during a preview never deletes the stored session. Normal launches call `resyncFromStorage()`.
+- New modes go in `PreviewMode`, `PreviewHarness.seed`, `PreviewRoot` **and** `scripts/run-debug-preview.sh`; `PreviewModeNamesTest` fails if the script misses one.
 
 ```bash
 cd android

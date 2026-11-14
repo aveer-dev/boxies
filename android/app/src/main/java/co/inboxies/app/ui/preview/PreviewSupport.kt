@@ -3,6 +3,10 @@ package co.inboxies.app.ui.preview
 import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.CloudflareDnsRecord
+import co.inboxies.app.models.DomainHealthResponse
+import co.inboxies.app.models.EmailHealthAudit
+import co.inboxies.app.models.EmailHealthItem
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.BlockedTrackers
@@ -105,6 +109,84 @@ object PreviewSupport {
     }
 
     /** AI usage fixture (AVE-45): warning level 42 / 50, or the limit 50 / 50. Resets next UTC midnight. */
+    /**
+     * DNS console fixture (`domainDns`, `domainDnsEnded`): zone active, MX and SPF
+     * connected, DMARC missing so the audit shows a warning row (AVE-235).
+     */
+    fun dnsHealth(domain: String): DomainHealthResponse {
+        val nameservers = listOf("ns1.cloudflare.com", "ns2.cloudflare.com")
+        return DomainHealthResponse(
+            domain = domain,
+            zoneId = "preview-zone-123",
+            zoneStatus = "active",
+            nameservers = nameservers,
+            audit = EmailHealthAudit(
+                overallStatus = "missing",
+                zoneStatus = "active",
+                nameservers = nameservers,
+                items = listOf(
+                    EmailHealthItem(
+                        name = domain,
+                        type = "MX",
+                        status = "connected",
+                        expectedValue = "route1.mx.cloudflare.net",
+                        currentValue = "route1.mx.cloudflare.net",
+                        message = "Mail for $domain is delivered to Inboxies.",
+                    ),
+                    EmailHealthItem(
+                        name = domain,
+                        type = "TXT",
+                        status = "connected",
+                        expectedValue = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+                        currentValue = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+                        message = "SPF allows Inboxies to send for $domain.",
+                    ),
+                    EmailHealthItem(
+                        name = "_dmarc.$domain",
+                        type = "TXT",
+                        status = "missing",
+                        expectedValue = "v=DMARC1; p=none",
+                        message = "Add a DMARC record so receivers trust your mail.",
+                    ),
+                ),
+                issues = listOf("DMARC record missing"),
+            ),
+        )
+    }
+
+    fun dnsRecords(domain: String): List<CloudflareDnsRecord> = listOf(
+        CloudflareDnsRecord(
+            id = "preview-dns-mx",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = domain,
+            type = "MX",
+            content = "route1.mx.cloudflare.net",
+            ttl = 1,
+            priority = 10,
+        ),
+        CloudflareDnsRecord(
+            id = "preview-dns-spf",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = domain,
+            type = "TXT",
+            content = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+            ttl = 1,
+        ),
+        CloudflareDnsRecord(
+            id = "preview-dns-www",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = "www.$domain",
+            type = "CNAME",
+            content = domain,
+            proxiable = true,
+            proxied = true,
+            ttl = 1,
+        ),
+    )
+
     fun aiUsage(atLimit: Boolean): AiUsageSnapshot {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         val resetsAt = today.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()
