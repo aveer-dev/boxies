@@ -44,7 +44,7 @@ enum InviteOrganizerLine: Equatable {
 struct EmailInvite: Codable, Hashable {
     var method: String?
     var status: String?
-    /// METHOD:CANCEL or STATUS:CANCELLED. Show "Cancelled" and hide Add to Calendar.
+    /// METHOD:CANCEL or STATUS:CANCELLED. Show "Cancelled" and hide Add to calendar.
     var cancelled: Bool
     var uid: String?
     var sequence: Int?
