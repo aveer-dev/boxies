@@ -34,6 +34,7 @@ class ScreenerDecisionTest {
         assertEquals("Accepted", ScreenerDecision.toastTitle("inbox"))
         assertEquals("Accepted · future mail goes to Promotions", ScreenerDecision.toastTitle("promotions"))
         assertEquals("Accepted · future mail goes to Updates", ScreenerDecision.toastTitle("updates"))
+        assertEquals("Accepted · future mail goes to Paper Trail", ScreenerDecision.toastTitle("paper_trail"))
     }
 
     @Test

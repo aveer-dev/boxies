@@ -66,6 +66,7 @@ struct HomeShellView: View {
         .folder("inbox"),
         .folder("promotions"),
         .folder("updates"),
+        .folder("paper_trail"),
         .folder("sent"),
         .folder("draft"),
         .folder("archive"),

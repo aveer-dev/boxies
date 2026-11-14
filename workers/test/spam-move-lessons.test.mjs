@@ -200,7 +200,7 @@ console.log("✓ every client move across Spam teaches the sender");
 	assert.equal((await allowSenderForAgent(box.stub, MAILBOX, { sender: "news@x.example" })).folder, "promotions");
 	assert.equal((await allowSenderForAgent(box.stub, MAILBOX, { sender: "c@x.example", folderId: "updates" })).folder, "updates");
 
-	assert.match((await allowSenderForAgent(box.stub, MAILBOX, { sender: "c@x.example", folderId: "archive" })).error, /inbox, promotions, or updates/);
+	assert.match((await allowSenderForAgent(box.stub, MAILBOX, { sender: "c@x.example", folderId: "archive" })).error, /inbox, promotions, updates, or paper_trail/);
 	assert.match((await allowSenderForAgent(box.stub, MAILBOX, { sender: "not an address" })).error, /Invalid sender/);
 	assert.match((await allowSenderForAgent(box.stub, MAILBOX, { sender: "Ada@Inboxies.Email" })).error, /own address/);
 	assert.match((await blockSenderForAgent(box.stub, MAILBOX, { sender: "ada+x@inboxies.email" })).error, /own address/);

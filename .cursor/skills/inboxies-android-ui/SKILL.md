@@ -232,6 +232,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Piles sheet | `previewPileList` | `pileList` | Phone home Piles group (folders menu → Piles), counts + New pile. Peer of iOS `-previewPileList` |
 | Pile picker | `previewPilePicker` | `pilePicker` | Reader on "To pay" mail with Move to pile open. Peer of iOS `-previewPilePicker` |
 | Focus & Reply | `previewFocusReply` · `previewFocusReplyDone` | `focusReply` · `focusReplyDone` | Reply Later with the first thread's reply open under "Focus & Reply · 1 of N · Skip" · the pile after a run emptied it ("All done"). Peer of iOS `-previewReplyLater -previewFocusReply` / `-previewFocusReplyDone` (AVE-193) |
+| Paper Trail | `previewPaperTrail` | `paperTrail` | Paper Trail, a quiet receipts folder: compact rows (sender, subject, date; no preview) under month headers. Updates stays a normal list. Peer of iOS `-previewMailbox -previewPaperTrail` (AVE-192) |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | Code card | `previewCode` | `code` | Sign-in mail in the reader with the Code card pinned above the bottom bar: 22.sp monospaced code + Copy (sensitive clip). Peer of iOS `-previewDetail -previewCode` (AVE-177) |

@@ -23,6 +23,7 @@
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh setAside
+#   ./scripts/run-debug-preview.sh paperTrail   # Paper Trail: compact rows under month headers (AVE-192)
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
 #   ./scripts/run-debug-preview.sh code                # reader with the Code card (AVE-177)
@@ -145,6 +146,7 @@ case "$mode" in
   pilePicker|PilePicker|previewPilePicker) extra=previewPilePicker; label=pilePicker ;;
   focusReply|FocusReply|focus-reply|previewFocusReply) extra=previewFocusReply; label=focusReply ;;
   focusReplyDone|FocusReplyDone|previewFocusReplyDone) extra=previewFocusReplyDone; label=focusReplyDone ;;
+  paperTrail|PaperTrail|previewPaperTrail) extra=previewPaperTrail; label=paperTrail ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   code|Code|previewCode) extra=previewCode; label=code ;;
@@ -181,7 +183,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

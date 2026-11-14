@@ -396,7 +396,7 @@ enum PreviewSenderRules {
     }
 }
 
-/// Sorting tab: per-sender purpose-box defaults (Inbox / Promotions / Updates).
+/// Sorting tab: per-sender purpose-box defaults (Inbox / Promotions / Updates / Paper Trail).
 private struct SenderSortingView: View {
     @Environment(AppModel.self) private var app
 
@@ -410,12 +410,13 @@ private struct SenderSortingView: View {
         ("inbox", "Inbox"),
         ("promotions", "Promotions"),
         ("updates", "Updates"),
+        (PaperTrail.folderId, PaperTrail.title),
     ]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Choose which purpose box each sender goes to. Changing a destination also moves their existing Inbox, Promotions, and Updates mail.")
+                Text("Choose which purpose box each sender goes to. Changing a destination also moves their existing Inbox, Promotions, Updates, and Paper Trail mail.")
                     .font(.inter(size: 13))
                     .foregroundStyle(AppTheme.muted)
                     .padding(.horizontal, 20)
@@ -445,7 +446,7 @@ private struct SenderSortingView: View {
                         Text("No sender defaults yet")
                             .font(.inter(size: 15, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
-                        Text("When you move mail into Inbox, Promotions, or Updates, you can set where future mail from that sender goes.")
+                        Text("When you move mail into Inbox, Promotions, Updates, or Paper Trail, you can set where future mail from that sender goes.")
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.muted)
                     }

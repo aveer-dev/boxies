@@ -252,4 +252,22 @@ const allowed = {
 	assert.ok(apnsCalls.every((call) => !/482913/.test(JSON.stringify(call.body))));
 }
 
+{
+	// Sender sent to Paper Trail (AVE-192): filed there quietly, no push.
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: { ...allowed, destination_folder_id: "paper_trail" } });
+	await deliver(stub, MAILBOX, "m7@sender.example", createBucket(), { subject: "Your receipt" });
+	assert.deepEqual(stub.stored.map((s) => s.folder), ["paper_trail"]);
+	assert.equal(apnsCalls.length, 0);
+}
+
+{
+	// Sender accepted into Updates still notifies (AVE-192 left Updates as it was).
+	apnsCalls.length = 0;
+	const stub = fakeMailbox({ triage: { ...allowed, destination_folder_id: "updates" } });
+	await deliver(stub, MAILBOX, "m8@sender.example", createBucket(), { subject: "Your order shipped" });
+	assert.deepEqual(stub.stored.map((s) => s.folder), ["updates"]);
+	assert.equal(apnsCalls.length, 1);
+}
+
 console.log("inbound push tests passed");
