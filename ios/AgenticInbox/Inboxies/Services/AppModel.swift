@@ -292,6 +292,7 @@ final class AppModel {
     private func publishSharedSession() {
         guard persistsPreferences, !isDebugPreview else { return }
         SharedSession.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
+        WatchSessionBridge.shared.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
     }
 
     // MARK: - "Today's inbox" widget (AVE-149)
@@ -579,6 +580,7 @@ final class AppModel {
         if persistsPreferences, !isDebugPreview, APIClient.shared.authToken != nil {
             await AutofillSession.refreshIfNeeded()
             await AutofillSession.refreshIdentities(mailboxId: selectedMailboxId)
+            await WatchSessionBridge.shared.handOverIfNeeded()
         }
     }
 
@@ -2003,6 +2005,8 @@ final class AppModel {
         let revokesOnServer = auth.persistsSession && !isDebugPreview
         // The extension loses its token now, even if the server calls fail.
         let autofillToken = revokesOnServer ? AutofillSession.forget() : nil
+        // The watch wipes now; its session also ends with this one on the server.
+        let watchSessionId = revokesOnServer ? WatchSessionBridge.shared.forget() : nil
         Task {
             await PushNotificationManager.shared.unregisterAllAndWait(
                 mailboxIds: mailboxIds,
@@ -2010,6 +2014,9 @@ final class AppModel {
             )
             guard revokesOnServer else { return }
             await AutofillSession.end(autofillToken)
+            if let watchSessionId, let sessionToken {
+                try? await APIClient.shared.revokeSession(id: watchSessionId, sessionToken: sessionToken)
+            }
             if let sessionToken {
                 try? await APIClient.shared.logout(sessionToken: sessionToken)
             }

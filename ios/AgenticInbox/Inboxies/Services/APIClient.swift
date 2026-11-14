@@ -438,6 +438,17 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// A `watch`-scoped session for the paired Apple Watch (AVE-143/144): inbox triage
+    /// and quick reply only, ends with this session. Minting again replaces the watch's
+    /// previous token.
+    func createWatchSession() async throws -> ScopedSessionResponse {
+        try await request(
+            path: "/api/v1/me/extension-session",
+            method: "POST",
+            body: ["client": "watchos"]
+        )
+    }
+
     // MARK: Recovery email
 
     func getRecoveryEmail() async throws -> RecoveryEmailStatus {

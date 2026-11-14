@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         MailNotificationActions.register()
+        WatchSessionBridge.shared.activate()
         return true
     }
 

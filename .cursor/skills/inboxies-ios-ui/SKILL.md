@@ -239,6 +239,16 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-htmlHardenFixture` | Sanitizer / link-policy fixture + quoted-replies sheet |
 | `-previewAutofill` | AutoFill extension lists fixture private emails (no sign-in or API). Enable the provider with `xcrun simctl spawn <udid> pluginkit -e use -i co.inboxies.app.credential-provider`, then in Safari tap an email field → QuickType **Passwords** → Inboxies. iOS always shows credential-provider UI as a full-height sheet. |
 
+## Apple Watch (AVE-144)
+
+`InboxiesWatch` target (watchOS 10+, `co.inboxies.app.watchkitapp`, embedded in the app; scheme `InboxiesWatch`). A companion, not a client: Inbox list, plain-text message, the notification actions (Reply, Archive, Mark read/unread, Reply Later, Report spam with a confirm; no Trash) and quick reply (`TextFieldLink` dictation/Scribble + `WatchMailText.cannedReplies`).
+
+- **Colors:** `WatchPalette` (`Inboxies/WatchShared`) = `AppTheme` dark values; `WatchCompanionTests` fails if they drift. Dark only. Accent for unread dots and the primary action (Reply) only; Report spam is `destructive` text on `pillFill`, never a red fill.
+- **Type:** Inter via `WatchType` (watch has no UIKit `AppTheme`). Rows: sender 15 semibold/medium, subject 13, preview 12, meta 11.
+- **Layout:** `.listStyle(.plain)`, clear row backgrounds, 0.5pt `line` hairline, no platters/cards. Buttons are `WatchPillButtonStyle` capsules. Pressed opacity 0.55, house spring `Animation.inboxies`.
+- **Session:** never the phone's. `WatchSessionBridge` (phone) mints a `watch`-scoped session and sends it over WatchConnectivity; the watch keeps it in its own keychain (`WatchKeychain`) and only calls `WatchAPI`'s allowlisted routes.
+- **DEBUG launch args** (watch app): `-previewWatchInbox`, `-previewWatchMessage`, `-previewWatchReply`, `-previewWatchConnect` (`InboxiesWatch/WatchPreviewFixtures.swift`).
+
 ## Hard don'ts
 
 - New palettes, SF Pro for chrome, or Apple Mail blue branding.
