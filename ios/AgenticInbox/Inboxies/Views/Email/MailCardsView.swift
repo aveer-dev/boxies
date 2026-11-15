@@ -359,9 +359,9 @@ private struct InviteCard: View {
                 if isInCalendar {
                     MailCardButton(title: "Added", systemImage: "checkmark", prominent: true) {}
                         .disabled(true)
-                        .accessibilityLabel("Added to Calendar")
+                        .accessibilityLabel("Added to calendar")
                 } else {
-                    MailCardButton(title: "Add to Calendar", systemImage: "calendar.badge.plus", prominent: true) {
+                    MailCardButton(title: "Add to calendar", systemImage: "calendar.badge.plus", prominent: true) {
                         Task { await addTapped() }
                     }
                     .accessibilityHint(
