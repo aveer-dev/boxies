@@ -1,6 +1,6 @@
 ---
 // The portfolio's fixed footer rows. "Write to us" opens mail, "Send a request"
-// goes to /request (AVE-81); the copyright row shows the app icon at the far right on hover or focus.
+// goes to /request (AVE-81) and shows only once the form can send (AVE-233, scripts/request-links.ts); the copyright row shows the app icon at the far right on hover or focus.
 import { SUPPORT_EMAIL, availabilityShort } from "../config";
 import AppIcon from "./AppIcon.astro";
 import Icon from "./Icon.astro";
@@ -15,7 +15,7 @@ import ProgressiveBlur from "./ProgressiveBlur.astro";
 			<span class="footer-label"><span class="footer-label-inner">Write to us</span></span>
 			<span class="item-content"><Icon name="mail" /><span class="row-info"><span class="row-name">{SUPPORT_EMAIL}</span><span class="row-arrow" aria-hidden="true">↗</span></span></span>
 		</a>
-		<a href="/request" class="footer-item">
+		<a href="/request" class="footer-item" data-request-link hidden>
 			<span class="footer-label"><span class="footer-label-inner">Feature, bug or feedback</span></span>
 			<span class="item-content"><Icon name="message" /><span class="row-info"><span class="row-name">Send a request</span></span></span>
 		</a>

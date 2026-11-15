@@ -1,5 +1,7 @@
 // The six public pages. Result pages (/support/sent, /support/unavailable)
-// and the 404 are noindex, so they're left out.
+// and the 404 are noindex, so they're left out. /request stays listed: the
+// sitemap is prerendered, so it can't see whether the form's secrets are set
+// (AVE-233); the links to it hide themselves until it can send.
 import type { APIRoute } from "astro";
 import { SITE_URL, asOf } from "../config";
 import { legalUpdated } from "../data/legal";
