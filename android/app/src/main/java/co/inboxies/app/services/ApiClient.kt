@@ -2,6 +2,7 @@ package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
+import co.inboxies.app.models.ScopedSessionResponse
 import co.inboxies.app.models.MoveEmailResponse
 import co.inboxies.app.models.SenderTriageDecisionResponse
 import co.inboxies.app.models.ThreadNote
@@ -510,9 +511,20 @@ class ApiClient private constructor() {
 
     suspend fun listSessions(): List<AccountSession> = request("/api/v1/me/sessions")
 
-    suspend fun revokeSession(id: String) {
-        request<EmptyResponse>("/api/v1/me/sessions/${pathEncode(id)}", method = "DELETE")
+    /** [bearerToken] pins the call to the outgoing session at sign-out. */
+    suspend fun revokeSession(id: String, bearerToken: String? = null) {
+        request<EmptyResponse>("/api/v1/me/sessions/${pathEncode(id)}", method = "DELETE", bearerToken = bearerToken)
     }
+
+    /**
+     * A `watch`-scoped session for the paired Wear OS watch (AVE-143/145): inbox triage and
+     * quick reply only, ends with this session. Minting again replaces the watch's token.
+     */
+    suspend fun createWatchSession(): ScopedSessionResponse = request(
+        "/api/v1/me/extension-session",
+        method = "POST",
+        body = buildJsonObject { put("client", "wearos") },
+    )
 
     suspend fun revokeOtherSessions(): RevokeSessionsResponse = request(
         "/api/v1/me/sessions/revoke-others",

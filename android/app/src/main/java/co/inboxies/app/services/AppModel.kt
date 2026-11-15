@@ -77,7 +77,11 @@ class AppModel {
         // Autofill creates private emails in the mailbox last chosen here (never a preview fixture).
         scope.launch {
             _selectedMailboxId.collect { id ->
-                if (id != null && !isDebugPreview) AutofillMailboxPreference.save(id)
+                if (id != null && !isDebugPreview) {
+                    AutofillMailboxPreference.save(id)
+                    // The Wear OS app follows the phone's active mailbox (AVE-145).
+                    WatchSessionBridge.publish(id)
+                }
             }
         }
     }
@@ -939,6 +943,8 @@ class AppModel {
         }
         setupRealTimeStream()
         refreshMailboxes(showLoading = _emails.value.isEmpty())
+        // A paired Wear OS watch with Inboxies gets its own scoped session once per sign-in.
+        if (!isDebugPreview) scope.launch { WatchSessionBridge.handOverIfNeeded() }
     }
 
     private fun setupRealTimeStream() {
@@ -2494,12 +2500,17 @@ class AppModel {
                 }
             }
             val sessionToken = auth.currentToken()
+            // The watch wipes now; its session also ends with this one on the server.
+            val watchSessionId = if (revokesOnServer) WatchSessionBridge.forget() else null
             auth.signOut()
             reset()
             // After the local sign-out, so nothing in flight reads the revoked
             // session as "expired"; pinned to the outgoing token.
             if (revokesOnServer && sessionToken != null) {
                 withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
+                    if (watchSessionId != null) {
+                        runCatching { ApiClient.shared.revokeSession(watchSessionId, bearerToken = sessionToken) }
+                    }
                     runCatching { ApiClient.shared.logout(sessionToken) }
                 }
             }

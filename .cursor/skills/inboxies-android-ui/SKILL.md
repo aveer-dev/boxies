@@ -21,7 +21,7 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 - Compose-only UI. No Fragments, no `R.layout`.
 - Material 3 (`androidx.compose.material3`) for primitives: `ModalBottomSheet`, `Switch`, `DropdownMenu`, `PullToRefreshBox`, `Button`. Visual language is custom Notion/iOS, not default M3.
 - **No dynamic / wallpaper color.** Comment in `AppTheme.kt`: “Notion-inspired Inboxies palette — not purple Material You.”
-- Navigation Compose is **not a dependency** (removed). Do not introduce `NavHost` / `rememberNavController`.
+- Navigation Compose is **not a dependency** of `:app` (removed). Do not introduce `NavHost` / `rememberNavController` there. The Wear OS module is the one exception (see **Wear OS** below).
 - `minSdk 34`, `targetSdk/compileSdk 35`. Resizable activity, any orientation; phones plus tablets / foldables (two-pane at ≥ 840.dp, three-column at ≥ 1180.dp, see below).
 - HTML mail via `AndroidView` + `WebView` in `EmailBodyView.kt`.
 - Icons: Material Icons Extended.
@@ -179,10 +179,21 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Menu / toast / markdown | `ui/components/*` |
 | DEBUG previews | `ui/preview/*` (emulator intent harness) |
 
+## Wear OS (AVE-145)
+
+`android/wear` (`:wear`, Wear OS 4 / API 33+, Compose for Wear OS 1.4 Material). Same `applicationId` (`co.inboxies.app`) and signing key as the phone app, which the Wearable Data Layer requires; `standalone=false`. Twin of the Apple Watch app (AVE-144). A companion, not a client: Inbox list for the phone's active mailbox (picker when there are several), plain-text message, the notification actions (Reply, Archive, Mark read/unread, Reply Later, Report spam with a confirm; no Trash) and quick reply (system `RemoteInput` voice / keyboard via `RemoteInputIntentHelper` + `WatchMailText.cannedReplies`, one idempotency key per attempt, reused on retry).
+
+- **Colors:** `WearColors` (`wear/.../ui/WearTheme.kt`) from `WatchPalette` in `:watch-shared` = `InboxiesColors` dark values; `WatchPaletteTest` in `:app` fails if they drift. Dark only, no dynamic color. Accent for unread dots and the primary action (Reply, Connect, "Voice or keyboard") only; Report spam is `destructive` text on `pillFill`, never a red fill.
+- **Type:** Inter (`res/font`, regular / medium / semibold) via `WearType`. Rows: sender 15 semibold (read: medium), subject 13, preview 12, meta 11; body 14.
+- **Layout:** each screen is `WatchListScreen` (`Scaffold` + `TimeText` + `ScalingLazyColumn` + `PositionIndicator`; rotary scrolling is built in). Flat `WatchEmailRow`s with a 7.dp unread dot and 0.5.dp `line` hairline, no `Card`s. Actions are `WatchPill`s (Wear `Chip`, stadium). Confirms / errors are Wear `Dialog` + `Alert` (x / check icon buttons, never "Cancel" text). Loading lists use pulsing `WatchRowSkeleton`s. No pull to refresh on Wear: a Refresh pill ends the list.
+- **Navigation:** `SwipeDismissableNavHost` (routes in `WearRoutes`) is allowed in `:wear` only (plan Q8). Swipe right is back. Connect replaces the stack when there's no session to show the Inbox with.
+- **Session:** never the phone's. `WatchSessionBridge` (`:app`) mints a `watch`-scoped session (`POST /api/v1/me/extension-session { client: "wearos" }`) and answers the watch's `MessageClient.sendRequest` (`WatchPhoneListenerService.onRequest`); it also pushes one grant after sign-in, a wipe on sign-out / revoke, and a non-secret context DataItem (signed in, active mailbox, API origin). The contract is `WatchHandoff` in `:watch-shared`. The watch keeps the token in EncryptedSharedPreferences (`WatchSessionPrefs`) and only calls `WatchApi`'s allowlisted routes. No session or a 401 → `WatchReconnector` asks the phone quietly (now, 2s, 5s, 10s, 20s, 30s; again when the phone becomes reachable or the app resumes) with one shared in-flight request, stopping at "signed out" / "revoked"; Connect shows only after that. An action that hits a 401 waits up to 6s for the reconnect, then retries once.
+- **DEBUG previews:** `WearPreviewMode` (`wear/.../preview/`): `inbox`, `message`, `reply`, `mailboxes`, `connect`, `connecting` via `-e preview <mode>` or `--ez previewWatch<Mode> true` on `co.inboxies.app/co.inboxies.wear.MainActivity`, or `android/scripts/run-wear-preview.sh <mode>` (`INSTALL=1` builds + installs). Hermetic: a fixture `WatchStore` with in-memory storage, no phone link, wear `PreviewNetworkGuard` on. Android Studio `@WearPreviewDevices` previews in `WearScreenPreviews.kt`. `WearPreviewModeTest` fails if the script misses a mode.
+
 ## Hard don'ts
 
 - Material You / `dynamicColor` / purple M3 defaults.
-- `NavHost` for app IA.
+- `NavHost` for app IA in `:app` (the `:wear` swipe-to-dismiss stack is the exception).
 - FAB-centric home chrome (the floating bar is Ask AI + Compose, not a FAB).
 - Elevated `Card` for mail rows.
 - Hardcoded colors/fonts/radii when `InboxiesColors` / `AppThemeDims` / `HomeChromeMetrics` already has a token.

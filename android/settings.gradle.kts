@@ -19,3 +19,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Inboxies"
 include(":app")
+// Wear OS companion (AVE-145) and the phone <-> watch Data Layer contract both use.
+include(":wear")
+include(":watch-shared")

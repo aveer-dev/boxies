@@ -98,7 +98,7 @@ jobs:
       # The runner image provides ANDROID_HOME. google-services.json and
       # local.properties are optional: without them FCM is off and
       # GOOGLE_WEB_CLIENT_ID is empty, which is fine for a debug build.
-      - run: ./gradlew :app:assembleDebug :app:testDebugUnitTest
+      - run: ./gradlew :app:assembleDebug :wear:assembleDebug testDebugUnitTest
 
   ios:
     name: iOS

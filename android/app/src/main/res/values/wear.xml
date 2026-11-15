@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Wear OS app finds this phone by it (WatchHandoff.PHONE_CAPABILITY, AVE-145). -->
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>inboxies_phone</item>
+    </string-array>
+</resources>

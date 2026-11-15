@@ -300,8 +300,9 @@ class AuthStore(context: Context) {
         // session or its widget.
         if (isEphemeral) return
         clearStoredSession()
-        // Nothing about the account stays on the home screen (AVE-150).
+        // Nothing about the account stays on the home screen (AVE-150), or on the watch (AVE-145).
         co.inboxies.app.widget.InboxWidgetPublisher.clear()
+        WatchSessionBridge.forget()
     }
 
     fun clearError() {

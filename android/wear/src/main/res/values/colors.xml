@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The phone's launcher background (android/app res/values/colors.xml). -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- WatchPalette.BACKGROUND (InboxiesColors.DarkBackground), for the window behind Compose. -->
+    <color name="watch_background">#0D0D0D</color>
+</resources>

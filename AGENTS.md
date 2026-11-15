@@ -29,7 +29,7 @@ Adapted Emil skills keep MIT copyright; Cloudflare skills keep Apache 2.0 copyri
 
 - Tokens: `AppTheme` / `LiquidGlass` (iOS), `InboxiesColors` / `HomeChromeMetrics` (Android). Extend, don't fork.
 - Default spring: iOS `.spring(response: 0.32, dampingFraction: 0.86)`; Android `dampingRatio = 0.86f` + `StiffnessMediumLow`.
-- No `TabView` IA on iOS. No `NavHost` IA on Android (Navigation Compose is not a dependency).
+- No `TabView` IA on iOS. No `NavHost` IA in the Android phone app (Navigation Compose is not a dependency of `:app`). The Wear OS app (`android/wear`) uses `SwipeDismissableNavHost`, since swipe-to-dismiss is the platform's back gesture (watch plan Q8).
 - Visual changes land on **both** clients unless the task is explicitly one platform.
 - Web `app/` is a separate Tailwind/React surface — these mobile skills do not apply there.
 - **DEBUG previews:** iOS Simulator launch args (`-previewDomainAdmin`, `-previewMailbox`, …) and Android intent extras / `android/scripts/run-debug-preview.sh` are peers. For cross-platform UI review, exercise **both** — see `inboxies-android-ui` “DEBUG preview harness” and iOS `PreviewSupport.swift`.
