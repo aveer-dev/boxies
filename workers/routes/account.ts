@@ -34,6 +34,7 @@ import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MA
 import { isReauthFresh, reauthGate, recordReauth } from "../auth/reauth";
 import { securityNoticeRecipients, sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
 import { listSecurityActivity, requestDevice } from "../auth/security-activity";
+import { isWatchClient, liveParentSession, WATCH_CLIENT_LABELS, WATCH_SCOPE } from "../auth/watch-session";
 import * as schema from "../auth/schema";
 import {
 	clearSessionCookieHeader,
@@ -685,11 +686,21 @@ export function registerAccountRoutes(app: App) {
 			.where(eq(schema.session.userId, principal.userId))
 			.all();
 		const now = Date.now();
+		const byId = new Map(rows.map((s) => [s.id, s]));
+		// A watch session ends with its phone session (AVE-143): list it with
+		// the phone's expiry, and not at all once the phone session is gone.
+		const effectiveExpiry = (s: (typeof rows)[number]): Date | null => {
+			if (s.scope !== WATCH_SCOPE) return s.expiresAt;
+			const parent = s.parentSessionId ? byId.get(s.parentSessionId) : undefined;
+			if (!parent || parent.scope) return null;
+			return parent.expiresAt < s.expiresAt ? parent.expiresAt : s.expiresAt;
+		};
 		return c.json(
 			rows
-				.filter((s) => s.expiresAt.getTime() > now)
-				.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-				.map((s) => ({
+				.map((s) => ({ s, expiresAt: effectiveExpiry(s) }))
+				.filter((r): r is { s: (typeof rows)[number]; expiresAt: Date } => Boolean(r.expiresAt && r.expiresAt.getTime() > now))
+				.sort((a, b) => b.s.updatedAt.getTime() - a.s.updatedAt.getTime())
+				.map(({ s, expiresAt }) => ({
 					id: s.id,
 					label: s.label,
 					scope: s.scope,
@@ -697,8 +708,10 @@ export function registerAccountRoutes(app: App) {
 					ipAddress: s.ipAddress,
 					createdAt: s.createdAt.toISOString(),
 					lastActiveAt: s.updatedAt.toISOString(),
-					expiresAt: s.expiresAt.toISOString(),
+					expiresAt: expiresAt.toISOString(),
 					current: s.id === principal.sessionId,
+					/** For a watch session, the phone session it signs out with. */
+					parentSessionId: s.parentSessionId ?? null,
 				})),
 		);
 	});
@@ -756,11 +769,41 @@ export function registerAccountRoutes(app: App) {
 	 * A scoped session for the browser extension or iOS/Android AutoFill. It
 	 * can list mailboxes and create/list private emails, nothing else, and it
 	 * shows up (and can be revoked) in the session list.
+	 *
+	 * `client: "watchos" | "wearos"` mints a "watch" session instead (AVE-143,
+	 * `auth/watch-session.ts`): inbox triage and quick reply only, tied to the
+	 * caller's own session, which must be a full one. Minting again from the
+	 * same phone session replaces that watch's previous token.
 	 */
 	app.post("/api/v1/me/extension-session", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		// Scoped sessions never mint sessions (the middleware refuses this route
+		// for them too).
+		if (principal.scope) return c.json({ error: "This session can't create sessions" }, 403);
 		const body = (await c.req.json().catch(() => ({}))) as { client?: string };
+		if (isWatchClient(body.client)) {
+			const parent = await liveParentSession(c.env, principal.userId, principal.sessionId);
+			if (!parent) return c.json({ error: "Sign in on your phone first" }, 403);
+			const label = WATCH_CLIENT_LABELS[body.client];
+			await authDb(c.env.AUTH_DB)
+				.delete(schema.session)
+				.where(
+					and(
+						eq(schema.session.parentSessionId, parent.id),
+						eq(schema.session.scope, WATCH_SCOPE),
+						eq(schema.session.label, label),
+					),
+				);
+			const session = await createSessionForUser(c.env, principal.userId, {
+				scope: WATCH_SCOPE,
+				label,
+				parentSessionId: parent.id,
+				expiresAt: parent.expiresAt,
+				headers: c.req.raw.headers,
+			});
+			return c.json({ id: session.id, token: session.token, expiresAt: session.expiresAt.toISOString(), label });
+		}
 		const label =
 			body.client === "ios-autofill"
 				? "iPhone AutoFill"

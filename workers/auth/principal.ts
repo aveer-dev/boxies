@@ -13,19 +13,29 @@
 import { getAuth } from "./index";
 import type { Env } from "../types";
 import { noteSignedInRequest } from "./security-activity";
+import { deleteWatchSession, liveParentSession, WATCH_SCOPE } from "./watch-session";
 
-export type SessionScope = "aliases";
+export type SessionScope = "aliases" | "watch";
 
 export type RequestPrincipal = {
 	userId: string;
 	sessionId: string;
 	email: string;
-	/** Null for a full app session; "aliases" for extension / AutoFill tokens. */
+	/**
+	 * Null for a full app session; "aliases" for extension / AutoFill tokens;
+	 * "watch" for Apple Watch / Wear OS tokens (AVE-143).
+	 */
 	scope: SessionScope | null;
 };
 
-function parseScope(value: unknown): SessionScope | null {
-	return value === "aliases" ? "aliases" : null;
+/**
+ * The session's scope. Any non-empty scope we don't know is refused outright
+ * (`invalid`) rather than read as a full session.
+ */
+function parseScope(value: unknown): SessionScope | null | "invalid" {
+	if (value === null || value === undefined || value === "") return null;
+	if (value === "aliases" || value === "watch") return value;
+	return "invalid";
 }
 
 /** The signed-in principal for these request headers (cookie or Bearer), or null. */
@@ -36,15 +46,25 @@ export async function principalFromHeaders(
 	try {
 		const result = await getAuth(env).api.getSession({ headers });
 		if (!result?.session || !result.user) return null;
-		const session = result.session as typeof result.session & { scope?: unknown };
+		const session = result.session as typeof result.session & { scope?: unknown; parentSessionId?: unknown };
+		const scope = parseScope(session.scope);
+		if (scope === "invalid") return null;
+		if (scope === WATCH_SCOPE) {
+			// A watch session dies with the phone session it came from.
+			const parentId = typeof session.parentSessionId === "string" ? session.parentSessionId : null;
+			if (!(await liveParentSession(env, result.user.id, parentId))) {
+				await deleteWatchSession(env, session.id);
+				return null;
+			}
+		}
 		// Sessions this request mints for an already signed-in user are
 		// rotations (2FA setup, password change), not sign-ins (AVE-151).
-		if (!parseScope(session.scope)) noteSignedInRequest(result.user.id);
+		if (!scope) noteSignedInRequest(result.user.id);
 		return {
 			userId: result.user.id,
 			sessionId: session.id,
 			email: result.user.email,
-			scope: parseScope(session.scope),
+			scope,
 		};
 	} catch (e) {
 		console.error("[Auth] Session lookup failed:", (e as Error).message);

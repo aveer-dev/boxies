@@ -26,7 +26,7 @@ export interface InboxFilterRule {
 	forwardTo?: string;
 }
 
-export type PurposeFolderId = "inbox" | "promotions" | "updates";
+export type PurposeFolderId = "inbox" | "promotions" | "updates" | "paper_trail";
 
 export interface SenderPreference {
 	address: string;
@@ -103,6 +103,8 @@ export interface AccountSession {
 	lastActiveAt: string;
 	expiresAt: string;
 	current: boolean;
+	/** For a "watch" session, the phone session it signs out with (AVE-143). */
+	parentSessionId?: string | null;
 }
 
 /** An app connected over MCP OAuth (Settings → Devices → Connected apps). */

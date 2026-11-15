@@ -457,7 +457,7 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 		// ── move_email ─────────────────────────────────────────────
 		tool(
 			"move_email",
-			"Move an email to a different folder (inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash).",
+			"Move an email to a different folder (inbox, screener, promotions, updates, paper_trail, sent, draft, archive, spam, screened_out, trash).",
 			{
 				mailboxId: z.string().describe("The mailbox email address"),
 				emailId: z.string().describe("The email ID"),
@@ -489,14 +489,14 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 		// (docs/spam-management-plan.md §5), the same as Not spam / Report spam.
 		tool(
 			"allow_sender",
-			"Allow a sender, like the user clicking Not spam: their future mail skips Spam and is filed to folderId (inbox, promotions, or updates; default: their current box, else inbox). Clears a block. Doesn't move existing messages. Only call when the user asked.",
+			"Allow a sender, like the user clicking Not spam: their future mail skips Spam and is filed to folderId (inbox, promotions, updates, or paper_trail; default: their current box, else inbox). Clears a block. Doesn't move existing messages. Only call when the user asked.",
 			{
 				mailboxId: z.string().describe("The mailbox email address"),
 				sender: z.string().describe("The sender's email address"),
 				folderId: z
-					.enum([Folders.INBOX, Folders.PROMOTIONS, Folders.UPDATES])
+					.enum([Folders.INBOX, Folders.PROMOTIONS, Folders.UPDATES, Folders.PAPER_TRAIL])
 					.optional()
-					.describe("Where their future mail goes: inbox, promotions, or updates"),
+					.describe("Where their future mail goes: inbox, promotions, updates, or paper_trail"),
 			},
 			async ({ mailboxId, sender, folderId }) => {
 				const access = await verifyMailbox(mailboxId);

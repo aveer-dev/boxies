@@ -45,7 +45,7 @@ export const UNDO_TTL_MS = 10 * 60 * 1000;
 /** At most this many other messages move per verdict (newest first). */
 export const RETROACTIVE_MOVE_LIMIT = 500;
 
-const PURPOSE_FOLDERS_SQL = `'${Folders.INBOX}', '${Folders.PROMOTIONS}', '${Folders.UPDATES}'`;
+const PURPOSE_FOLDERS_SQL = `'${Folders.INBOX}', '${Folders.PROMOTIONS}', '${Folders.UPDATES}', '${Folders.PAPER_TRAIL}'`;
 
 export type SenderVerdictKind = "allow" | "block";
 
@@ -320,7 +320,7 @@ export function planSpamRescue(
 		}));
 }
 
-/** Report spam: the sender's Inbox / Promotions / Updates mail, all bound for Spam. Doesn't write. */
+/** Report spam: the sender's Inbox / Promotions / Updates / Paper Trail mail, all bound for Spam. Doesn't write. */
 export function planSpamRefile(
 	sql: Sql,
 	rawSender: string,

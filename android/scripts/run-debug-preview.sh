@@ -23,6 +23,7 @@
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh setAside
+#   ./scripts/run-debug-preview.sh paperTrail   # Paper Trail: compact rows under month headers (AVE-192)
 #   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
 #   ./scripts/run-debug-preview.sh code                # reader with the Code card (AVE-177)
@@ -79,9 +80,12 @@
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
 #   ./scripts/run-debug-preview.sh domainDnsEnded      # DNS console, Subscription card
 #   ./scripts/run-debug-preview.sh widgets             # "Today's inbox" widget mocks (AVE-138)
-#   ./scripts/run-debug-preview.sh widgetData          # sample data for the real home-screen widget (AVE-150)
+#   ./scripts/run-debug-preview.sh widgetData          # sample data for the real home-screen widget (AVE-150), signed out + offline
 #   ./scripts/run-debug-preview.sh widgetZero          # same, inbox zero
 #   PIN=1 ./scripts/run-debug-preview.sh widgetData    # also ask the launcher to add the widget
+#
+# Every preview is a fixture: the app blocks all network while one runs and never
+# uses, sends or deletes the session stored on the device (AVE-235).
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -151,6 +155,7 @@ case "$mode" in
   pilePicker|PilePicker|previewPilePicker) extra=previewPilePicker; label=pilePicker ;;
   focusReply|FocusReply|focus-reply|previewFocusReply) extra=previewFocusReply; label=focusReply ;;
   focusReplyDone|FocusReplyDone|previewFocusReplyDone) extra=previewFocusReplyDone; label=focusReplyDone ;;
+  paperTrail|PaperTrail|previewPaperTrail) extra=previewPaperTrail; label=paperTrail ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   code|Code|previewCode) extra=previewCode; label=code ;;
@@ -172,8 +177,8 @@ case "$mode" in
   aiUsageLimit|AiUsageLimit|ai-usage-limit|previewAiUsageLimit) extra=previewAiUsageLimit; label=aiUsageLimit ;;
   aiUsageSettings|AiUsageSettings|ai-usage-settings|previewAiUsageSettings) extra=previewAiUsageSettings; label=aiUsageSettings ;;
   widgets|Widgets|widget|previewWidgets) extra=previewWidgets; label=widgets ;;
-  widgetData|WidgetData|previewWidgetData) extra=previewWidgetData; label=widgetData; widget_data=mail ;;
-  widgetZero|WidgetZero) extra=previewWidgetData; label=widgetZero; widget_data=zero ;;
+  widgetData|WidgetData|previewWidgetData) extra=previewWidgetData; label=widgetData ;;
+  widgetZero|WidgetZero|previewWidgetZero) extra=previewWidgetZero; label=widgetZero ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
@@ -182,12 +187,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,72p' "$0"
+    sed -n '2,/^$/p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainAliasAdd | domainAliasConflict | domainAliasDelete | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainAliasAdd | domainAliasConflict | domainAliasDelete | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac
@@ -202,10 +207,10 @@ fi
 echo "→ force-stop $PKG"
 "$ADB" shell am force-stop "$PKG" || true
 
-if [[ -n "${widget_data:-}" ]]; then
+if [[ "$label" == widgetData || "$label" == widgetZero ]]; then
   # The real widget reads this data; add it from the launcher (or PIN=1) to see it.
-  echo "→ start $ACTIVITY ($label / --es $extra $widget_data)"
-  "$ADB" shell am start -n "$ACTIVITY" --es "$extra" "$widget_data" --ez previewWidgetPin "$([[ "${PIN:-0}" == "1" ]] && echo true || echo false)"
+  echo "→ start $ACTIVITY ($label / --ez $extra true)"
+  "$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true --ez previewWidgetPin "$([[ "${PIN:-0}" == "1" ]] && echo true || echo false)"
 else
   echo "→ start $ACTIVITY ($label / --ez $extra true)"
   "$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true

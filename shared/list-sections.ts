@@ -195,7 +195,7 @@ export function patchEmailListCache<T extends ListSectionRowWithId>(
 }
 
 export type InboxListItem<T> =
-	| { type: "section"; id: "new" | "seen"; label: string; count?: number }
+	| { type: "section"; id: string; label: string; count?: number }
 	| { type: "empty-new" }
 	| { type: "show-more-new"; hiddenCount: number }
 	| { type: "email"; email: T };

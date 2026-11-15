@@ -17,6 +17,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+	type AnySQLiteColumn,
 	index,
 	integer,
 	primaryKey,
@@ -74,15 +75,25 @@ export const session = sqliteTable(
 		/**
 		 * Null for a full app session. "aliases" for browser-extension and
 		 * AutoFill tokens, which may only list mailboxes and manage private
-		 * emails (see `lib/auth-paths.ts`).
+		 * emails; "watch" for Apple Watch / Wear OS tokens, which may only
+		 * triage the inbox and quick-reply (see `lib/auth-paths.ts`).
 		 */
 		scope: text("scope"),
 		/** Name shown in the session list ("Browser extension", "iPhone AutoFill"). */
 		label: text("label"),
+		/**
+		 * The full phone session a "watch" session was minted from (AVE-143).
+		 * The watch session lives exactly as long as it: deleting the parent
+		 * deletes it, and it is refused once the parent is gone or expired.
+		 */
+		parentSessionId: text("parent_session_id").references((): AnySQLiteColumn => session.id, {
+			onDelete: "cascade",
+		}),
 	},
 	(t) => [
 		index("session_user_id_idx").on(t.userId),
 		index("session_expires_at_idx").on(t.expiresAt),
+		index("session_parent_session_id_idx").on(t.parentSessionId),
 	],
 );
 

@@ -111,6 +111,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     FocusReply("focusReply", "previewFocusReply"),
     /** The pile after a Focus & Reply run emptied it: "All done" (iOS `-previewReplyLater -previewFocusReplyDone`). */
     FocusReplyDone("focusReplyDone", "previewFocusReplyDone"),
+    /** Paper Trail, a quiet receipts folder: compact rows under month headers (iOS `-previewMailbox -previewPaperTrail`, AVE-192). */
+    PaperTrail("paperTrail", "previewPaperTrail"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),
@@ -152,6 +154,13 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     AiUsageSettings("aiUsageSettings", "previewAiUsageSettings"),
     /** "Today's inbox" widget design mocks at real size, light/dark toggle (iOS `-previewWidgets`, AVE-138). */
     Widgets("widgets", "previewWidgets"),
+    /**
+     * Sample "new mail" data for the real home-screen widget, signed out and offline
+     * (AVE-150, AVE-235). Also reached by the older `--es previewWidgetData mail`.
+     */
+    WidgetData("widgetData", "previewWidgetData"),
+    /** Same, inbox zero (`--es previewWidgetData zero`). */
+    WidgetZero("widgetZero", "previewWidgetZero"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),
@@ -170,11 +179,22 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
         fun fromIntent(intent: Intent?): PreviewMode? {
             if (!BuildConfig.DEBUG || intent == null) return null
 
+            // Older string form: `--es previewWidgetData mail|zero` (read before the boolean
+            // loop, which would log a type mismatch for it).
+            intent.getStringExtra(EXTRA_WIDGET_DATA)?.let { value ->
+                return fromWidgetDataValue(value)
+            }
+
             for (mode in entries) {
                 if (intent.getBooleanExtra(mode.intentExtra, false)) return mode
             }
 
-            val raw = intent.getStringExtra(EXTRA_PREVIEW)?.trim()?.lowercase().orEmpty()
+            return fromName(intent.getStringExtra(EXTRA_PREVIEW))
+        }
+
+        /** `-e preview <name>`: a [cliName], an [intentExtra], or the extra without `preview`. */
+        fun fromName(name: String?): PreviewMode? {
+            val raw = name?.trim().orEmpty()
             if (raw.isEmpty()) return null
             return entries.firstOrNull {
                 it.cliName.equals(raw, ignoreCase = true) ||
@@ -183,6 +203,11 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
             }
         }
 
+        /** `--es previewWidgetData <value>`: `zero` is inbox zero, anything else has mail. */
+        fun fromWidgetDataValue(value: String): PreviewMode =
+            if (value.trim().equals("zero", ignoreCase = true)) WidgetZero else WidgetData
+
         const val EXTRA_PREVIEW = "preview"
+        const val EXTRA_WIDGET_DATA = "previewWidgetData"
     }
 }

@@ -1373,6 +1373,7 @@ sealed class HomeTab {
                 FolderIds.SCREENER -> "Screening room"
                 FolderIds.PROMOTIONS -> "Promotions"
                 FolderIds.UPDATES -> "Updates"
+                FolderIds.PAPER_TRAIL -> "Paper Trail"
                 FolderIds.SENT -> "Sent"
                 FolderIds.DRAFT -> "Drafts"
                 FolderIds.ARCHIVE -> "Archive"
@@ -1399,6 +1400,8 @@ object FolderIds {
     const val SCREENER = "screener"
     const val PROMOTIONS = "promotions"
     const val UPDATES = "updates"
+    /** HEY's Paper Trail (AVE-192): receipts from senders you send here. Never pushes. */
+    const val PAPER_TRAIL = "paper_trail"
     const val SENT = "sent"
     const val DRAFT = "draft"
     const val ARCHIVE = "archive"
@@ -1407,7 +1410,7 @@ object FolderIds {
     const val TRASH = "trash"
 
     /** Purpose boxes — sender defaults may only target these. */
-    val purposeFolderIds: Set<String> = setOf(INBOX, PROMOTIONS, UPDATES)
+    val purposeFolderIds: Set<String> = setOf(INBOX, PROMOTIONS, UPDATES, PAPER_TRAIL)
 
     fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
 
@@ -1425,6 +1428,7 @@ object FolderIds {
         INBOX -> "Inbox"
         PROMOTIONS -> "Promotions"
         UPDATES -> "Updates"
+        PAPER_TRAIL -> "Paper Trail"
         else -> id.replaceFirstChar { it.uppercase() }
     }
 
@@ -1436,6 +1440,7 @@ object FolderIds {
         INBOX,
         PROMOTIONS,
         UPDATES,
+        PAPER_TRAIL,
         SENT,
         DRAFT,
         ARCHIVE,

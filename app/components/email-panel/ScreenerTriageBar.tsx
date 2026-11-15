@@ -50,7 +50,7 @@ export default function ScreenerTriageBar({
 				displayName: senderName || undefined,
 			});
 			// Inbox is the default and pins nothing: their mail is sorted
-			// automatically. A picked Promotions / Updates sticks (AVE-139).
+			// automatically. A picked Promotions / Updates / Paper Trail sticks (AVE-139, AVE-192).
 			toastManager.add({
 				title:
 					destinationFolderId === Folders.INBOX
