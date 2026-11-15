@@ -2,6 +2,7 @@ package co.inboxies.app.services
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.ZoneId
@@ -22,6 +23,19 @@ class MailNotificationActionsTest {
             MailNotificationActions.request(MailNotificationAction.SPAM, null, now),
         )
         assertEquals(MailNotificationRequest.MarkRead, MailNotificationActions.request(MailNotificationAction.MARK_READ, null, now))
+    }
+
+    @Test
+    fun onlyReplyAndSpamNeedUnlock() {
+        // AVE-221: twin of iOS testOnlyReplyAndSpamNeedUnlockAndNoneOpenTheApp.
+        for (action in MailNotificationAction.entries) {
+            assertEquals(
+                action.id,
+                action.id in setOf("REPLY", "SPAM"),
+                MailNotificationActions.requiresAuthentication(action),
+            )
+        }
+        assertTrue(MailNotificationActions.requiresAuthentication(MailNotificationAction.REPLY))
     }
 
     @Test
