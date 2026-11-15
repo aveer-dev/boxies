@@ -5,7 +5,9 @@ import Foundation
 ///
 /// - The watch asks with `requestSession`; the phone mints a `watch`-scoped session
 ///   (`POST /api/v1/me/extension-session { client: "watchos" }`) and replies with a
-///   `session` grant. The phone may also push a grant once after sign-in.
+///   `session` grant. The phone may also push a grant once after sign-in. The watch
+///   asks on its own (`WatchReconnector`) whenever it has no session; `manual` marks a
+///   Connect tap, which is the only request that lifts a revoke made on the phone.
 /// - `clear` tells the watch to wipe its token (phone sign-out, or the watch was
 ///   signed out from Devices & sessions).
 /// - The application context carries only non-secret state: signed in or not, the
@@ -29,6 +31,22 @@ enum WatchHandoff {
         case signedOut
         /// Phone → watch reply: the phone couldn't mint one right now (offline, server error).
         case unavailable
+        /// Phone → watch reply: the watch was signed out from Devices & sessions on the
+        /// phone; only a Connect tap (`manual`) gets a new session.
+        case revoked
+    }
+
+    /// `requestSession` flag: the person tapped Connect.
+    static let manualKey = "manual"
+
+    static func requestSession(manual: Bool) -> [String: Any] {
+        var message = message(.requestSession)
+        message[manualKey] = manual
+        return message
+    }
+
+    static func isManualRequest(_ message: [String: Any]) -> Bool {
+        message[manualKey] as? Bool ?? false
     }
 
     static func kind(of message: [String: Any]) -> Kind? {

@@ -3,8 +3,8 @@ import UIKit
 import XCTest
 @testable import Inboxies
 
-/// Watch phase 2b (AVE-144): the WatchConnectivity contract, the watch palette and the
-/// watch's plain-text bodies.
+/// Watch phase 2b (AVE-144): the WatchConnectivity contract, the watch's silent
+/// reconnect, the watch palette and the watch's plain-text bodies.
 final class WatchCompanionTests: XCTestCase {
     // MARK: Handoff
 
@@ -47,6 +47,130 @@ final class WatchCompanionTests: XCTestCase {
         XCTAssertNil(WatchSessionGrant(message: context.message))
         let signedOut = WatchPhoneContext(signedIn: false, mailboxId: nil, apiBaseURL: nil)
         XCTAssertEqual(WatchPhoneContext(message: signedOut.message), signedOut)
+    }
+
+    func testSessionRequestCarriesTheConnectTap() {
+        let automatic = WatchHandoff.requestSession(manual: false)
+        XCTAssertEqual(WatchHandoff.kind(of: automatic), .requestSession)
+        XCTAssertFalse(WatchHandoff.isManualRequest(automatic))
+        XCTAssertTrue(WatchHandoff.isManualRequest(WatchHandoff.requestSession(manual: true)))
+        // An older watch build sends no flag: treated as automatic.
+        XCTAssertFalse(WatchHandoff.isManualRequest(WatchHandoff.message(.requestSession)))
+        XCTAssertEqual(WatchHandoff.kind(of: WatchHandoff.message(.revoked)), .revoked)
+    }
+
+    // MARK: Silent reconnect
+
+    private static let grant = WatchSessionGrant(
+        token: "watch-token",
+        apiBaseURL: URL(string: "https://inboxies.email")!,
+        mailboxId: nil
+    )
+
+    func testDefaultBackoffStartsNowAndGrows() {
+        let delays = WatchReconnector.defaultDelays
+        XCTAssertEqual(delays.first, .zero)
+        XCTAssertGreaterThanOrEqual(delays.count, 4)
+        XCTAssertEqual(delays, delays.sorted())
+        XCTAssertEqual(Set(delays).count, delays.count)
+    }
+
+    @MainActor
+    func testReconnectRetriesWithBackoffUntilThePhoneAnswers() async {
+        let phone = PhoneStub(answers: [.unreachable, .unavailable, .grant(Self.grant)])
+        let reconnector = phone.reconnector(delays: [.zero, .seconds(2), .seconds(5), .seconds(10)])
+        let outcome = await reconnector.reconnect()
+        XCTAssertEqual(outcome, .connected(Self.grant))
+        XCTAssertEqual(reconnector.attempts, 3)
+        XCTAssertEqual(phone.slept, [.seconds(2), .seconds(5)])
+        XCTAssertEqual(phone.requests, [false, false, false])
+        XCTAssertFalse(reconnector.isRunning)
+    }
+
+    @MainActor
+    func testReconnectGivesUpAfterEveryAttempt() async {
+        let phone = PhoneStub(answers: [])
+        let reconnector = phone.reconnector(delays: [.zero, .seconds(1), .seconds(2), .seconds(4)])
+        let outcome = await reconnector.reconnect()
+        XCTAssertEqual(outcome, .gaveUp(.unreachable))
+        XCTAssertEqual(reconnector.attempts, 4)
+        XCTAssertEqual(phone.slept, [.seconds(1), .seconds(2), .seconds(4)])
+
+        // A later trigger (app active, phone reachable) starts a fresh run.
+        phone.answers = [.grant(Self.grant)]
+        let retry = await reconnector.reconnect()
+        XCTAssertEqual(retry, .connected(Self.grant))
+        XCTAssertEqual(reconnector.attempts, 1)
+    }
+
+    @MainActor
+    func testReconnectStopsAtTheFirstSignedOutAnswer() async {
+        let phone = PhoneStub(answers: [.unreachable, .signedOut, .grant(Self.grant)])
+        let reconnector = phone.reconnector(delays: [.zero, .seconds(1), .seconds(2), .seconds(4)])
+        let outcome = await reconnector.reconnect()
+        XCTAssertEqual(outcome, .stopped(.signedOut))
+        XCTAssertEqual(reconnector.attempts, 2)
+        XCTAssertEqual(phone.requests.count, 2)
+        XCTAssertEqual(phone.slept, [.seconds(1)])
+    }
+
+    @MainActor
+    func testReconnectStopsWhenThePhoneRevokedTheWatch() async {
+        let phone = PhoneStub(answers: [.revoked, .grant(Self.grant)])
+        let reconnector = phone.reconnector(delays: [.zero, .seconds(1)])
+        let outcome = await reconnector.reconnect()
+        XCTAssertEqual(outcome, .stopped(.revoked))
+        XCTAssertEqual(phone.requests, [false])
+    }
+
+    @MainActor
+    func testConcurrentReconnectsShareOneRequest() async {
+        let phone = PhoneStub(answers: [.grant(Self.grant)])
+        phone.holdNext = true
+        let reconnector = phone.reconnector(delays: [.zero, .seconds(1)])
+        let first = Task { await reconnector.reconnect() }
+        while phone.requests.isEmpty { await Task.yield() }
+        let second = Task { await reconnector.reconnect() }
+        let third = Task { await reconnector.reconnect() }
+        for _ in 0..<50 { await Task.yield() }
+        phone.release()
+        let outcomes = [await first.value, await second.value, await third.value]
+        XCTAssertEqual(outcomes, Array(repeating: .connected(Self.grant), count: 3))
+        XCTAssertEqual(phone.requests.count, 1)
+    }
+
+    @MainActor
+    func testConnectTapSkipsTheWaitAndAsksAsTheUser() async {
+        let phone = PhoneStub(answers: [.unreachable, .grant(Self.grant)])
+        // A real (long) wait, so only the Connect tap can end it.
+        let reconnector = WatchReconnector(
+            delays: [.zero, .seconds(600)],
+            sleep: { try await Task.sleep(for: $0) },
+            request: { await phone.request(manual: $0) }
+        )
+        let automatic = Task { await reconnector.reconnect() }
+        while phone.requests.isEmpty { await Task.yield() }
+        for _ in 0..<10 { await Task.yield() }
+        let tap = await reconnector.reconnect(manual: true)
+        XCTAssertEqual(tap, .connected(Self.grant))
+        let joined = await automatic.value
+        XCTAssertEqual(joined, .connected(Self.grant))
+        XCTAssertEqual(phone.requests, [false, true])
+    }
+
+    @MainActor
+    func testConnectTapDuringAnAutomaticRequestAsksAgainAsTheUser() async {
+        let phone = PhoneStub(answers: [.revoked, .grant(Self.grant)])
+        phone.holdNext = true
+        let reconnector = phone.reconnector(delays: [.zero])
+        let automatic = Task { await reconnector.reconnect() }
+        while phone.requests.isEmpty { await Task.yield() }
+        let tap = Task { await reconnector.reconnect(manual: true) }
+        for _ in 0..<50 { await Task.yield() }
+        phone.release()
+        let outcomes = [await automatic.value, await tap.value]
+        XCTAssertEqual(outcomes, [.connected(Self.grant), .connected(Self.grant)])
+        XCTAssertEqual(phone.requests, [false, true])
     }
 
     // MARK: Palette
@@ -101,5 +225,43 @@ final class WatchCompanionTests: XCTestCase {
 
     func testCannedRepliesMatchNotificationPlan() {
         XCTAssertEqual(WatchMailText.cannedReplies, MailNotificationActions.cannedReplies)
+    }
+}
+
+/// Stands in for the phone in the reconnect tests: answers in order (then
+/// `unreachable`), records each request's Connect flag and each backoff wait.
+@MainActor
+private final class PhoneStub {
+    var answers: [WatchSessionRequestResult]
+    private(set) var requests: [Bool] = []
+    private(set) var slept: [Duration] = []
+    /// Hold the next request until `release()`.
+    var holdNext = false
+    private var held: CheckedContinuation<Void, Never>?
+
+    init(answers: [WatchSessionRequestResult]) {
+        self.answers = answers
+    }
+
+    func request(manual: Bool) async -> WatchSessionRequestResult {
+        requests.append(manual)
+        if holdNext {
+            holdNext = false
+            await withCheckedContinuation { held = $0 }
+        }
+        return answers.isEmpty ? .unreachable : answers.removeFirst()
+    }
+
+    func release() {
+        held?.resume()
+        held = nil
+    }
+
+    func reconnector(delays: [Duration]) -> WatchReconnector {
+        WatchReconnector(
+            delays: delays,
+            sleep: { [weak self] in self?.slept.append($0) },
+            request: { [weak self] manual in await self?.request(manual: manual) ?? .unreachable }
+        )
     }
 }

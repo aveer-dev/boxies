@@ -247,7 +247,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 - **Colors:** `WatchPalette` (`Inboxies/WatchShared`) = `AppTheme` dark values; `WatchCompanionTests` fails if they drift. Dark only. Accent for unread dots and the primary action (Reply) only; Report spam is `destructive` text on `pillFill`, never a red fill.
 - **Type:** Inter via `WatchType` (watch has no UIKit `AppTheme`). Rows: sender 15 semibold/medium, subject 13, preview 12, meta 11.
 - **Layout:** `.listStyle(.plain)`, clear row backgrounds, 0.5pt `line` hairline, no platters/cards. Buttons are `WatchPillButtonStyle` capsules. Pressed opacity 0.55, house spring `Animation.inboxies`.
-- **Session:** never the phone's. `WatchSessionBridge` (phone) mints a `watch`-scoped session and sends it over WatchConnectivity; the watch keeps it in its own keychain (`WatchKeychain`) and only calls `WatchAPI`'s allowlisted routes.
+- **Session:** never the phone's. `WatchSessionBridge` (phone) mints a `watch`-scoped session and sends it over WatchConnectivity; the watch keeps it in its own keychain (`WatchKeychain`) and only calls `WatchAPI`'s allowlisted routes. No session or a 401 → `WatchReconnector` (`Inboxies/WatchShared`) asks the phone quietly with backoff and one shared in-flight request; Connect shows only after it gives up or the phone answers signed out / revoked.
 - **DEBUG launch args** (watch app): `-previewWatchInbox`, `-previewWatchMessage`, `-previewWatchReply`, `-previewWatchConnect` (`InboxiesWatch/WatchPreviewFixtures.swift`).
 
 ## Hard don'ts

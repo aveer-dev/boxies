@@ -47,24 +47,32 @@ extension Animation {
 
 struct WatchRootView: View {
     @Environment(WatchStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
             switch store.connection {
-            case .connected:
-                WatchInboxView()
-            case .connecting:
-                WatchConnectView(message: nil)
             case .needsPhone(let message):
                 WatchConnectView(message: message)
+            case .connected, .connecting:
+                // Reconnecting quietly after a 401 keeps the Inbox (and the open message) up.
+                if store.connection == .connected || !store.mailboxes.isEmpty {
+                    WatchInboxView()
+                } else {
+                    WatchConnectView(message: nil)
+                }
             }
         }
         .tint(WatchPalette.accent)
         .animation(.inboxies, value: store.connection)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { store.retryNowIfDisconnected() }
+        }
     }
 }
 
-/// No session on the watch: the phone hands one over, or the person taps Connect.
+/// No session on the watch: the phone hands one over (the watch asks it quietly, with
+/// retries), or, once those have run out, the person taps Connect.
 struct WatchConnectView: View {
     @Environment(WatchStore.self) private var store
     let message: String?

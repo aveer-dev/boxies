@@ -7,10 +7,12 @@ import WatchConnectivity
 /// WatchConnectivity. The app's full session never leaves the phone.
 ///
 /// - After sign-in the watch gets one session without asking (`handOverIfNeeded`).
-/// - Afterwards the phone mints only when the watch asks (`requestSession`): the
-///   watch asks on first launch and when the user taps Connect after a sign-out
-///   or a revoke. A revoke in Devices & sessions therefore sticks until the
-///   person reconnects from the watch.
+/// - Afterwards the phone mints only when the watch asks (`requestSession`). The
+///   watch asks on its own whenever it has no session (first launch, a 401), with
+///   a few retries (`WatchReconnector`), so a replaced or expired token heals
+///   without the person doing anything.
+/// - A revoke in Devices & sessions on this phone sticks: until the person taps
+///   Connect on the watch (a `manual` request), the phone answers `revoked`.
 /// - Sign-out cancels any queued token, tells the watch to wipe and hands back the
 ///   watch session's id so sign-out can end it on the server. The server also ends
 ///   it with the phone session (`parent_session_id`, AVE-143).
@@ -23,6 +25,9 @@ final class WatchSessionBridge: NSObject, WCSessionDelegate {
     /// Set once the watch was handed a session since this sign-in, so launches don't
     /// re-mint (each mint replaces the watch's token). Cleared on sign-out.
     private static let handedOverKey = "watchSessionHandedOver"
+    /// Set when the watch session was ended from this phone (Devices & sessions): the
+    /// watch's automatic requests get `revoked` until a Connect tap. Cleared on sign-out.
+    private static let revokedKey = "watchSessionRevoked"
 
     private var session: WCSession? {
         WCSession.isSupported() ? WCSession.default : nil
@@ -85,15 +90,18 @@ final class WatchSessionBridge: NSObject, WCSessionDelegate {
         let id = storedId
         UserDefaults.standard.removeObject(forKey: Self.sessionIdKey)
         UserDefaults.standard.removeObject(forKey: Self.handedOverKey)
+        UserDefaults.standard.removeObject(forKey: Self.revokedKey)
         tellWatchToWipe()
         updateContext(WatchPhoneContext(signedIn: false, mailboxId: nil, apiBaseURL: nil))
         return id
     }
 
     /// The watch session was ended on the server from this phone (Devices & sessions).
-    /// The watch wipes now; it gets a new session only when the person taps Connect.
+    /// The watch wipes now; it gets a new session only when the person taps Connect
+    /// (its automatic requests are answered `revoked`).
     func revokedOnServer() {
         UserDefaults.standard.removeObject(forKey: Self.sessionIdKey)
+        UserDefaults.standard.set(true, forKey: Self.revokedKey)
         tellWatchToWipe()
     }
 
@@ -192,9 +200,15 @@ final class WatchSessionBridge: NSObject, WCSessionDelegate {
             replyHandler(WatchHandoff.message(.unavailable))
             return
         }
+        let manual = WatchHandoff.isManualRequest(message)
+        if !manual, UserDefaults.standard.bool(forKey: Self.revokedKey) {
+            replyHandler(WatchHandoff.message(isSignedIn ? .revoked : .signedOut))
+            return
+        }
         Task {
             switch await mint() {
             case .grant(let grant):
+                UserDefaults.standard.removeObject(forKey: Self.revokedKey)
                 // A token from an earlier handoff must not land after this one.
                 cancelQueuedTransfers(on: session)
                 replyHandler(grant.message)

@@ -15,6 +15,7 @@
 		06A3BD86E3512DAC2AEADEB2 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0DB4217B5E980F772323B7 /* SearchQueryParser.swift */; };
 		094677CFB8FF282E18546285 /* PrivateEmailMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */; };
 		09E0D6A7C881D7F76F6C9D9F /* FiltersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */; };
+		0A88F22E831ACFE0916045D0 /* WatchReconnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */; };
 		0B92FC241FEF89FBF81AD7BE /* BounceSuppressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602BF2EFF3E0FFE7D50873BC /* BounceSuppressionTests.swift */; };
 		0D3CC5CAB6651388A8C5DDC7 /* WatchMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C25B55A5BBEDD9B6D8FB750 /* WatchMessageView.swift */; };
 		0DD9E549060FE621118E0F5F /* WatchKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B84DD70CBC0E5A120EC296 /* WatchKeychain.swift */; };
@@ -134,6 +135,7 @@
 		8F8F20F7D603C0979EAA1423 /* PhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F86AC049A0EE811EFF93233C /* PhoneLink.swift */; };
 		917E0E0C5189D64E5287672A /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
 		926F05AFFEC794982B75F395 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */; };
+		92D3D0782F3096978508D858 /* WatchReconnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */; };
 		9488898F1174B55B2CA31011 /* AgentChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4DA859650B3CC11EE116D0A /* AgentChatClient.swift */; };
 		948E2D2999B88A52F4313B1A /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
 		96A7ED89156A4F240FA8B593 /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
@@ -144,9 +146,9 @@
 		9FD1E22569C1571649608A34 /* ComposeActionListOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7739FB6CD5F7B4E10AFE9A6 /* ComposeActionListOverlay.swift */; };
 		9FF2F71614D6DD643F80844E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A458C487170DA657BC2E771 /* APIClient.swift */; };
 		A2394072D38F90C76FA94A72 /* ComposeDockBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26FD269635314B4336F3D84 /* ComposeDockBar.swift */; };
+		A3A964374CC6D4C46C324959 /* PaperTrailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466428B8BE11432D8A5342CB /* PaperTrailTests.swift */; };
 		A3E81EA762A75118DCF3BB54 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0C50F4F9FB1E9DE38ADAABCA /* Assets.xcassets */; };
 		A52F82055E86E97E0A7207D7 /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
-		A3A964374CC6D4C46C324959 /* PaperTrailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466428B8BE11432D8A5342CB /* PaperTrailTests.swift */; };
 		A6258BCBC7BE388F2E0AFAA8 /* MailNotificationActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC9BFFACB279B47EE58F75B /* MailNotificationActions.swift */; };
 		A6B605532E5FC5A2DF29CC9E /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE6FBAD12807A14146DD27D /* RootView.swift */; };
 		AAC379E98355AF524CB366B7 /* WatchSessionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67125DF29A67EE2E48B7CAF6 /* WatchSessionBridge.swift */; };
@@ -284,6 +286,7 @@
 		0C50F4F9FB1E9DE38ADAABCA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		0C5BF33317770F74363CB7B5 /* AIUsageMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMeter.swift; sourceTree = "<group>"; };
 		0D3FB43AA59F2D94AC315734 /* EmailListPaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailListPaging.swift; sourceTree = "<group>"; };
+		0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchReconnector.swift; sourceTree = "<group>"; };
 		0F7ACA3D7A218207D8E3BE44 /* EmailDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailDetailView.swift; sourceTree = "<group>"; };
 		0FE9BE13B0C107526EC7CC75 /* ThreadNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadNotes.swift; sourceTree = "<group>"; };
 		12613485B3CE7F30A1BA6DDE /* TextFlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFlowLayout.swift; sourceTree = "<group>"; };
@@ -675,6 +678,7 @@
 				009C5377935E8F9293E21ACE /* WatchHandoff.swift */,
 				DBB98EDA26949B848630974E /* WatchMailText.swift */,
 				5C27157C07FF2A4A1F73413D /* WatchPalette.swift */,
+				0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */,
 			);
 			path = WatchShared;
 			sourceTree = "<group>";
@@ -1212,6 +1216,7 @@
 				7D04BF4457896D0FBCA264D9 /* WatchHandoff.swift in Sources */,
 				2533094280721F1E0B612545 /* WatchMailText.swift in Sources */,
 				B7B4DB4C27CBF13DB9927D8F /* WatchPalette.swift in Sources */,
+				0A88F22E831ACFE0916045D0 /* WatchReconnector.swift in Sources */,
 				AAC379E98355AF524CB366B7 /* WatchSessionBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1296,6 +1301,7 @@
 				0D3CC5CAB6651388A8C5DDC7 /* WatchMessageView.swift in Sources */,
 				3386024DE43AF2126936ACFD /* WatchPalette.swift in Sources */,
 				5DBF91AC7DBF1745691A767F /* WatchPreviewFixtures.swift in Sources */,
+				92D3D0782F3096978508D858 /* WatchReconnector.swift in Sources */,
 				61E83B2590E0E591B824FFBC /* WatchReplyView.swift in Sources */,
 				0121BB3C190D19F4313F3F49 /* WatchStore.swift in Sources */,
 			);

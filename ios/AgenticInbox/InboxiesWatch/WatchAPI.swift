@@ -63,6 +63,8 @@ private struct WatchErrorBody: Decodable {
 enum WatchAPIError: LocalizedError {
     /// 401: the watch session ended (phone signed out, revoked, or replaced).
     case signedOut
+    /// No session yet; the watch is still quietly asking the phone for one.
+    case reconnecting
     case http(Int, String)
     case transport(Error)
     case decoding
@@ -70,6 +72,7 @@ enum WatchAPIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .signedOut: return "Signed out on this watch."
+        case .reconnecting: return "Reconnecting to your iPhone. Try again in a moment."
         case .http(_, let message) where !message.isEmpty: return message
         case .http(let status, _): return "Something went wrong (\(status))."
         case .transport: return "Can't reach Inboxies. Check the connection."
