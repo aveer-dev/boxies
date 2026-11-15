@@ -145,11 +145,15 @@ targets:
       - path: Inboxies/Services/ReplyLaterReminder.swift
       - path: Inboxies/Fonts
         buildPhase: resources
+    dependencies:
+      - target: InboxiesWatchWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app.watchkitapp
         PRODUCT_NAME: Inboxies
         INFOPLIST_FILE: InboxiesWatch/Info.plist
+        # App Group: the complication snapshot it writes for InboxiesWatchWidgets (AVE-146).
+        CODE_SIGN_ENTITLEMENTS: InboxiesWatch/InboxiesWatch.entitlements
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_IDENTITY: Apple Development
         "CODE_SIGN_IDENTITY[sdk=watchsimulator*]": "-"
@@ -159,6 +163,35 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_EMIT_LOC_STRINGS: true
         SKIP_INSTALL: true
+  # Watch complications + Smart Stack widget (AVE-146, docs/watch-companion-plan.md
+  # phase 3): Inbox unread count and newest sender. Reads the snapshot the watch app
+  # writes to the App Group; never touches the network or the watch session.
+  InboxiesWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: InboxiesWatchWidgets
+      # Shared with the watch app: snapshot store, watch palette, Inter type.
+      - path: Inboxies/WatchShared/WatchGlance.swift
+      - path: Inboxies/WatchShared/WatchHandoff.swift
+      - path: Inboxies/WatchShared/WatchPalette.swift
+      - path: Inboxies/WatchShared/WatchType.swift
+      - path: Inboxies/Fonts
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app.watchkitapp.widgets
+        INFOPLIST_FILE: InboxiesWatchWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: InboxiesWatchWidgets/InboxiesWatchWidgets.entitlements
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_IDENTITY: Apple Development
+        "CODE_SIGN_IDENTITY[sdk=watchsimulator*]": "-"
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
+        TARGETED_DEVICE_FAMILY: "4"
+        APPLICATION_EXTENSION_API_ONLY: true
+        SKIP_INSTALL: true
+        SWIFT_EMIT_LOC_STRINGS: true
   InboxiesTests:
     type: bundle.unit-test
     platform: iOS
@@ -193,5 +226,6 @@ schemes:
     build:
       targets:
         InboxiesWatch: all
+        InboxiesWatchWidgets: all
     run:
       config: Debug

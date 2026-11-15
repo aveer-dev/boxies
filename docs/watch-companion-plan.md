@@ -138,7 +138,7 @@ Why go direct instead of relaying through the phone: it works when the phone is 
 | 2a | Worker: `watch` session scope + allowlist + tests | Worker | M |
 | 2b | watchOS app: Inbox, message, actions, WatchConnectivity token handoff | iOS | L |
 | 2c | Wear OS app: Inbox, message, actions, Data Layer token handoff | Android | L |
-| 3a | Complications / Smart Stack (watchOS) | iOS | M |
+| 3a | Complications / Smart Stack (watchOS). **As built (AVE-146):** `InboxiesWatchWidgets` WidgetKit extension (`co.inboxies.app.watchkitapp.widgets`) embedded in the watch app: one "Inbox" widget in circular, rectangular (also the Smart Stack card), inline and corner families, showing the Inbox unread count (the server's New total from `GET .../folders`, already in the `watch` scope, so no Worker change) and the newest unread sender. The watch app writes a `WatchGlanceSnapshot` to the `group.co.inboxies.app` App Group (watch-side container) on every Inbox refresh and action, and reloads timelines only when it changed; the widget never touches the network or the session. Refresh: the phone sends a `glance` update after a new-mail push (`transferCurrentComplicationUserInfo` when a complication is on the face, else `transferUserInfo`), the watch handles it in `.backgroundTask(.watchConnectivity)`, and a ~30 min background app refresh is the timeline budget. Wiped with the watch session. | iOS | M |
 | 3b | Tiles + complication (Wear OS) | Android | M |
 | — | (Separate, optional) Snooze until a chosen time, on all clients | All | M |
 

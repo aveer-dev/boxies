@@ -34,6 +34,8 @@ enum WatchHandoff {
         /// Phone → watch reply: the watch was signed out from Devices & sessions on the
         /// phone; only a Connect tap (`manual`) gets a new session.
         case revoked
+        /// Phone → watch after a new-mail push: `WatchGlanceUpdate` for the complication.
+        case glance
     }
 
     /// `requestSession` flag: the person tapped Connect.

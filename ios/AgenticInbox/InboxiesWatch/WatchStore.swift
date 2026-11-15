@@ -36,6 +36,9 @@ final class WatchStore {
     @ObservationIgnored private var apiBaseURL: URL?
     /// DEBUG fixtures: no phone, no network, actions only change local state.
     @ObservationIgnored private(set) var isPreview = false
+    @ObservationIgnored private var started = false
+    /// One Inbox refresh at a time; callers during a refresh wait for it.
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     private enum Keys {
         static let apiBaseURL = "watchApiBaseURL"
@@ -57,7 +60,10 @@ final class WatchStore {
 
     // MARK: Launch
 
+    /// Launch, and background wakes (complication push, app refresh); runs once.
     func start() {
+        guard !started else { return }
+        started = true
         #if DEBUG
         if let fixture = WatchPreviewFixtures.fromLaunchArguments() {
             loadPreview(fixture)
@@ -142,6 +148,12 @@ final class WatchStore {
             guard let context = WatchPhoneContext(message: message), context.signedIn else { return }
             if let origin = context.apiBaseURL, token == nil { setAPIBaseURL(origin) }
             if activeMailboxId == nil, let mailboxId = context.mailboxId { setActiveMailbox(mailboxId) }
+        case .glance:
+            // New mail on the phone: its count now, then our own read of the Inbox.
+            guard let update = WatchGlanceUpdate(message: message),
+                  update.mailboxId == (activeMailbox?.id ?? activeMailboxId) else { return }
+            if token != nil, let snapshot = update.snapshot() { WatchGlancePublisher.publish(snapshot) }
+            if token != nil { Task { await refresh() } }
         default:
             break
         }
@@ -171,6 +183,7 @@ final class WatchStore {
         emails = []
         listState = .idle
         connection = .needsPhone(message)
+        WatchGlancePublisher.clear()
     }
 
     /// A 401: the token is dead (revoked elsewhere, replaced, expired). Drop it and ask
@@ -215,6 +228,17 @@ final class WatchStore {
     // MARK: Inbox
 
     func refresh() async {
+        if let refreshTask {
+            await refreshTask.value
+            return
+        }
+        let task = Task { await loadInbox() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
+
+    private func loadInbox() async {
         guard !isPreview, let api else { return }
         if emails.isEmpty { listState = .loading }
         do {
@@ -229,8 +253,17 @@ final class WatchStore {
                 listState = .loaded
                 return
             }
-            emails = try await api.inbox(mailboxId: mailboxId)
+            let inbox = try await api.inbox(mailboxId: mailboxId)
+            emails = inbox
             listState = .loaded
+            // The complication: the server's Inbox total if the folders call answers.
+            let folders = try? await api.folders(mailboxId: mailboxId)
+            guard token != nil, activeMailbox?.id == mailboxId else { return }
+            WatchGlancePublisher.publish(WatchGlancePublisher.snapshot(
+                mailboxId: mailboxId,
+                inboxFolderUnread: folders?.first { $0.id == "inbox" }?.unread,
+                emails: inbox
+            ))
         } catch {
             handle(error)
             if emails.isEmpty, token != nil { listState = .failed(Self.message(for: error)) }
@@ -243,6 +276,22 @@ final class WatchStore {
         emails = []
         if isPreview { return }
         Task { await refresh() }
+    }
+
+    // MARK: Background (AVE-146)
+
+    /// A background wake (complication push, app refresh): read the Inbox so the
+    /// complication is current, then ask for the next refresh.
+    func refreshInBackground() async {
+        start()
+        // Let a queued complication push land first (it may carry a fresh grant too).
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while link?.hasContentPending == true, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if !isPreview, token != nil { await refresh() }
+        WatchBackgroundRefresh.schedule()
     }
 
     // MARK: Message
@@ -274,12 +323,12 @@ final class WatchStore {
 
     func archive(_ email: WatchEmail) async throws {
         try await run { try await $0.move(mailboxId: $1, id: email.id, to: .archive) }
-        emails.removeAll { $0.id == email.id }
+        removeRow(email.id)
     }
 
     func reportSpam(_ email: WatchEmail) async throws {
         try await run { try await $0.move(mailboxId: $1, id: email.id, to: .spam) }
-        emails.removeAll { $0.id == email.id }
+        removeRow(email.id)
     }
 
     func reply(to email: WatchEmail, text: String, idempotencyKey: String) async throws {
@@ -314,7 +363,29 @@ final class WatchStore {
 
     private func updateRow(_ id: String, _ change: (inout WatchEmail) -> Void) {
         guard let index = emails.firstIndex(where: { $0.id == id }) else { return }
+        let unreadBefore = emails.filter(\.isUnread).count
         change(&emails[index])
+        republishGlance(unreadBefore: unreadBefore)
+    }
+
+    private func removeRow(_ id: String) {
+        let unreadBefore = emails.filter(\.isUnread).count
+        emails.removeAll { $0.id == id }
+        republishGlance(unreadBefore: unreadBefore)
+    }
+
+    /// After an action on the watch: move the complication's count by what changed on
+    /// screen (the next refresh brings the server's total back).
+    private func republishGlance(unreadBefore: Int) {
+        guard let mailboxId = activeMailbox?.id,
+              let previous = WatchGlanceStore.shared?.read(), previous.mailboxId == mailboxId else { return }
+        let delta = emails.filter(\.isUnread).count - unreadBefore
+        guard delta != 0 else { return }
+        WatchGlancePublisher.publish(WatchGlanceSnapshot(
+            mailboxId: mailboxId,
+            unreadCount: previous.unreadCount + delta,
+            newestSender: emails.first(where: \.isUnread)?.displaySender
+        ))
     }
 
     /// A 401 means the watch session is gone (phone signed out, revoked, or
@@ -337,6 +408,12 @@ final class WatchStore {
         emails = fixture.emails
         listState = .loaded
         connection = fixture.connection
+        // The real complication shows the fixture Inbox (`-previewWatchInbox`).
+        if let mailboxId = activeMailboxId, fixture.connection == .connected {
+            WatchGlancePublisher.publish(WatchGlancePublisher.snapshot(
+                mailboxId: mailboxId, inboxFolderUnread: nil, emails: fixture.emails
+            ))
+        }
     }
     #endif
 }

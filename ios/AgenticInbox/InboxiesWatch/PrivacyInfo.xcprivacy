@@ -17,6 +17,8 @@
 			<array>
 				<!-- The watch app's own active mailbox and API origin. -->
 				<string>CA92.1</string>
+				<!-- The Inbox complication snapshot it writes to group.co.inboxies.app for InboxiesWatchWidgets (AVE-146). -->
+				<string>1C8F.1</string>
 			</array>
 		</dict>
 	</array>
