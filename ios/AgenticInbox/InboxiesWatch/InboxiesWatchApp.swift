@@ -11,33 +11,21 @@ struct InboxiesWatchApp: App {
         WindowGroup {
             WatchRootView()
                 .environment(store)
-                .task { store.start() }
+                .task {
+                    store.start()
+                    WatchBackgroundRefresh.schedule()
+                }
+        }
+        // The complication (AVE-146): the phone's new-mail push arrives as complication
+        // user info, and app refresh is the timeline budget. Both read the Inbox with
+        // the watch session and reload the widget if the count changed.
+        .backgroundTask(.watchConnectivity) {
+            await store.refreshInBackground()
+        }
+        .backgroundTask(.appRefresh(WatchBackgroundRefresh.identifier)) {
+            await store.refreshInBackground()
         }
     }
-}
-
-/// Inter on the watch (bundled; the phone's `Font.inter` lives in `AppTheme`, which
-/// is UIKit-only). Sizes are the phone list's, nudged for the wrist.
-enum WatchType {
-    static func inter(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        let name: String
-        switch weight {
-        case .bold, .heavy, .black: name = "Inter-Bold"
-        case .semibold: name = "Inter-SemiBold"
-        case .medium: name = "Inter-Medium"
-        default: name = "Inter-Regular"
-        }
-        return .custom(name, size: size)
-    }
-
-    static let title = inter(16, .semibold)
-    static let sender = inter(15, .semibold)
-    static let senderRead = inter(15, .medium)
-    static let subject = inter(13)
-    static let preview = inter(12)
-    static let meta = inter(11)
-    static let body = inter(14)
-    static let action = inter(14, .medium)
 }
 
 /// House spring (`inboxies-ios-ui`), for the few motions we add ourselves.

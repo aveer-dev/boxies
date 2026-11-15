@@ -52,6 +52,16 @@ struct WatchEmail: Identifiable, Decodable, Hashable {
     }
 }
 
+/// A folder's unread count (`GET .../folders`). For the Inbox, `unreadThreadCount` is the
+/// New total the phone's widget shows; older Workers only send `unreadCount` (messages).
+struct WatchFolder: Decodable, Hashable {
+    let id: String
+    let unreadThreadCount: Int?
+    let unreadCount: Int?
+
+    var unread: Int { unreadThreadCount ?? unreadCount ?? 0 }
+}
+
 private struct WatchEmailList: Decodable {
     let emails: [WatchEmail]
 }
@@ -111,6 +121,11 @@ struct WatchAPI {
             query: ["folder": "inbox", "threaded": "true", "page": "1", "limit": String(limit)]
         )
         return list.emails
+    }
+
+    /// `GET .../folders`: unread counts for the complication (AVE-146).
+    func folders(mailboxId: String) async throws -> [WatchFolder] {
+        try await send("GET", "/api/v1/mailboxes/\(mailboxId.pathSegment)/folders")
     }
 
     /// `GET .../emails/:id`

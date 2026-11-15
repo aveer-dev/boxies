@@ -28,6 +28,11 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         WCSession.isSupported() ? WCSession.default.receivedApplicationContext : [:]
     }
 
+    /// WatchConnectivity still has messages to hand over (a background wake).
+    var hasContentPending: Bool {
+        WCSession.isSupported() && WCSession.default.hasContentPending
+    }
+
     /// Asks the iPhone app to mint a watch session (wakes it in the background).
     /// `manual`: the person tapped Connect.
     func requestSession(manual: Bool) async -> WatchSessionRequestResult {

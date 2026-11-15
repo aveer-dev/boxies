@@ -83,6 +83,25 @@ final class WatchSessionBridge: NSObject, WCSessionDelegate {
         updateContext(WatchPhoneContext(signedIn: isSignedIn, mailboxId: mailboxId, apiBaseURL: apiBaseURL))
     }
 
+    /// The watch's Inbox complication (AVE-146): a fresh count for one mailbox. `urgent`
+    /// (a new-mail push) uses the complication budget (`transferCurrentComplicationUserInfo`,
+    /// which wakes the watch app) when an Inboxies complication is on the face; otherwise
+    /// it's queued as ordinary user info. Only the newest count is kept in the queue.
+    func pushGlance(_ update: WatchGlanceUpdate, urgent: Bool) {
+        guard isSignedIn, !UserDefaults.standard.bool(forKey: Self.revokedKey),
+              let session, session.activationState == .activated,
+              session.isPaired, session.isWatchAppInstalled else { return }
+        for transfer in session.outstandingUserInfoTransfers
+        where transfer.isTransferring && WatchHandoff.kind(of: transfer.userInfo) == .glance {
+            transfer.cancel()
+        }
+        if urgent, session.isComplicationEnabled, session.remainingComplicationUserInfoTransfers > 0 {
+            session.transferCurrentComplicationUserInfo(update.message)
+        } else {
+            session.transferUserInfo(update.message)
+        }
+    }
+
     /// Every sign-out path: cancels any queued token, tells the watch to wipe and
     /// returns the watch session's id so the caller can end it on the server.
     @discardableResult

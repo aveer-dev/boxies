@@ -13,6 +13,9 @@
 		04F584DE2AD83B1FACC71BD6 /* DomainServiceActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F03281059755D67D2690FD1 /* DomainServiceActions.swift */; };
 		061AF937011AB224A77EB48E /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D210F6CB0B6F1530680333 /* AppTheme.swift */; };
 		06A3BD86E3512DAC2AEADEB2 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0DB4217B5E980F772323B7 /* SearchQueryParser.swift */; };
+		06B607932582333570C324C3 /* WatchHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009C5377935E8F9293E21ACE /* WatchHandoff.swift */; };
+		06B71A81471CBA4CA98F8641 /* InboxiesWatchWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4513A220BA0AED7FBC2023C /* InboxiesWatchWidgetsBundle.swift */; };
+		075E1C6E2C54E093C108AC4E /* InboxiesWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F7F9D0F4E0F5BCAFB342AC6E /* InboxiesWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		094677CFB8FF282E18546285 /* PrivateEmailMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */; };
 		09E0D6A7C881D7F76F6C9D9F /* FiltersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */; };
 		0A88F22E831ACFE0916045D0 /* WatchReconnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */; };
@@ -21,6 +24,7 @@
 		0DD9E549060FE621118E0F5F /* WatchKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B84DD70CBC0E5A120EC296 /* WatchKeychain.swift */; };
 		0DF13F17817F75C157DDDDD0 /* PrivateEmailMatchingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */; };
 		0E9F960A2533557413CC0705 /* ReplyLaterReminder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB3A39C2F0108CC45D29E60 /* ReplyLaterReminder.swift */; };
+		1169DA2C2419B8A5EEC0FEC8 /* InboxGlanceWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCFA863591B2353DCDC9A9E /* InboxGlanceWidget.swift */; };
 		11EBC9EC88AD1BADA1516DE8 /* PrivateEmailIdentitiesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */; };
 		1286013798CAD42988C193AF /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 789C13DE076FDF45C432F26B /* SettingsSheetView.swift */; };
 		13694450EE80D7B49FAB6E98 /* ForwardAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FED241FA72F0BA95561033 /* ForwardAttachments.swift */; };
@@ -40,11 +44,13 @@
 		21C19EA017DB404F992CC4A0 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF79D0DACA9A8F34DE960EEA /* SearchView.swift */; };
 		223BE547E2D07AD581660067 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 725FC12D65B817DA42096FA7 /* GoogleSignIn */; };
 		2293D712BE910240F3FFFE99 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
+		24186944CB8B7AF101AC4F6F /* WatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C27157C07FF2A4A1F73413D /* WatchPalette.swift */; };
 		24E9E69BBBB6ED3A014112F3 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = 12C50370F1B39D0A2745664E /* SwiftSoup */; };
 		2533094280721F1E0B612545 /* WatchMailText.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB98EDA26949B848630974E /* WatchMailText.swift */; };
 		25C22155DCFD9CF10E1F0091 /* TodayInboxWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = D481D07A4C49B2CD427AA839 /* TodayInboxWidget.swift */; };
 		28DE88037753A1734FAF6782 /* Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */; };
 		2900CC74846725C9FB38A4F0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7511C9AC4F3FA8F57CC1883C /* PrivacyInfo.xcprivacy */; };
+		2A248CB54B022DBA714554A2 /* WatchGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1BCCF41FE1A09384CE1ED28 /* WatchGlance.swift */; };
 		2A94071C618491B2926E1A38 /* MarkdownContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DA1E3393B9B60E61F888638 /* MarkdownContentView.swift */; };
 		2CB7E2222524456EE00AF4A3 /* ThemeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A2645A47707A5FB83AB692C /* ThemeSettingsView.swift */; };
 		2CF72A1440122DE40C80A499 /* Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */; };
@@ -53,6 +59,7 @@
 		30DC2C7849382109A6AA0866 /* AvatarInitials.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FE5FC3F4701EF39C5D9A24 /* AvatarInitials.swift */; };
 		30F108BC60A0F552A332B723 /* DomainSubscriptionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9859D4B6A75E9458659F039F /* DomainSubscriptionSection.swift */; };
 		317C209183BF569CDA6F7D84 /* ContactPillMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD43709A935F7194342F7B3 /* ContactPillMenu.swift */; };
+		3289BC3A3B0E6B13523F3FE4 /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = CCD95D2B6409E0F2FA0959D7 /* Inter-Bold.ttf */; };
 		3374A76051D224709C7CDC9F /* InboxiesCredentialProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3375066E12AEB28D3CA343E5 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */; };
 		3386024DE43AF2126936ACFD /* WatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C27157C07FF2A4A1F73413D /* WatchPalette.swift */; };
@@ -63,6 +70,7 @@
 		36F631B743CF5D93F9F7077A /* BounceSuppression.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DC01F9995CCF1938777EB3 /* BounceSuppression.swift */; };
 		3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FB6663712D0C7C547997049 /* InboxDigestView.swift */; };
 		39FD6C1B1F5B07A3F1370DDD /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
+		3A8FFF9493E2C91D23718217 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
 		3C0C180D74BFB7BBF094FC71 /* RealTimeStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F692AD79040A16E97A770F3F /* RealTimeStreamClient.swift */; };
 		3C72EC4E0AB026763B5FD0CA /* OutboxQueueWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */; };
 		3DB02DACA904D949FBFAE63C /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D210F6CB0B6F1530680333 /* AppTheme.swift */; };
@@ -78,8 +86,10 @@
 		448C3DC7935A51152A6FDA7B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9F90087071E0670883ED0ACD /* Assets.xcassets */; };
 		45303DCCEDF47CF0F9AF621A /* CustomFolders.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDDB8F6D5FB409BE394FDF42 /* CustomFolders.swift */; };
 		47889E308407CEA2EBEB6704 /* ForwardingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */; };
+		47F4DB9967DC96B50D65850E /* WatchType.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D11069CADD2DC083C91E62 /* WatchType.swift */; };
 		4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596607AFA8E6FA8BF2D371D9 /* InboxiesApp.swift */; };
 		4BB746CC01943E75D6A9B48A /* EmailDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7ACA3D7A218207D8E3BE44 /* EmailDetailView.swift */; };
+		4D486024EC00BF45413B45BC /* WatchGlancePublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85850E190D02B68506D7F69B /* WatchGlancePublisher.swift */; };
 		4F2A3F99634F03CF0A219758 /* GoogleSignInFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BE3AFF4CF6238AE60BB1A8 /* GoogleSignInFlow.swift */; };
 		5132C35E8D5354EEEC478D83 /* OutboundAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */; };
 		513F720551DE21ABC76CDD8F /* MailNotificationActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F322CAE57AA17A4BFCB113 /* MailNotificationActionsTests.swift */; };
@@ -98,6 +108,7 @@
 		5F3CF3395E621B762337B75F /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97C8E32E058FDC6AE3A2A3F /* DatabaseService.swift */; };
 		61E83B2590E0E591B824FFBC /* WatchReplyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75AD28EB9300E1183789E291 /* WatchReplyView.swift */; };
 		64C59D826FC55FF600893708 /* InviteAcceptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D66D985868B2CF54D7FF7966 /* InviteAcceptView.swift */; };
+		64F3CB9C3FA1B496C819FAB4 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B9E9C5BCD56FE9DFD92ECAB2 /* PrivacyInfo.xcprivacy */; };
 		650F811FE367031CBA140324 /* EmailBodyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A432039F72F28C3CB4B1FF /* EmailBodyView.swift */; };
 		6895397EA1085BAD2AA89E94 /* EmailListPaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D3FB43AA59F2D94AC315734 /* EmailListPaging.swift */; };
 		69F21D5C6787D7D539D546AD /* AttachmentListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4967C5636D2A7E39ACE3E337 /* AttachmentListView.swift */; };
@@ -142,21 +153,25 @@
 		948E2D2999B88A52F4313B1A /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
 		96A7ED89156A4F240FA8B593 /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
 		9A0E7A45F0E194C5BF1E4E60 /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
+		9B90E733B3700ADDF0B1F91B /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */; };
 		9C3653656210FECDE7BE7037 /* WatchCompanionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F3ACEF2C9B299383982ED9 /* WatchCompanionTests.swift */; };
 		9C56E280E63E352FB6B5E35B /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = CCD95D2B6409E0F2FA0959D7 /* Inter-Bold.ttf */; };
 		9E9B3CEAC542D5EABC702B69 /* InboxWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC0F8F590D1F62CBB7B8B68 /* InboxWidgetSnapshot.swift */; };
 		9FD1E22569C1571649608A34 /* ComposeActionListOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7739FB6CD5F7B4E10AFE9A6 /* ComposeActionListOverlay.swift */; };
 		9FF2F71614D6DD643F80844E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A458C487170DA657BC2E771 /* APIClient.swift */; };
+		A0D612A6DA19C5E98BC95EC5 /* Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */; };
 		A2394072D38F90C76FA94A72 /* ComposeDockBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26FD269635314B4336F3D84 /* ComposeDockBar.swift */; };
 		A3A964374CC6D4C46C324959 /* PaperTrailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 466428B8BE11432D8A5342CB /* PaperTrailTests.swift */; };
 		A3E81EA762A75118DCF3BB54 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0C50F4F9FB1E9DE38ADAABCA /* Assets.xcassets */; };
 		A52F82055E86E97E0A7207D7 /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
 		A6258BCBC7BE388F2E0AFAA8 /* MailNotificationActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC9BFFACB279B47EE58F75B /* MailNotificationActions.swift */; };
 		A6B605532E5FC5A2DF29CC9E /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE6FBAD12807A14146DD27D /* RootView.swift */; };
+		A98CC7B91C984E5CC993967E /* WatchGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1BCCF41FE1A09384CE1ED28 /* WatchGlance.swift */; };
 		AAC379E98355AF524CB366B7 /* WatchSessionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67125DF29A67EE2E48B7CAF6 /* WatchSessionBridge.swift */; };
 		AB932202FDC329C27C143391 /* EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8658FB20162E4931296C3338 /* EmailHTMLSanitizer.swift */; };
 		AD4E2CB270CFB80CA09D6A00 /* AppModel+Piles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6282591E9E0E57D7FABE75F2 /* AppModel+Piles.swift */; };
 		AD5A72B5AFFB651EACFC1EB2 /* ChatSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EDC9246D251503A2C2895D /* ChatSheetView.swift */; };
+		AE2356FEF5F7438C469D152B /* WatchGlanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 060AF70E555B5D2DF775006B /* WatchGlanceTests.swift */; };
 		B08360B674CC234965B564CD /* PileViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C262E891E78661B58AC696 /* PileViews.swift */; };
 		B0D7A71A99016A6D8B3B2DFD /* ShowNextThreadIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE87F5C065BB1963A571F4E /* ShowNextThreadIntent.swift */; };
 		B157225C80D0523AE6C6CDC9 /* DomainAdminDNSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49649C28917B9CFF9BDA12B5 /* DomainAdminDNSView.swift */; };
@@ -174,9 +189,11 @@
 		BF89E089C57B9BB673B4BA5C /* AppModel+Tags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1682E2C5C04684F8F00A9FDB /* AppModel+Tags.swift */; };
 		C08E7A655C0D45AF1FD4E902 /* TagsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EEC016C451C28296FEE5B28 /* TagsSettingsView.swift */; };
 		C08F4C03E2FD7A5DEB6A55CB /* PrivateEmailRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74FC3A9EFF9C884E623775CF /* PrivateEmailRequestView.swift */; };
+		C0A54F78F9C634AB67C8118F /* WatchType.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D11069CADD2DC083C91E62 /* WatchType.swift */; };
 		C1FB7FC4247FDD38427E2DD0 /* ForwardAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FD8DC34057B3192EE4356C /* ForwardAttachmentsTests.swift */; };
 		C5B92128F6B87965073E2E64 /* EmailActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D367BF95650BA4DB33A884 /* EmailActionExecutor.swift */; };
 		C5E8225C2C880AC6DD2D44E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723EAC1668DC9825FED81F4A /* AuthStore.swift */; };
+		C68DCCA0E4C533B625B3730F /* WatchType.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D11069CADD2DC083C91E62 /* WatchType.swift */; };
 		C739D111D71A04159CBC722D /* ComposeFormatChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */; };
 		CF1F67639799F07F84B17528 /* ReauthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034D0180E2DB0FE32925DB6C /* ReauthTests.swift */; };
 		D065E61762322C70A7922DD6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A31228B1051820496715175E /* PrivacyInfo.xcprivacy */; };
@@ -201,12 +218,14 @@
 		E555E486DCF9161C977A78F0 /* InboxWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC0F8F590D1F62CBB7B8B68 /* InboxWidgetSnapshot.swift */; };
 		E5978615A596545D746261A3 /* TagViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B8DED063E00CEAE611037EC /* TagViews.swift */; };
 		E61ADC2996F8521E2CCC68C6 /* PrivateEmailClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469EBA3B54DC4C3853D04061 /* PrivateEmailClient.swift */; };
+		E72B597C31ED535C931473A3 /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
 		E7A47B91C386B0A979463B9F /* CoverDragDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58E09B194629136A59B68053 /* CoverDragDismiss.swift */; };
 		E7B7AA76EA1659AD9D36D351 /* AppModel+ThreadNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BC610C6FEC17A7933C51DF /* AppModel+ThreadNotes.swift */; };
 		E82FC3B6DFF1FE9F2E43650E /* Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */; };
 		E9A5FCDBA540D6A2FD8CE253 /* AvatarInitials.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5FE5FC3F4701EF39C5D9A24 /* AvatarInitials.swift */; };
 		ECBD3375F43CC5F43AA440C9 /* ComposeSuppressionNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = A516A008886C56348FDEAA82 /* ComposeSuppressionNotice.swift */; };
 		EDD7A58FD3452C02EAB8160F /* AIUsageMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5BF33317770F74363CB7B5 /* AIUsageMeter.swift */; };
+		EF671E58CCFB02E979887813 /* WatchGlance.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1BCCF41FE1A09384CE1ED28 /* WatchGlance.swift */; };
 		F02432C79C2367941EB87586 /* MailPiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC69882B600505336FE223E2 /* MailPiles.swift */; };
 		F14869C17FFD35F93620EEF2 /* WatchMailText.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB98EDA26949B848630974E /* WatchMailText.swift */; };
 		F1C112E59B0C6CA2C497CD31 /* WatchAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30C48A34C3151D0E193424D /* WatchAPI.swift */; };
@@ -237,6 +256,13 @@
 			remoteGlobalIDString = B48E88ECC1AB25FBD8A62951;
 			remoteInfo = InboxiesWidget;
 		};
+		889AA67271C2155F85261607 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 104FC2B94485F6F85DF662FD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3D1FDDBBD2D7F34FF1A28D58;
+			remoteInfo = InboxiesWatchWidgets;
+		};
 		A32BC5274C979F86221C0C77 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 104FC2B94485F6F85DF662FD /* Project object */;
@@ -254,6 +280,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		1FAD912E9BFDC047ACF51743 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				075E1C6E2C54E093C108AC4E /* InboxiesWatchWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		29A5BBAC66E4B74B7950333D /* Embed Watch Content */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -284,6 +321,7 @@
 		009C5377935E8F9293E21ACE /* WatchHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHandoff.swift; sourceTree = "<group>"; };
 		034D0180E2DB0FE32925DB6C /* ReauthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReauthTests.swift; sourceTree = "<group>"; };
 		048F9C0790FD14781DE293EE /* ClientContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientContractTests.swift; sourceTree = "<group>"; };
+		060AF70E555B5D2DF775006B /* WatchGlanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchGlanceTests.swift; sourceTree = "<group>"; };
 		0A458C487170DA657BC2E771 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		0A95037271E59C93C4B34508 /* DeliveryStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryStatus.swift; sourceTree = "<group>"; };
 		0C50F4F9FB1E9DE38ADAABCA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -314,6 +352,7 @@
 		3498EAA98EA7C6F9A65DE3C9 /* InboxiesWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InboxiesWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		34B84DD70CBC0E5A120EC296 /* WatchKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchKeychain.swift; sourceTree = "<group>"; };
 		37786A9610B8F787C5525CA8 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		3ECC72B17E7554DA515DA3B6 /* InboxiesWatchWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesWatchWidgets.entitlements; sourceTree = "<group>"; };
 		40EA0560A20D10345F92D2E0 /* WatchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchStore.swift; sourceTree = "<group>"; };
 		41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceStatusBanner.swift; sourceTree = "<group>"; };
 		41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasskeysSettingsSection.swift; sourceTree = "<group>"; };
@@ -373,7 +412,10 @@
 		81AD4B9073E3EE2951988435 /* DomainAliasesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainAliasesTests.swift; sourceTree = "<group>"; };
 		8304F69E9D1C222B8C2D1D6F /* MailboxSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailboxSyncService.swift; sourceTree = "<group>"; };
 		850C4C597D07AFD8C475B162 /* SharedSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedSession.swift; sourceTree = "<group>"; };
+		85850E190D02B68506D7F69B /* WatchGlancePublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchGlancePublisher.swift; sourceTree = "<group>"; };
 		8658FB20162E4931296C3338 /* EmailHTMLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailHTMLSanitizer.swift; sourceTree = "<group>"; };
+		884DD4E55AB4BEB8F15910C8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8B87D25E3845759867C6AB7D /* InboxiesWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesWatch.entitlements; sourceTree = "<group>"; };
 		8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = InboxiesCredentialProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F4A9BE28CD5C12A238585ED /* SwipeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeSettingsView.swift; sourceTree = "<group>"; };
 		91800C0E06AC3EE38BD0947D /* PasskeysTwoFactorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasskeysTwoFactorTests.swift; sourceTree = "<group>"; };
@@ -392,10 +434,12 @@
 		A4D9A4CBE7DF8D0E6DA68CFB /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		A4F37D2B172B625803C51E8C /* WatchInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchInboxView.swift; sourceTree = "<group>"; };
 		A516A008886C56348FDEAA82 /* ComposeSuppressionNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeSuppressionNotice.swift; sourceTree = "<group>"; };
+		A5D11069CADD2DC083C91E62 /* WatchType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchType.swift; sourceTree = "<group>"; };
 		A5FE5FC3F4701EF39C5D9A24 /* AvatarInitials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarInitials.swift; sourceTree = "<group>"; };
 		A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormatChrome.swift; sourceTree = "<group>"; };
 		A7FD63286EBBC3A8BC11AE66 /* ContactPillParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactPillParser.swift; sourceTree = "<group>"; };
 		AB26EA100736B5C531C2586D /* HardeningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardeningTests.swift; sourceTree = "<group>"; };
+		ABCFA863591B2353DCDC9A9E /* InboxGlanceWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxGlanceWidget.swift; sourceTree = "<group>"; };
 		ABD43709A935F7194342F7B3 /* ContactPillMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactPillMenu.swift; sourceTree = "<group>"; };
 		AF79D0DACA9A8F34DE960EEA /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		B3CF55DA7504567B5E8D8CB4 /* StickyNotesLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickyNotesLayer.swift; sourceTree = "<group>"; };
@@ -405,12 +449,14 @@
 		B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueueWorker.swift; sourceTree = "<group>"; };
 		B8A432039F72F28C3CB4B1FF /* EmailBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailBodyView.swift; sourceTree = "<group>"; };
 		B9003AA3BAEDF7626B89A4FC /* SignInMethodsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInMethodsSettingsView.swift; sourceTree = "<group>"; };
+		B9E9C5BCD56FE9DFD92ECAB2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		BA5004BE064F8AA4E1D095B9 /* SignatureSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignatureSettingsView.swift; sourceTree = "<group>"; };
 		BB3527F65416B46A46835EB7 /* InboxNewListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxNewListView.swift; sourceTree = "<group>"; };
 		C019E22F3F4AA3C5E376212F /* InboxiesCredentialProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesCredentialProvider.entitlements; sourceTree = "<group>"; };
 		C0EDC9246D251503A2C2895D /* ChatSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSheetView.swift; sourceTree = "<group>"; };
 		C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboundAttachments.swift; sourceTree = "<group>"; };
 		C30C48A34C3151D0E193424D /* WatchAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAPI.swift; sourceTree = "<group>"; };
+		C4513A220BA0AED7FBC2023C /* InboxiesWatchWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxiesWatchWidgetsBundle.swift; sourceTree = "<group>"; };
 		C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Medium.ttf"; sourceTree = "<group>"; };
 		C92F643D22299D8238DBE7DF /* InboxWidgetPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWidgetPublisher.swift; sourceTree = "<group>"; };
 		C97C8E32E058FDC6AE3A2A3F /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseService.swift; sourceTree = "<group>"; };
@@ -446,6 +492,7 @@
 		ED60F739533D7F2E3DCC74F6 /* PaymentCallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentCallback.swift; sourceTree = "<group>"; };
 		F15ED9A63F7F7DC5C3405A9C /* SharingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingSettingsView.swift; sourceTree = "<group>"; };
 		F188CBAA8BD1E3594EECDC0A /* AutofillSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutofillSession.swift; sourceTree = "<group>"; };
+		F1BCCF41FE1A09384CE1ED28 /* WatchGlance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchGlance.swift; sourceTree = "<group>"; };
 		F211DF2CCEC3E36A1E03B5CF /* InboxiesToast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxiesToast.swift; sourceTree = "<group>"; };
 		F26FD269635314B4336F3D84 /* ComposeDockBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeDockBar.swift; sourceTree = "<group>"; };
 		F3485CC457F14D933E111031 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
@@ -455,6 +502,7 @@
 		F69C77972C6CC2A5F8986DCC /* MailTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailTags.swift; sourceTree = "<group>"; };
 		F6FD4693AE966990720B2349 /* InboxiesWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxiesWatchApp.swift; sourceTree = "<group>"; };
 		F7DF8BEBB79B2AC262704B84 /* HomeShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeShellView.swift; sourceTree = "<group>"; };
+		F7F9D0F4E0F5BCAFB342AC6E /* InboxiesWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = InboxiesWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F86AC049A0EE811EFF93233C /* PhoneLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLink.swift; sourceTree = "<group>"; };
 		FCAB549787CB20A5139C48E9 /* ReplyLaterReminderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyLaterReminderView.swift; sourceTree = "<group>"; };
 		FD35F79DAFD4CA942872DA19 /* PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationManager.swift; sourceTree = "<group>"; };
@@ -552,6 +600,7 @@
 				A7121AE74ECEDFE53864EE39 /* InboxiesCredentialProvider */,
 				80C05B49D739E60FDA917302 /* InboxiesTests */,
 				1E9071D2C9BA09B107DFAB75 /* InboxiesWatch */,
+				D5F4AD9C9D6D5A5650D6274C /* InboxiesWatchWidgets */,
 				D29539FD19218AB3C93EB021 /* InboxiesWidget */,
 				352B556DB4F70B9A8CC1FFD9 /* Products */,
 			);
@@ -591,11 +640,13 @@
 			isa = PBXGroup;
 			children = (
 				0C50F4F9FB1E9DE38ADAABCA /* Assets.xcassets */,
+				8B87D25E3845759867C6AB7D /* InboxiesWatch.entitlements */,
 				F6FD4693AE966990720B2349 /* InboxiesWatchApp.swift */,
 				D38C5498545602B915AD737D /* Info.plist */,
 				F86AC049A0EE811EFF93233C /* PhoneLink.swift */,
 				A31228B1051820496715175E /* PrivacyInfo.xcprivacy */,
 				C30C48A34C3151D0E193424D /* WatchAPI.swift */,
+				85850E190D02B68506D7F69B /* WatchGlancePublisher.swift */,
 				A4F37D2B172B625803C51E8C /* WatchInboxView.swift */,
 				34B84DD70CBC0E5A120EC296 /* WatchKeychain.swift */,
 				2C25B55A5BBEDD9B6D8FB750 /* WatchMessageView.swift */,
@@ -613,6 +664,7 @@
 				8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */,
 				B6105A6868E37851072B1913 /* InboxiesTests.xctest */,
 				3498EAA98EA7C6F9A65DE3C9 /* InboxiesWatch.app */,
+				F7F9D0F4E0F5BCAFB342AC6E /* InboxiesWatchWidgets.appex */,
 				7751E9D2D07638A4DE0E285C /* InboxiesWidget.appex */,
 			);
 			name = Products;
@@ -683,10 +735,12 @@
 		48A1CCD9547ACD25F3133DC8 /* WatchShared */ = {
 			isa = PBXGroup;
 			children = (
+				F1BCCF41FE1A09384CE1ED28 /* WatchGlance.swift */,
 				009C5377935E8F9293E21ACE /* WatchHandoff.swift */,
 				DBB98EDA26949B848630974E /* WatchMailText.swift */,
 				5C27157C07FF2A4A1F73413D /* WatchPalette.swift */,
 				0F148BAAF2268DDBD7741434 /* WatchReconnector.swift */,
+				A5D11069CADD2DC083C91E62 /* WatchType.swift */,
 			);
 			path = WatchShared;
 			sourceTree = "<group>";
@@ -787,6 +841,7 @@
 				CD93DC1274C71BD1C9494B7A /* SignatureTests.swift */,
 				D5A9689D0BB46A6D36E54F81 /* ThreadNotesTests.swift */,
 				75F3ACEF2C9B299383982ED9 /* WatchCompanionTests.swift */,
+				060AF70E555B5D2DF775006B /* WatchGlanceTests.swift */,
 				9C1FB146E802AF1FE45C344C /* WebKitLinkageTests.swift */,
 			);
 			path = InboxiesTests;
@@ -834,6 +889,18 @@
 				D481D07A4C49B2CD427AA839 /* TodayInboxWidget.swift */,
 			);
 			path = InboxiesWidget;
+			sourceTree = "<group>";
+		};
+		D5F4AD9C9D6D5A5650D6274C /* InboxiesWatchWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				ABCFA863591B2353DCDC9A9E /* InboxGlanceWidget.swift */,
+				3ECC72B17E7554DA515DA3B6 /* InboxiesWatchWidgets.entitlements */,
+				C4513A220BA0AED7FBC2023C /* InboxiesWatchWidgetsBundle.swift */,
+				884DD4E55AB4BEB8F15910C8 /* Info.plist */,
+				B9E9C5BCD56FE9DFD92ECAB2 /* PrivacyInfo.xcprivacy */,
+			);
+			path = InboxiesWatchWidgets;
 			sourceTree = "<group>";
 		};
 		DDBAA65A79AC81B4981DCBC3 /* WidgetDesign */ = {
@@ -906,6 +973,24 @@
 			productReference = B6105A6868E37851072B1913 /* InboxiesTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		3D1FDDBBD2D7F34FF1A28D58 /* InboxiesWatchWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 62715E9273192EAC48262F70 /* Build configuration list for PBXNativeTarget "InboxiesWatchWidgets" */;
+			buildPhases = (
+				C2CE0652902EC23B0CA56AE5 /* Sources */,
+				555743F8FD643F42F6833027 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = InboxiesWatchWidgets;
+			packageProductDependencies = (
+			);
+			productName = InboxiesWatchWidgets;
+			productReference = F7F9D0F4E0F5BCAFB342AC6E /* InboxiesWatchWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		5C005FCFFEB0AD7C79137BB5 /* Inboxies */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A453F637085FA60D1FD69253 /* Build configuration list for PBXNativeTarget "Inboxies" */;
@@ -974,10 +1059,12 @@
 			buildPhases = (
 				A756F61E47BA1640D8DAF889 /* Sources */,
 				05E91693B728D183663D286B /* Resources */,
+				1FAD912E9BFDC047ACF51743 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BB24F16ED4B4FE2472C362B5 /* PBXTargetDependency */,
 			);
 			name = InboxiesWatch;
 			packageProductDependencies = (
@@ -996,6 +1083,10 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					3360CDCBB929592264F4BF9E = {
+						DevelopmentTeam = B6X6773H7F;
+						ProvisioningStyle = Automatic;
+					};
+					3D1FDDBBD2D7F34FF1A28D58 = {
 						DevelopmentTeam = B6X6773H7F;
 						ProvisioningStyle = Automatic;
 					};
@@ -1039,6 +1130,7 @@
 				AE04431C6ED7A369045309ED /* InboxiesCredentialProvider */,
 				B48E88ECC1AB25FBD8A62951 /* InboxiesWidget */,
 				E351C814E7311137B12BB6B2 /* InboxiesWatch */,
+				3D1FDDBBD2D7F34FF1A28D58 /* InboxiesWatchWidgets */,
 				3360CDCBB929592264F4BF9E /* InboxiesTests */,
 			);
 		};
@@ -1056,6 +1148,19 @@
 				A52F82055E86E97E0A7207D7 /* Inter-Regular.ttf in Resources */,
 				F27451D154ACFDD83F91FD59 /* Inter-SemiBold.ttf in Resources */,
 				D065E61762322C70A7922DD6 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		555743F8FD643F42F6833027 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3289BC3A3B0E6B13523F3FE4 /* Inter-Bold.ttf in Resources */,
+				A0D612A6DA19C5E98BC95EC5 /* Inter-Italic.ttf in Resources */,
+				9B90E733B3700ADDF0B1F91B /* Inter-Medium.ttf in Resources */,
+				E72B597C31ED535C931473A3 /* Inter-Regular.ttf in Resources */,
+				3A8FFF9493E2C91D23718217 /* Inter-SemiBold.ttf in Resources */,
+				64F3CB9C3FA1B496C819FAB4 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1224,11 +1329,13 @@
 				735E1C05C28F1E399465E7C4 /* ThemeMode.swift in Sources */,
 				2CB7E2222524456EE00AF4A3 /* ThemeSettingsView.swift in Sources */,
 				82DE011A3BA3B9DC5BAA9E99 /* ThreadNotes.swift in Sources */,
+				EF671E58CCFB02E979887813 /* WatchGlance.swift in Sources */,
 				7D04BF4457896D0FBCA264D9 /* WatchHandoff.swift in Sources */,
 				2533094280721F1E0B612545 /* WatchMailText.swift in Sources */,
 				B7B4DB4C27CBF13DB9927D8F /* WatchPalette.swift in Sources */,
 				0A88F22E831ACFE0916045D0 /* WatchReconnector.swift in Sources */,
 				AAC379E98355AF524CB366B7 /* WatchSessionBridge.swift in Sources */,
+				C0A54F78F9C634AB67C8118F /* WatchType.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1254,6 +1361,7 @@
 				5914A358FA4A420931E91893 /* SignatureTests.swift in Sources */,
 				71896C3C5A158905BB63AA41 /* ThreadNotesTests.swift in Sources */,
 				9C3653656210FECDE7BE7037 /* WatchCompanionTests.swift in Sources */,
+				AE2356FEF5F7438C469D152B /* WatchGlanceTests.swift in Sources */,
 				177299CC08FA33CB30438B85 /* WebKitLinkageTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1306,6 +1414,8 @@
 				8F8F20F7D603C0979EAA1423 /* PhoneLink.swift in Sources */,
 				B15A28D60B8C1F8D9C601A28 /* ReplyLaterReminder.swift in Sources */,
 				F1C112E59B0C6CA2C497CD31 /* WatchAPI.swift in Sources */,
+				2A248CB54B022DBA714554A2 /* WatchGlance.swift in Sources */,
+				4D486024EC00BF45413B45BC /* WatchGlancePublisher.swift in Sources */,
 				70EF079DA5305B4955B678F1 /* WatchHandoff.swift in Sources */,
 				2E2DBC09DFDF6AB62223D5A6 /* WatchInboxView.swift in Sources */,
 				0DD9E549060FE621118E0F5F /* WatchKeychain.swift in Sources */,
@@ -1316,6 +1426,20 @@
 				92D3D0782F3096978508D858 /* WatchReconnector.swift in Sources */,
 				61E83B2590E0E591B824FFBC /* WatchReplyView.swift in Sources */,
 				0121BB3C190D19F4313F3F49 /* WatchStore.swift in Sources */,
+				C68DCCA0E4C533B625B3730F /* WatchType.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C2CE0652902EC23B0CA56AE5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1169DA2C2419B8A5EEC0FEC8 /* InboxGlanceWidget.swift in Sources */,
+				06B71A81471CBA4CA98F8641 /* InboxiesWatchWidgetsBundle.swift in Sources */,
+				A98CC7B91C984E5CC993967E /* WatchGlance.swift in Sources */,
+				06B607932582333570C324C3 /* WatchHandoff.swift in Sources */,
+				24186944CB8B7AF101AC4F6F /* WatchPalette.swift in Sources */,
+				47F4DB9967DC96B50D65850E /* WatchType.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1336,6 +1460,11 @@
 			isa = PBXTargetDependency;
 			target = AE04431C6ED7A369045309ED /* InboxiesCredentialProvider */;
 			targetProxy = A32BC5274C979F86221C0C77 /* PBXContainerItemProxy */;
+		};
+		BB24F16ED4B4FE2472C362B5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3D1FDDBBD2D7F34FF1A28D58 /* InboxiesWatchWidgets */;
+			targetProxy = 889AA67271C2155F85261607 /* PBXContainerItemProxy */;
 		};
 		BB985B01587B53343FD50119 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1381,6 +1510,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = InboxiesWatch/InboxiesWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=watchsimulator*]" = "-";
 				CURRENT_PROJECT_VERSION = 1;
@@ -1414,6 +1544,30 @@
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Inboxies.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Inboxies";
+			};
+			name = Debug;
+		};
+		4232CA8A9D77389637B12979 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = InboxiesWatchWidgets/InboxiesWatchWidgets.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=watchsimulator*]" = "-";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InboxiesWatchWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.inboxies.app.watchkitapp.widgets;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
 			};
 			name = Debug;
 		};
@@ -1647,6 +1801,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = InboxiesWatch/InboxiesWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=watchsimulator*]" = "-";
 				CURRENT_PROJECT_VERSION = 1;
@@ -1719,6 +1874,30 @@
 			};
 			name = Release;
 		};
+		C2AA8929368D762C306F830A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = InboxiesWatchWidgets/InboxiesWatchWidgets.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=watchsimulator*]" = "-";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InboxiesWatchWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.inboxies.app.watchkitapp.widgets;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1727,6 +1906,15 @@
 			buildConfigurations = (
 				3A7450E04ED04D4D3881BADE /* Debug */,
 				52ED74107D1DD95818606971 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		62715E9273192EAC48262F70 /* Build configuration list for PBXNativeTarget "InboxiesWatchWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4232CA8A9D77389637B12979 /* Debug */,
+				C2AA8929368D762C306F830A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

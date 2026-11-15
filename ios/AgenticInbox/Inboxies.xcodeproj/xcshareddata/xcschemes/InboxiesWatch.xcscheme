@@ -21,6 +21,20 @@
                ReferencedContainer = "container:Inboxies.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3D1FDDBBD2D7F34FF1A28D58"
+               BuildableName = "InboxiesWatchWidgets.appex"
+               BlueprintName = "InboxiesWatchWidgets"
+               ReferencedContainer = "container:Inboxies.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

@@ -5,10 +5,12 @@ import WidgetKit
 /// mailbox list to the App Group and asks WidgetKit to reload. Writes are skipped when the
 /// content didn't change, so refreshes don't burn the widget's reload budget.
 enum InboxWidgetPublisher {
-    /// Writes the snapshot; reloads the widget when it changed.
-    static func publish(_ snapshot: InboxWidgetSnapshot) {
+    /// Writes the snapshot; reloads the widget when it changed, and sends the new count
+    /// to the watch complication (AVE-146; `urgent` for a new-mail push).
+    static func publish(_ snapshot: InboxWidgetSnapshot, urgent: Bool = false) {
         guard let store = InboxWidgetStore.shared, store.write(snapshot) else { return }
         WidgetCenter.shared.reloadTimelines(ofKind: InboxWidgetKind.todayInbox)
+        WatchSessionBridge.shared.pushGlance(snapshot.watchGlanceUpdate, urgent: urgent)
     }
 
     /// Mirrors the signed-in user's mailboxes for the widget's mailbox picker.
@@ -48,7 +50,7 @@ enum InboxWidgetPublisher {
             mailboxAddress: previous.mailboxAddress,
             newPage: page,
             replyLaterCount: previous.replyLaterCount
-        ))
+        ), urgent: true)
     }
 
     /// Sign-out: the widget goes back to "Open Inboxies".
@@ -102,6 +104,11 @@ extension InboxWidgetSnapshot {
             threads: rows.map { thread($0, now: now) },
             updatedAt: now
         )
+    }
+
+    /// What the watch complication needs: the New total and the newest New sender.
+    var watchGlanceUpdate: WatchGlanceUpdate {
+        WatchGlanceUpdate(mailboxId: mailboxId, unreadCount: newCount, newestSender: threads.first?.senderName)
     }
 
     private static func thread(_ email: Email, now: Date) -> Thread {
