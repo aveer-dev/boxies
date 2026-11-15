@@ -173,6 +173,20 @@ data class RevokeSessionsResponse(
     val revoked: Int = 0,
 )
 
+/**
+ * `POST /api/v1/me/extension-session`: a scoped session (AutoFill, or a `watch` session
+ * for the paired Wear OS watch, AVE-143/145). [token] is a secret: never log it.
+ */
+@Serializable
+data class ScopedSessionResponse(
+    val id: String,
+    val token: String,
+    val expiresAt: String? = null,
+    val label: String? = null,
+) {
+    override fun toString(): String = "ScopedSessionResponse(id=$id, expiresAt=$expiresAt, label=$label)"
+}
+
 @Serializable
 data class MeResponse(
     val userId: String? = null,

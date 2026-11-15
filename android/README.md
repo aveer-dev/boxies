@@ -103,6 +103,8 @@ app/src/main/java/co/inboxies/app/
   ui/         # Auth, Home, Email, Compose, Search, Chat, Settings
   theme/      # Notion-like palette + Inter
   util/       # shared TS ports (reply recipients, compose body)
+wear/src/main/java/co/inboxies/wear/   # Wear OS companion (AVE-145)
+watch-shared/                          # phone <-> watch Data Layer contract + watch palette
 ```
 
 ## Build
@@ -114,6 +116,10 @@ export ANDROID_HOME=/path/to/Android/Sdk
 ```
 
 Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
+
+### Wear OS app
+
+`./gradlew :wear:assembleDebug` builds the watch companion (`wear/build/outputs/apk/debug/wear-debug.apk`, Wear OS 4+). It uses the phone's `applicationId` (`co.inboxies.app`) and, for release, the same upload key, because the Wearable Data Layer only connects apps with the same package and signature. Install the phone app and the wear app on a paired phone and watch (or emulators paired through the Wear OS app); the watch asks the signed-in phone for its own `watch`-scoped session. `./scripts/run-wear-preview.sh <mode>` opens fixture screens without a phone (see `inboxies-android-ui`). Its version code starts at `1_000_001` so it never collides with a phone build on Play.
 
 ### Release (R8 + signing)
 

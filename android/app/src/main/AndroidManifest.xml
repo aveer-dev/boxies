@@ -104,6 +104,27 @@
             android:name=".services.MailNotificationActionReceiver"
             android:exported="false" />
 
+        <!-- Wear OS app (AVE-145): the watch asks for its scoped session here; a watch
+             installing the app gets one handed over. Same package + signing key only. -->
+        <service
+            android:name=".services.WatchPhoneListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:path="/inboxies/request-session" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CAPABILITY_CHANGED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:path="/inboxies_wear" />
+            </intent-filter>
+        </service>
+
         <!-- Autofill dataset authentication: creates the private email, then fills it. -->
         <activity
             android:name=".autofill.PrivateEmailAutofillActivity"

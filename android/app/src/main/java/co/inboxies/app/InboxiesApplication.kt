@@ -12,6 +12,7 @@ import co.inboxies.app.services.AutofillMailboxPreference
 import co.inboxies.app.services.LastMailboxPreference
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.SwipeActionPreferences
+import co.inboxies.app.services.WatchSessionBridge
 import co.inboxies.app.widget.InboxWidgetPublisher
 
 class InboxiesApplication : Application() {
@@ -35,6 +36,7 @@ class InboxiesApplication : Application() {
         AutofillMailboxPreference.init(this)
         LastMailboxPreference.init(this)
         InboxWidgetPublisher.init(this)
+        WatchSessionBridge.init(this)
         lastNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
 
         // Live sync (SSE + 20 s poll) only while some activity is visible. ON_STOP is

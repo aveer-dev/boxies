@@ -131,7 +131,14 @@ dependencies {
     implementation(libs.firebase.messaging)
 
     implementation(libs.jsoup)
+
+    // Wear OS handoff (AVE-145): mints the watch's scoped session and sends it over the Data Layer.
+    implementation(project(":watch-shared"))
+    implementation(libs.play.services.wearable)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.register("printApkPath") {

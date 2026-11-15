@@ -476,6 +476,10 @@ async function main() {
 	write(`${res}/drawable/ic_launcher_foreground.xml`, androidVector({ dp: 108, viewport: 108, parts: safe, color: INK }));
 	write(`${res}/drawable-night/ic_launcher_foreground.xml`, androidVector({ dp: 108, viewport: 108, parts: safe, color: INK_DARK }));
 	write(`${res}/drawable/ic_launcher_monochrome.xml`, androidVector({ dp: 108, viewport: 108, parts: safe, color: "#000000" }));
+	// Wear OS app (AVE-145): same adaptive launcher icon.
+	const wearRes = "android/wear/src/main/res";
+	write(`${wearRes}/drawable/ic_launcher_foreground.xml`, androidVector({ dp: 108, viewport: 108, parts: safe, color: INK }));
+	write(`${wearRes}/drawable/ic_launcher_monochrome.xml`, androidVector({ dp: 108, viewport: 108, parts: safe, color: "#000000" }));
 	const square = { color: PAPER, path: "M0,0h108v108h-108z" };
 	const circle = {
 		color: PAPER,

@@ -54,6 +54,7 @@ import co.inboxies.app.models.AccountSession
 import co.inboxies.app.models.McpGrant
 import co.inboxies.app.models.SecurityActivityItem
 import co.inboxies.app.services.ApiClient
+import co.inboxies.app.services.WatchSessionBridge
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
@@ -386,6 +387,8 @@ fun SessionsSettingsView(onBack: () -> Unit, previewActivity: SecurityActivityPr
                         errorMessage = null
                         runCatching { ApiClient.shared.revokeSession(session.id) }
                             .onSuccess {
+                                // Signed the Wear OS watch out here: it wipes and stays out until Connect.
+                                if (session.id == WatchSessionBridge.storedId) WatchSessionBridge.revokedOnServer()
                                 sessions = sessions.filterNot { it.id == session.id }
                                 statusMessage = "Signed out ${sessionTitle(session)}"
                             }
@@ -456,6 +459,8 @@ fun SessionsSettingsView(onBack: () -> Unit, previewActivity: SecurityActivityPr
                         errorMessage = null
                         runCatching { ApiClient.shared.revokeOtherSessions() }
                             .onSuccess {
+                                // That included this phone's watch session, if it had one.
+                                if (WatchSessionBridge.storedId != null) WatchSessionBridge.revokedOnServer()
                                 load()
                                 statusMessage = "Signed out ${it.revoked} other session${if (it.revoked == 1) "" else "s"}"
                             }
