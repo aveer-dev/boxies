@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,11 +69,18 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.AppToast
+import co.inboxies.app.models.DomainAliasItem
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
+import co.inboxies.app.theme.ToastMetrics
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.AnimatedToast
+import co.inboxies.app.ui.components.InboxiesToast
 import co.inboxies.app.ui.components.rememberDomainRenewal
+import co.inboxies.app.ui.components.toastIcon
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -79,6 +89,9 @@ fun DomainAdminSettingsView(
     onAssigned: (() -> Unit)? = null,
     /** DEBUG preview fixtures — skips network reload when non-null. */
     previewRows: List<AdminMailboxRow>? = null,
+    /** DEBUG fixture aliases — adds and deletes stay in memory when non-null (AVE-219). */
+    previewAliases: List<DomainAliasItem>? = null,
+    previewAliasDialog: DomainAliasPreview = DomainAliasPreview.None,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -94,6 +107,20 @@ fun DomainAdminSettingsView(
     var showCreate by remember { mutableStateOf(false) }
     var selectedMailboxId by remember { mutableStateOf<String?>(null) }
     var showingDns by remember { mutableStateOf(false) }
+    var aliasesReloadKey by remember { mutableIntStateOf(0) }
+
+    // The app toast sits under the settings sheet, so the console shows its own.
+    var toast by remember { mutableStateOf<AppToast?>(null) }
+    var toastVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(toast?.id) {
+        val current = toast ?: return@LaunchedEffect
+        delay(2500)
+        if (toast?.id == current.id) toastVisible = false
+    }
+    fun showToast(message: String, isError: Boolean) {
+        toast = AppToast(message = message, isError = isError)
+        toastVisible = true
+    }
 
     // Subscription state per administered domain; an ended one freezes its users.
     val administeredDomains by app.administeredDomains.collectAsState()
@@ -157,6 +184,7 @@ fun DomainAdminSettingsView(
         else -> null
     }
 
+    Box(modifier = Modifier.fillMaxWidth()) {
     AnimatedContent(
         targetState = currentScreen,
         transitionSpec = {
@@ -203,7 +231,10 @@ fun DomainAdminSettingsView(
                     HomeChromeToolbarButton(
                         icon = Icons.Outlined.Refresh,
                         contentDescription = "Refresh",
-                        onClick = { reload() },
+                        onClick = {
+                            reload()
+                            aliasesReloadKey++
+                        },
                     )
                 }
 
@@ -368,6 +399,16 @@ fun DomainAdminSettingsView(
                             }
                         }
                     }
+
+                    DomainAliasesSection(
+                        domain = mailDomain.lowercase(),
+                        mailboxes = rows,
+                        serviceEnded = isServiceEnded("@$mailDomain"),
+                        showToast = ::showToast,
+                        previewAliases = previewAliases,
+                        previewDialog = previewAliasDialog,
+                        reloadKey = aliasesReloadKey,
+                    )
                 }
             }
         }
@@ -395,6 +436,22 @@ fun DomainAdminSettingsView(
                     selectedMailboxId = null
                 }
             }
+        }
+    }
+
+        AnimatedToast(
+            value = toast?.takeIf { toastVisible },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = ToastMetrics.screenInset)
+                .padding(bottom = ToastMetrics.standaloneBottomInset),
+        ) { current ->
+            InboxiesToast(
+                message = current.message,
+                icon = current.toastIcon,
+                onDismiss = { toastVisible = false },
+            )
         }
     }
 
