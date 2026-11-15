@@ -2532,6 +2532,27 @@ class AppModel {
     }
 
     fun reset() {
+        clearInMemoryState()
+        // Sign-out forgets the last mailbox; the next account starts on its own first one.
+        if (!isDebugPreview) LastMailboxPreference.clear()
+        selectionIsProvisional = false
+        isDebugPreview = false
+        AutofillMailboxPreference.clear()
+        DatabaseService.shared.clearAll()
+    }
+
+    /**
+     * DEBUG signed-out previews (sign-in, invite accept, widget data): empty in-memory
+     * state like [reset], but the real account's cache and preferences on disk stay, and
+     * [isDebugPreview] keeps live sync, bootstrap and widget publishing off (AVE-235).
+     */
+    fun resetForSignedOutPreview() {
+        clearInMemoryState()
+        selectionIsProvisional = false
+        isDebugPreview = true
+    }
+
+    private fun clearInMemoryState() {
         bootstrappedToken = null
         streamClient.stop()
         _mailboxes.value = emptyList()
@@ -2568,12 +2589,6 @@ class AppModel {
         _customPiles.value = emptyList()
         _pilePickerEmail.value = null
         _showsPileList.value = false
-        // Sign-out forgets the last mailbox; the next account starts on its own first one.
-        if (!isDebugPreview) LastMailboxPreference.clear()
-        selectionIsProvisional = false
-        isDebugPreview = false
-        AutofillMailboxPreference.clear()
-        DatabaseService.shared.clearAll()
     }
 
     /**

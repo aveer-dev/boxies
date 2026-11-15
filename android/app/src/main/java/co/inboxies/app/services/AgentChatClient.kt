@@ -83,6 +83,7 @@ class AgentChatClient(
     )
 
     private val client = OkHttpClient.Builder()
+        .addInterceptor(PreviewNetworkGuard.interceptor)
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
@@ -140,6 +141,21 @@ class AgentChatClient(
     }
 
     fun disconnect() = teardownSocket(explicit = true)
+
+    /**
+     * DEBUG previews (`aiUsage`, `aiUsageLimit`): no socket and no history fetch, the chat
+     * reads as connected and empty so the meter and composer render instead of a spinner
+     * (AVE-235).
+     */
+    fun showReadyForPreview(mailboxId: String, conversationId: String) {
+        teardownSocket(explicit = true)
+        this.mailboxId = mailboxId
+        this.conversationId = conversationId
+        _messages.value = emptyList()
+        _historyError.value = null
+        _isLoadingHistory.value = false
+        _isConnected.value = true
+    }
 
     fun clearMessages() {
         _messages.value = emptyList()
@@ -739,7 +755,9 @@ class AgentChatClient(
         ): List<ChatMessage>? = withContext(Dispatchers.IO) {
             val url = agentURL(mailboxId, conversationId, websocket = false, pathSuffix = "/get-messages")
                 ?: return@withContext null
-            val client = OkHttpClient()
+            val client = OkHttpClient.Builder()
+                .addInterceptor(PreviewNetworkGuard.interceptor)
+                .build()
             val builder = Request.Builder().url(url).get()
             if (!authToken.isNullOrEmpty()) {
                 builder.header("Authorization", "Bearer $authToken")

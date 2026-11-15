@@ -221,6 +221,7 @@ class ApiClient private constructor() {
     }
 
     private val client = OkHttpClient.Builder()
+        .addInterceptor(PreviewNetworkGuard.interceptor)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followRedirects(false)

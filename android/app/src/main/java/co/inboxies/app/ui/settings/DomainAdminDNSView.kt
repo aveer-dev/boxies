@@ -119,6 +119,8 @@ fun DomainAdminDNSView(
     initialDomain: String? = null,
     justPurchased: Boolean = false,
     previewDomains: List<AdminDomainInfo>? = null,
+    previewHealth: DomainHealthResponse? = null,
+    previewRecords: List<CloudflareDnsRecord>? = null,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -152,6 +154,13 @@ fun DomainAdminDNSView(
     suspend fun loadDomainData(domain: String) {
         if (domain.isBlank()) return
         errorMessage = null
+        if (previewDomains != null) {
+            // DEBUG preview: fixtures only, never the API with the fixture token (AVE-235).
+            app.loadDomainService(domain)
+            healthResponse = previewHealth
+            dnsRecords = previewRecords.orEmpty()
+            return
+        }
         try {
             coroutineScope {
                 // Best effort: null (and no Subscription section) for unbilled domains or errors.

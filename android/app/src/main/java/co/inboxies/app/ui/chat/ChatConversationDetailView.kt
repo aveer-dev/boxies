@@ -209,7 +209,11 @@ fun ChatConversationDetailView(
         }
 
         val mailboxId = app.selectedMailboxId.value ?: return@LaunchedEffect
-        chatClient.connect(mailboxId, conversationId)
+        if (app.isDebugPreview) {
+            chatClient.showReadyForPreview(mailboxId, conversationId)
+        } else {
+            chatClient.connect(mailboxId, conversationId)
+        }
 
         if (!seedPrompt.isNullOrEmpty()) {
             draft = seedPrompt
