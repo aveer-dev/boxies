@@ -383,6 +383,9 @@ struct SessionsSettingsView: View {
             if session.id == AutofillSession.storedId {
                 AutofillSession.forget()
             }
+            if session.id == WatchSessionBridge.shared.storedId {
+                WatchSessionBridge.shared.revokedOnServer()
+            }
             sessions.removeAll { $0.id == session.id }
             statusMessage = "Signed out \(Self.title(session))"
         } catch {
@@ -397,6 +400,7 @@ struct SessionsSettingsView: View {
         do {
             let result = try await APIClient.shared.revokeOtherSessions()
             AutofillSession.forget()
+            WatchSessionBridge.shared.revokedOnServer()
             await load()
             let count = result.revoked ?? 0
             statusMessage = "Signed out \(count) other session\(count == 1 ? "" : "s")"
