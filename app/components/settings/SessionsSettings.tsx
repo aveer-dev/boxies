@@ -36,6 +36,7 @@ function SessionRow({
 	const details = [
 		session.current ? "Active now" : `Last active ${formatWhen(session.lastActiveAt)}`,
 		session.ipAddress,
+		session.scope === "aliases" ? "Private emails only" : session.scope === "watch" ? "Inbox and replies only" : null,
 	].filter(Boolean);
 	return (
 		<li className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">

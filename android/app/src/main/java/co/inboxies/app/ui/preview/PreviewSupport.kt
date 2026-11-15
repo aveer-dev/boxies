@@ -3,6 +3,11 @@ package co.inboxies.app.ui.preview
 import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.DomainAliasItem
+import co.inboxies.app.models.CloudflareDnsRecord
+import co.inboxies.app.models.DomainHealthResponse
+import co.inboxies.app.models.EmailHealthAudit
+import co.inboxies.app.models.EmailHealthItem
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Attachment
 import co.inboxies.app.models.BlockedTrackers
@@ -105,6 +110,84 @@ object PreviewSupport {
     }
 
     /** AI usage fixture (AVE-45): warning level 42 / 50, or the limit 50 / 50. Resets next UTC midnight. */
+    /**
+     * DNS console fixture (`domainDns`, `domainDnsEnded`): zone active, MX and SPF
+     * connected, DMARC missing so the audit shows a warning row (AVE-235).
+     */
+    fun dnsHealth(domain: String): DomainHealthResponse {
+        val nameservers = listOf("ns1.cloudflare.com", "ns2.cloudflare.com")
+        return DomainHealthResponse(
+            domain = domain,
+            zoneId = "preview-zone-123",
+            zoneStatus = "active",
+            nameservers = nameservers,
+            audit = EmailHealthAudit(
+                overallStatus = "missing",
+                zoneStatus = "active",
+                nameservers = nameservers,
+                items = listOf(
+                    EmailHealthItem(
+                        name = domain,
+                        type = "MX",
+                        status = "connected",
+                        expectedValue = "route1.mx.cloudflare.net",
+                        currentValue = "route1.mx.cloudflare.net",
+                        message = "Mail for $domain is delivered to Inboxies.",
+                    ),
+                    EmailHealthItem(
+                        name = domain,
+                        type = "TXT",
+                        status = "connected",
+                        expectedValue = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+                        currentValue = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+                        message = "SPF allows Inboxies to send for $domain.",
+                    ),
+                    EmailHealthItem(
+                        name = "_dmarc.$domain",
+                        type = "TXT",
+                        status = "missing",
+                        expectedValue = "v=DMARC1; p=none",
+                        message = "Add a DMARC record so receivers trust your mail.",
+                    ),
+                ),
+                issues = listOf("DMARC record missing"),
+            ),
+        )
+    }
+
+    fun dnsRecords(domain: String): List<CloudflareDnsRecord> = listOf(
+        CloudflareDnsRecord(
+            id = "preview-dns-mx",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = domain,
+            type = "MX",
+            content = "route1.mx.cloudflare.net",
+            ttl = 1,
+            priority = 10,
+        ),
+        CloudflareDnsRecord(
+            id = "preview-dns-spf",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = domain,
+            type = "TXT",
+            content = "v=spf1 include:_spf.mx.cloudflare.net ~all",
+            ttl = 1,
+        ),
+        CloudflareDnsRecord(
+            id = "preview-dns-www",
+            zoneId = "preview-zone-123",
+            zoneName = domain,
+            name = "www.$domain",
+            type = "CNAME",
+            content = domain,
+            proxiable = true,
+            proxied = true,
+            ttl = 1,
+        ),
+    )
+
     fun aiUsage(atLimit: Boolean): AiUsageSnapshot {
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         val resetsAt = today.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()
@@ -149,6 +232,7 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 2),
             Folder(id = FolderIds.PROMOTIONS, name = "Promotions", unreadCount = 0),
             Folder(id = FolderIds.UPDATES, name = "Updates", unreadCount = 0),
+            Folder(id = FolderIds.PAPER_TRAIL, name = "Paper Trail", unreadCount = 2),
             Folder(id = FolderIds.SENT, name = "Sent", unreadCount = 0),
             Folder(id = FolderIds.ARCHIVE, name = "Archive", unreadCount = 0),
             Folder(id = FolderIds.SPAM, name = "Spam", unreadCount = 1),
@@ -226,6 +310,21 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.SPAM),
                     selectedEmail = spam.firstOrNull(),
                     threadEmails = spam.take(1),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.PaperTrail -> {
+                // AVE-192: Paper Trail, a quiet receipts folder (compact rows by month).
+                val receipts = paperTrailEmails(you)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = receipts,
+                    selectedTab = HomeTab.Folder(FolderIds.PAPER_TRAIL),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -669,6 +768,13 @@ object PreviewSupport {
         )
     }
 
+    /** Domain Admin → Aliases fixtures (AVE-219; iOS `PreviewSupport.adminAliases`). */
+    fun adminAliases(): List<DomainAliasItem> = listOf(
+        DomainAliasItem("sales", addr("sales"), addr("you"), "2026-10-02T09:00:00.000Z"),
+        DomainAliasItem("support", addr("support"), addr("ops"), "2026-10-04T09:00:00.000Z"),
+        DomainAliasItem("billing", addr("billing"), addr("you"), "2026-10-06T09:00:00.000Z"),
+    )
+
     /** Unread inbox rows for the capped-New preview (AVE-23). */
     private fun manyNewEmails(you: String): List<Email> {
         val senders = listOf(
@@ -978,6 +1084,94 @@ object PreviewSupport {
             organizerMatchesSender = !claimed,
             meetingUrl = if (inPerson) null else "https://meet.google.com/abc-defg-hij",
             recurrence = "FREQ=WEEKLY;BYDAY=TH",
+        ),
+    )
+
+    /** `paperTrail` (AVE-192): receipts across this month, last month and last year (iOS `-previewMailbox -previewPaperTrail`). */
+    fun paperTrailEmails(you: String = addr("you")): List<Email> = listOf(
+        Email(
+            id = "preview-paper-trail-1",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Your receipt from Lumen Coffee",
+            sender = "receipts@lumen.example",
+            senderName = "Lumen Coffee",
+            recipient = you,
+            date = "2026-11-09T08:14:00.000Z",
+            read = false,
+            starred = false,
+            snippet = "Order #4821 · \$6.40 · Thanks for stopping by.",
+        ),
+        Email(
+            id = "preview-paper-trail-2",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Your package has shipped",
+            sender = "ship@parcel.example",
+            senderName = "Parcel",
+            recipient = you,
+            date = "2026-11-06T16:40:00.000Z",
+            read = false,
+            starred = false,
+            snippet = "Arriving Thursday. Track it any time.",
+        ),
+        Email(
+            id = "preview-paper-trail-3",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Payment received",
+            sender = "billing@studio.example",
+            senderName = "Studio Billing",
+            recipient = you,
+            date = "2026-11-02T12:05:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "We received your payment of \$24.00. Thank you.",
+        ),
+        Email(
+            id = "preview-paper-trail-4",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Your October statement is ready",
+            sender = "statements@bank.example",
+            senderName = "Northwind Bank",
+            recipient = you,
+            date = "2026-10-31T09:00:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Your statement for October is ready to view.",
+        ),
+        Email(
+            id = "preview-paper-trail-5",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Booking confirmed: Lisbon, Dec 12",
+            sender = "trips@stay.example",
+            senderName = "Stay",
+            recipient = you,
+            date = "2026-10-18T19:22:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Check-in from 3 PM. Your host will message you before you arrive.",
+        ),
+        Email(
+            id = "preview-paper-trail-6",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Password changed",
+            sender = "security@accounts.example",
+            senderName = "Accounts",
+            recipient = you,
+            date = "2026-10-03T07:48:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "Your password was changed. If this wasn’t you, reset it now.",
+        ),
+        Email(
+            id = "preview-paper-trail-7",
+            folderId = FolderIds.PAPER_TRAIL,
+            subject = "Your 2025 annual summary",
+            sender = "hello@ride.example",
+            senderName = "Ride",
+            recipient = you,
+            date = "2025-12-30T10:10:00.000Z",
+            read = true,
+            starred = false,
+            snippet = "142 trips this year. Here’s where you went.",
         ),
     )
 

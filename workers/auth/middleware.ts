@@ -9,7 +9,8 @@
  *   (web) or `Authorization: Bearer` (mobile, MCP, extension). No session is
  *   a 401. Auth bootstrap and invite routes are public but still see the
  *   caller's session when there is one.
- * - Scoped sessions (extension / AutoFill) only reach `isPathAllowedForTokenScope`.
+ * - Scoped sessions (extension / AutoFill, watch) only reach
+ *   `isPathAllowedForTokenScope`; everything else is refused (403).
  * - `/mcp` with an OAuth access token (`userId:grantId:secret`) skips this
  *   middleware: the `/mcp` route validates it (workers/mcp/oauth.ts). It is
  *   never looked up as a session, and every other path is unaffected.
@@ -59,7 +60,11 @@ export const sessionMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 	const principal = presented ? await principalFromHeaders(c.env, headers) : null;
 	if (principal) {
 		if (principal.scope && !isPathAllowedForTokenScope(principal.scope, c.req.method, pathname)) {
-			return c.json({ error: "This session can only manage private emails" }, 403);
+			const error =
+				principal.scope === "watch"
+					? "This watch session can only read and triage mail"
+					: "This session can only manage private emails";
+			return c.json({ error }, 403);
 		}
 		c.set("principal", principal);
 		return next();

@@ -20,6 +20,7 @@ import { SHOW_ALL_MAILBOXES_STATE } from "~/lib/last-mailbox";
 import api from "~/services/api";
 import { queryKeys } from "~/queries/keys";
 import { AdminDnsSuite } from "~/components/AdminDnsSuite";
+import { DomainAliasesSection } from "~/components/DomainAliasesSection";
 
 export function meta() {
 	return [{ title: "Admin — Inboxies" }];
@@ -262,67 +263,72 @@ export default function AdminRoute() {
 					<div className="flex justify-center py-20">
 						<Loader size="lg" />
 					</div>
-				) : rows.length === 0 ? (
-					<div className="rounded-xl border border-kumo-line bg-kumo-base py-16 px-6 text-center">
-						<p className="text-sm text-kumo-subtle mb-4">
-							No mailboxes on this domain yet.
-						</p>
-						<Button variant="primary" onClick={() => setIsCreateOpen(true)}>
-							Create the first email
-						</Button>
-					</div>
 				) : (
-					<div className="rounded-xl border border-kumo-line bg-kumo-base overflow-hidden">
-						<div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-5 py-3 text-xs font-medium text-kumo-subtle border-b border-kumo-line">
-							<span>Address</span>
-							<span>Owners</span>
-							<span className="text-right">Actions</span>
+					<>
+					{rows.length === 0 ? (
+						<div className="rounded-xl border border-kumo-line bg-kumo-base py-16 px-6 text-center">
+							<p className="text-sm text-kumo-subtle mb-4">
+								No mailboxes on this domain yet.
+							</p>
+							<Button variant="primary" onClick={() => setIsCreateOpen(true)}>
+								Create the first email
+							</Button>
 						</div>
-						{rows.map((row, idx) => (
-							<div
-								key={row.id}
-								className={`grid grid-cols-[1fr_1fr_auto] gap-2 items-center px-5 py-4 ${
-									idx > 0 ? "border-t border-kumo-line" : ""
-								}`}
-							>
-								<div className="min-w-0">
-									<div className="text-sm font-medium text-kumo-default truncate">
-										{row.email}
-									</div>
-									<div className="text-xs text-kumo-subtle">
-										{row.claimed ? "Claimed" : "Unclaimed"} · {row.name}
-									</div>
-								</div>
-								<div className="text-xs text-kumo-subtle truncate">
-									{(row.acl.owners ?? [])
-										.map((k) =>
-											k.startsWith("email:") ? k.slice(6) : k,
-										)
-										.join(", ") || "—"}
-								</div>
-								<div className="flex items-center gap-1 justify-end">
-									<Button
-										variant="secondary"
-										size="sm"
-										loading={assignTarget === row.id}
-										onClick={() => handleAssignSelf(row.id)}
-									>
-										Assign to me
-									</Button>
-									<Button
-										variant="ghost"
-										size="sm"
-										shape="square"
-										icon={<TrashIcon size={16} />}
-										aria-label={`Delete ${row.email}`}
-										onClick={() =>
-											setDeleteTarget({ id: row.id, email: row.email })
-										}
-									/>
-								</div>
+					) : (
+						<div className="rounded-xl border border-kumo-line bg-kumo-base overflow-hidden">
+							<div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-5 py-3 text-xs font-medium text-kumo-subtle border-b border-kumo-line">
+								<span>Address</span>
+								<span>Owners</span>
+								<span className="text-right">Actions</span>
 							</div>
-						))}
-					</div>
+							{rows.map((row, idx) => (
+								<div
+									key={row.id}
+									className={`grid grid-cols-[1fr_1fr_auto] gap-2 items-center px-5 py-4 ${
+										idx > 0 ? "border-t border-kumo-line" : ""
+									}`}
+								>
+									<div className="min-w-0">
+										<div className="text-sm font-medium text-kumo-default truncate">
+											{row.email}
+										</div>
+										<div className="text-xs text-kumo-subtle">
+											{row.claimed ? "Claimed" : "Unclaimed"} · {row.name}
+										</div>
+									</div>
+									<div className="text-xs text-kumo-subtle truncate">
+										{(row.acl.owners ?? [])
+											.map((k) =>
+												k.startsWith("email:") ? k.slice(6) : k,
+											)
+											.join(", ") || "—"}
+									</div>
+									<div className="flex items-center gap-1 justify-end">
+										<Button
+											variant="secondary"
+											size="sm"
+											loading={assignTarget === row.id}
+											onClick={() => handleAssignSelf(row.id)}
+										>
+											Assign to me
+										</Button>
+										<Button
+											variant="ghost"
+											size="sm"
+											shape="square"
+											icon={<TrashIcon size={16} />}
+											aria-label={`Delete ${row.email}`}
+											onClick={() =>
+												setDeleteTarget({ id: row.id, email: row.email })
+											}
+										/>
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+					<DomainAliasesSection domain={mailDomain} mailboxes={rows} />
+					</>
 				)}
 			</div>
 

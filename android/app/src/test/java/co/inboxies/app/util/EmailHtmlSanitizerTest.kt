@@ -18,7 +18,7 @@ class EmailHtmlSanitizerTest {
     @Test
     fun remoteImagesBlockedOnlyInSpam() {
         assertTrue(EmailHtmlSanitizer.blocksRemoteImages("spam"))
-        for (folder in listOf("inbox", "screener", "promotions", "updates", "sent", "draft", "archive", "screened_out", "trash", null)) {
+        for (folder in listOf("inbox", "screener", "promotions", "updates", "paper_trail", "sent", "draft", "archive", "screened_out", "trash", null)) {
             assertFalse(folder ?: "null", EmailHtmlSanitizer.blocksRemoteImages(folder))
         }
 

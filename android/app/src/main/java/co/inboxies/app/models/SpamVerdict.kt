@@ -25,6 +25,7 @@ object SpamVerdictToast {
         "inbox" to "Inbox",
         "promotions" to "Promotions",
         "updates" to "Updates",
+        "paper_trail" to "Paper Trail",
         "archive" to "Archive",
     )
 

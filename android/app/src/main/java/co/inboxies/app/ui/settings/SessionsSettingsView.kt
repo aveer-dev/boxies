@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PhoneIphone
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -714,6 +715,7 @@ private fun sessionSubtitle(session: AccountSession): String {
     }
     session.ipAddress?.takeIf { it.isNotBlank() }?.let { parts += it }
     if (session.scope == "aliases") parts += "Private emails only"
+    if (session.scope == "watch") parts += "Inbox and replies only"
     return parts.joinToString(" · ")
 }
 
@@ -732,6 +734,7 @@ private fun sessionIcon(session: AccountSession): ImageVector {
     val title = sessionTitle(session).lowercase()
     return when {
         session.scope == "aliases" -> if (title.contains("extension")) Icons.Outlined.Extension else Icons.Outlined.Key
+        session.scope == "watch" -> Icons.Outlined.Watch
         title.contains("android") -> Icons.Outlined.PhoneAndroid
         title.contains("iphone") || title.contains("ipad") -> Icons.Outlined.PhoneIphone
         else -> Icons.Outlined.Laptop

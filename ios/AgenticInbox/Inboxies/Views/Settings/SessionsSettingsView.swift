@@ -383,6 +383,9 @@ struct SessionsSettingsView: View {
             if session.id == AutofillSession.storedId {
                 AutofillSession.forget()
             }
+            if session.id == WatchSessionBridge.shared.storedId {
+                WatchSessionBridge.shared.revokedOnServer()
+            }
             sessions.removeAll { $0.id == session.id }
             statusMessage = "Signed out \(Self.title(session))"
         } catch {
@@ -397,6 +400,7 @@ struct SessionsSettingsView: View {
         do {
             let result = try await APIClient.shared.revokeOtherSessions()
             AutofillSession.forget()
+            WatchSessionBridge.shared.revokedOnServer()
             await load()
             let count = result.revoked ?? 0
             statusMessage = "Signed out \(count) other session\(count == 1 ? "" : "s")"
@@ -447,6 +451,8 @@ struct SessionsSettingsView: View {
         }
         if session.scope == "aliases" {
             parts.append("Private emails only")
+        } else if session.scope == "watch" {
+            parts.append("Inbox and replies only")
         }
         return parts.joined(separator: " · ")
     }
@@ -456,6 +462,7 @@ struct SessionsSettingsView: View {
         if session.scope == "aliases" {
             return title.contains("extension") ? "puzzlepiece.extension" : "key.fill"
         }
+        if session.scope == "watch" { return "applewatch" }
         if title.contains("iphone") || title.contains("android") { return "iphone" }
         if title.contains("ipad") { return "ipad" }
         return "laptopcomputer"

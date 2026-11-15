@@ -144,7 +144,7 @@ assert.equal(
 		address: "a@b.com",
 		folderId: Folders.ARCHIVE,
 	}),
-	"Destination must be one of: inbox, promotions, updates",
+	"Destination must be one of: inbox, promotions, updates, paper_trail",
 );
 assert.equal(
 	senderPreferenceUpsertError({

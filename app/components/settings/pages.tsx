@@ -78,7 +78,7 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 	senders: {
 		id: "senders",
 		label: "Senders",
-		description: "Default Inbox, Promotions, or Updates per sender",
+		description: "Default Inbox, Promotions, Updates, or Paper Trail per sender",
 		icon: <AddressBookIcon size={18} />,
 		Component: lazy(() => import("./SendersSettings")),
 	},

@@ -194,6 +194,18 @@ object BounceSuppression {
         return suppressed.filter { it.address.lowercase() in current }
     }
 
+    /**
+     * Splits an address for the Bounced addresses row (AVE-237): the local part may
+     * ellipsize, the `@domain` part stays whole so a truncated row still shows the
+     * domain. Splits on the last `@`; without a usable `@` the whole string is the
+     * local part and the domain part is empty.
+     */
+    fun displayParts(address: String): Pair<String, String> {
+        val at = address.lastIndexOf('@')
+        if (at <= 0 || at == address.lastIndex) return address to ""
+        return address.substring(0, at) to address.substring(at)
+    }
+
     fun buttonTitle(count: Int): String =
         if (count > 1) "Un-suppress all and send" else "Un-suppress and send"
 

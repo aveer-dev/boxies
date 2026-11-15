@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.view.WindowCompat
 import co.inboxies.app.services.AppModel
+import co.inboxies.app.services.PreviewNetworkGuard
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InboxiesTheme
@@ -52,6 +53,9 @@ class MainActivity : ComponentActivity() {
         val model = appModel
         val previewMode = PreviewMode.fromIntent(intent)
         val isRecreation = savedInstanceState != null
+        // DEBUG previews are fixtures: no request leaves the app while one runs (AVE-235).
+        // A normal cold launch turns it back off (the process can outlive a preview).
+        if (!isRecreation) PreviewNetworkGuard.setBlocking(previewMode != null)
         if (BuildConfig.DEBUG && !isRecreation) handleWidgetPreviewData(intent)
         if (previewMode != null) {
             // Re-seed only on a cold start (or after process death); a config change
@@ -214,14 +218,16 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * DEBUG `--es previewWidgetData mail|zero`: sample data for the real home-screen
-     * widget, no sign-in needed (iOS `-previewWidgetData`). See run-debug-preview.sh.
+     * DEBUG `widgetData` / `widgetZero` previews (or the older `--es previewWidgetData
+     * mail|zero`): sample data for the real home-screen widget. The preview itself is
+     * signed out and offline (iOS `-previewWidgetData`). See run-debug-preview.sh.
      */
     private fun handleWidgetPreviewData(intent: Intent?) {
-        val value = intent?.getStringExtra("previewWidgetData") ?: return
-        InboxWidgetPublisher.publishPreviewData(inboxZero = value.equals("zero", ignoreCase = true))
+        val mode = PreviewMode.fromIntent(intent)
+        if (mode != PreviewMode.WidgetData && mode != PreviewMode.WidgetZero) return
+        InboxWidgetPublisher.publishPreviewData(inboxZero = mode == PreviewMode.WidgetZero)
         // `--ez previewWidgetPin true`: ask the launcher to add the widget (one "Add" tap).
-        if (intent.getBooleanExtra("previewWidgetPin", false)) {
+        if (intent?.getBooleanExtra("previewWidgetPin", false) == true) {
             val manager = getSystemService(android.appwidget.AppWidgetManager::class.java)
             if (manager?.isRequestPinAppWidgetSupported == true) {
                 manager.requestPinAppWidget(

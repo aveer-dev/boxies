@@ -175,4 +175,13 @@ class BounceSuppressionTest {
         assertFalse(BounceSuppression.isAlreadyLifted(ApiException.Http(403, "Ask a domain admin")))
         assertFalse(BounceSuppression.isAlreadyLifted(IllegalStateException("boom")))
     }
+
+    @Test
+    fun displayPartsKeepsTheDomainWhole() {
+        assertEquals("old.contact" to "@example.com", BounceSuppression.displayParts("old.contact@example.com"))
+        assertEquals("\"a@b\"" to "@acme.co", BounceSuppression.displayParts("\"a@b\"@acme.co"))
+        assertEquals("no-at-sign" to "", BounceSuppression.displayParts("no-at-sign"))
+        assertEquals("@acme.co" to "", BounceSuppression.displayParts("@acme.co"))
+        assertEquals("trailing@" to "", BounceSuppression.displayParts("trailing@"))
+    }
 }
