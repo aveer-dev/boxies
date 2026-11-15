@@ -210,6 +210,7 @@ final class AuthStore {
         UserDefaults.standard.removeObject(forKey: emailKey)
         SharedSession.clear()
         InboxWidgetPublisher.clear()
+        WatchSessionBridge.shared.forget()
     }
 
     private func persist(token: String, email: String?) {
