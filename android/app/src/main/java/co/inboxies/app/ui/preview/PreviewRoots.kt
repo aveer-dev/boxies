@@ -67,7 +67,7 @@ object PreviewHarness {
     fun seed(mode: PreviewMode, auth: AuthStore, appModel: AppModel) {
         when (mode) {
             PreviewMode.TwoFactorChallenge -> {
-                appModel.reset()
+                signedOut(auth, appModel)
                 auth.applyPreviewTwoFactorChallenge(
                     TwoFactorChallenge(
                         token = "preview",
@@ -80,16 +80,16 @@ object PreviewHarness {
             PreviewMode.ForgotPassword,
             PreviewMode.Welcome,
             PreviewMode.AuthOptions,
-            -> {
-                // Show SignInView only — do not clear a real on-disk session.
-                appModel.reset()
-            }
+            // Signed out: the real invite screen on a fixture invite.
+            PreviewMode.InviteAccept,
+            PreviewMode.Splash,
+            PreviewMode.Widgets,
+            // Sample data for the real widget (MainActivity writes it); no account involved.
+            PreviewMode.WidgetData,
+            PreviewMode.WidgetZero,
+            -> signedOut(auth, appModel)
             PreviewMode.DomainOnboarding -> {
                 PreviewSupport.applyAuth(auth)
-            }
-            PreviewMode.InviteAccept -> {
-                // Signed out: the real invite screen on a fixture invite.
-                appModel.reset()
             }
             PreviewMode.InviteAcceptSignedIn,
             PreviewMode.DomainAdmin,
@@ -140,11 +140,6 @@ object PreviewHarness {
                 val service = PreviewSupport.domainServiceFixture(mode, PREVIEW_DNS_DOMAIN)!!
                 PreviewSupport.applyAdminPreview(appModel, mapOf(PREVIEW_DNS_DOMAIN to service))
             }
-            PreviewMode.Splash,
-            PreviewMode.Widgets,
-            -> {
-                // Splash and widget mocks need no extra session seeding.
-            }
             PreviewMode.Mailbox,
             PreviewMode.TagView,
             PreviewMode.TagPicker,
@@ -167,10 +162,9 @@ object PreviewHarness {
             PreviewMode.Pile,
             PreviewMode.PileList,
             PreviewMode.PilePicker,
-        PreviewMode.FocusReply,
-        PreviewMode.FocusReplyDone,
             PreviewMode.FocusReply,
             PreviewMode.FocusReplyDone,
+            PreviewMode.PaperTrail,
             PreviewMode.Spam,
             PreviewMode.Newsletter,
             PreviewMode.Code,
@@ -180,10 +174,6 @@ object PreviewHarness {
             PreviewMode.InviteCardAddressExpanded,
             PreviewMode.InviteCardCancelled,
             PreviewMode.InviteCardClaimed,
-        PreviewMode.InviteCardFree,
-        PreviewMode.InviteCardConflict,
-        PreviewMode.InviteCardAdded,
-        PreviewMode.InviteCardAsk,
             PreviewMode.InviteCardFree,
             PreviewMode.InviteCardConflict,
             PreviewMode.InviteCardAdded,
@@ -201,6 +191,15 @@ object PreviewHarness {
             }
         }
     }
+
+    /**
+     * Signed out in memory only: the account stored on the device is neither shown,
+     * sent, nor deleted, and its cache stays (AVE-235).
+     */
+    private fun signedOut(auth: AuthStore, appModel: AppModel) {
+        appModel.resetForSignedOutPreview()
+        auth.applyEphemeralSignedOut()
+    }
 }
 
 private const val PREVIEW_DNS_DOMAIN = "example.com"
@@ -216,6 +215,8 @@ fun PreviewRoot(
     when (mode) {
         PreviewMode.Splash -> SplashScreenView()
         PreviewMode.Widgets -> InboxWidgetGallery()
+        PreviewMode.WidgetData -> WidgetDataPreviewNotice(inboxZero = false)
+        PreviewMode.WidgetZero -> WidgetDataPreviewNotice(inboxZero = true)
         PreviewMode.Welcome -> SignInView(isShowingSplash = false, expandPasswordForm = false)
         PreviewMode.AuthOptions -> SignInView(isShowingSplash = false, expandPasswordForm = false, showAuthOptionsInitial = true)
         PreviewMode.PasswordSignIn -> SignInView(expandPasswordForm = true)
@@ -272,7 +273,12 @@ fun PreviewRoot(
             TagsSettingsView(onBack = {}, previewDialog = TagsPreviewDialog.Delete)
         }
         PreviewMode.Settings, PreviewMode.SettingsScreenerOff, PreviewMode.AiUsageSettings -> SettingsPreviewSurface {
-            SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
+            SettingsSheetView(
+                onClose = {},
+                onThemeModeChange = onThemeModeChange,
+                themeMode = themeMode,
+                previewScrollToAiUsage = mode == PreviewMode.AiUsageSettings,
+            )
         }
         PreviewMode.SendersBlocked -> SettingsPreviewSurface {
             SendersSettingsView(onBack = {}, initialTab = SendersTab.Blocked)
@@ -306,6 +312,8 @@ fun PreviewRoot(
                                 nameservers = listOf("ns1.cloudflare.com", "ns2.cloudflare.com"),
                             ),
                         ),
+                        previewHealth = PreviewSupport.dnsHealth(PREVIEW_DNS_DOMAIN),
+                        previewRecords = PreviewSupport.dnsRecords(PREVIEW_DNS_DOMAIN),
                     )
                 }
             }
@@ -336,6 +344,7 @@ fun PreviewRoot(
         PreviewMode.PilePicker,
         PreviewMode.FocusReply,
         PreviewMode.FocusReplyDone,
+        PreviewMode.PaperTrail,
         PreviewMode.Spam,
         PreviewMode.Newsletter,
         PreviewMode.Code,
@@ -380,6 +389,43 @@ fun PreviewRoot(
                 appModel = appModel,
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
+            )
+        }
+    }
+}
+
+/** `widgetData` / `widgetZero`: what was written and where to look (the real widget is on the launcher). */
+@Composable
+private fun WidgetDataPreviewNotice(inboxZero: Boolean) {
+    val colors = inboxiesColors()
+    Surface(modifier = Modifier.fillMaxSize(), color = colors.background) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+        ) {
+            Text(
+                "Today's inbox widget",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 20.sp,
+                color = colors.ink,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (inboxZero) "Sample data written: inbox zero." else "Sample data written: new mail.",
+                fontFamily = InterFontFamily,
+                fontSize = 15.sp,
+                color = colors.ink,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Add the widget from the launcher's widget picker, then switch system dark mode " +
+                    "to check both themes. This preview is signed out and offline.",
+                fontFamily = InterFontFamily,
+                fontSize = 14.sp,
+                color = colors.muted,
             )
         }
     }

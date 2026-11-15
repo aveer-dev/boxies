@@ -40,6 +40,7 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
     private val activeCalls = java.util.concurrent.ConcurrentHashMap<Job, Call>()
 
     private val client = OkHttpClient.Builder()
+        .addInterceptor(PreviewNetworkGuard.interceptor)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .build()

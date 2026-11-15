@@ -581,7 +581,7 @@ private fun SenderRuleRow(
     }
 }
 
-/** Sorting tab: per-sender purpose-box defaults (Inbox / Promotions / Updates). */
+/** Sorting tab: per-sender purpose-box defaults (Inbox / Promotions / Updates / Paper Trail). */
 @Composable
 private fun SenderSortingTab() {
     val app = LocalAppModel.current
@@ -625,7 +625,7 @@ private fun SenderSortingTab() {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "Choose which purpose box each sender goes to. Changing a destination also moves their existing Inbox, Promotions, and Updates mail.",
+                    "Choose which purpose box each sender goes to. Changing a destination also moves their existing Inbox, Promotions, Updates, and Paper Trail mail.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
@@ -672,7 +672,7 @@ private fun SenderSortingTab() {
                                 color = colors.ink,
                             )
                             Text(
-                                "When you move mail into Inbox, Promotions, or Updates, you can set where future mail from that sender goes.",
+                                "When you move mail into Inbox, Promotions, Updates, or Paper Trail, you can set where future mail from that sender goes.",
                                 fontFamily = InterFontFamily,
                                 fontSize = 13.sp,
                                 color = colors.muted,

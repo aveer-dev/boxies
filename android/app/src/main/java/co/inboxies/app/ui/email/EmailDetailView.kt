@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.ui.components.AppToastView
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.TagRef
@@ -142,6 +143,11 @@ fun EmailDetailView(
     onClose: () -> Unit = {},
     /** Sheet grabber; off in the two-pane reading pane, where there is nothing to drag. */
     showsGrabber: Boolean = true,
+    /**
+     * Draw the app toast over the reader. On for the phone reader sheet, whose window
+     * covers the home shell's toast (AVE-231); off in the two-pane reading pane.
+     */
+    showsAppToast: Boolean = false,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -631,6 +637,12 @@ fun EmailDetailView(
                     onMove = { note, point -> scope.launch { app.moveThreadNote(note, point.x, point.y) } },
                 )
             }
+
+            // App toast ("Accepted · Undo") floats above the bottom bar and any mail card.
+            AppToastView(
+                visible = showsAppToast,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 

@@ -26,7 +26,7 @@ export interface InboxFilterRule {
 	forwardTo?: string;
 }
 
-export type PurposeFolderId = "inbox" | "promotions" | "updates";
+export type PurposeFolderId = "inbox" | "promotions" | "updates" | "paper_trail";
 
 export interface SenderPreference {
 	address: string;

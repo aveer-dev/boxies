@@ -1,10 +1,7 @@
 package co.inboxies.app.ui.home
 
-import co.inboxies.app.theme.ToastMetrics
-import co.inboxies.app.models.ToastAction
-import co.inboxies.app.ui.components.toastIcon
-import co.inboxies.app.ui.components.InboxiesToast
-import co.inboxies.app.ui.components.AnimatedToast
+import co.inboxies.app.ui.components.AppToastHost
+import co.inboxies.app.ui.components.AppToastView
 import android.Manifest
 import android.os.Build
 import android.view.HapticFeedbackConstants
@@ -208,7 +205,6 @@ fun HomeShellView(
     val selectedTab by appModel.selectedTab.collectAsState()
     val selectedEmail by appModel.selectedEmail.collectAsState()
     val composeSession by appModel.composeSession.collectAsState()
-    val toast by appModel.toast.collectAsState()
     val digest by appModel.inboxDigest.collectAsState()
     val folders by appModel.folders.collectAsState()
     val emails by appModel.emails.collectAsState()
@@ -556,6 +552,8 @@ fun HomeShellView(
     val allowsFolderColumn = rememberAllowsFolderColumn()
     val layoutMode = rememberHomeLayoutMode(showsFolderColumn)
     val isTwoPane = layoutMode.isSplit
+    val readerSheetOpen = selectedEmail != null && !isTwoPane
+    val toastHost = AppToastHost.forReader(readerSheetOpen)
 
     // Two-pane: back clears the reading pane to its placeholder (the phone's back
     // dismisses the detail sheet). Declared before the home handler so search /
@@ -1262,22 +1260,8 @@ fun HomeShellView(
                         ),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                AnimatedToast(toast) { current ->
-                    InboxiesToast(
-                        message = current.message,
-                        icon = current.toastIcon,
-                        iconVector = current.icon,
-                        action = if (current.isUndo) {
-                            ToastAction("Undo") { appModel.undoPendingAction() }
-                        } else {
-                            current.action
-                        },
-                        onDismiss = { appModel.hideToast() },
-                        modifier = Modifier
-                            .padding(horizontal = ToastMetrics.screenInset)
-                            .padding(bottom = ToastMetrics.barGap),
-                    )
-                }
+                // The phone reader sheet hosts the toast while it's up (AVE-231).
+                AppToastView(visible = toastHost == AppToastHost.Home)
 
                 AnimatedContent(
                     targetState = isSelectMode,
@@ -1549,7 +1533,7 @@ fun HomeShellView(
     // Phone detail sheet. In two-pane the email shows in the reading pane instead; if the
     // window widens with the sheet up it simply leaves composition (no dismiss callback),
     // so the selection carries over to the pane.
-    if (selectedEmail != null && !isTwoPane) {
+    if (readerSheetOpen) {
         ModalBottomSheet(
             onDismissRequest = { appModel.closeEmail() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1558,7 +1542,10 @@ fun HomeShellView(
             contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
             dragHandle = null,
         ) {
-            EmailDetailView(onClose = { appModel.closeEmail() })
+            EmailDetailView(
+                onClose = { appModel.closeEmail() },
+                showsAppToast = toastHost == AppToastHost.ReaderSheet,
+            )
         }
     }
 

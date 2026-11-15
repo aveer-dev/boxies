@@ -8,6 +8,7 @@ const FOLDER_NAMES: Record<string, string> = {
 	[Folders.INBOX]: "Inbox",
 	[Folders.PROMOTIONS]: "Promotions",
 	[Folders.UPDATES]: "Updates",
+	[Folders.PAPER_TRAIL]: "Paper Trail",
 	[Folders.ARCHIVE]: "Archive",
 };
 

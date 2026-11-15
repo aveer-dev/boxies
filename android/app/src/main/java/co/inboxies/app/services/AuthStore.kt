@@ -246,17 +246,41 @@ class AuthStore(context: Context) {
     }
 
     /**
+     * True while a DEBUG preview owns the in-memory session ([applyEphemeralSession] or
+     * [applyEphemeralSignedOut]). The session on disk belongs to the real account then:
+     * [signOut] leaves it alone.
+     */
+    private var isEphemeral = false
+
+    /**
      * In-memory session for DEBUG emulator previews. Does not write EncryptedSharedPreferences,
      * so a preview launch cannot clobber a real signed-in session on disk.
      */
     fun applyEphemeralSession(token: String, email: String?) {
+        isEphemeral = true
+        _twoFactorChallenge.value = null
         _token.value = token
         _userEmail.value = email
         ApiClient.shared.authTokenProvider = { _token.value }
     }
 
+    /**
+     * Signed out in memory for DEBUG previews (sign-in, invite accept, widget data). The
+     * real session read from disk at launch is dropped from memory, never sent, and never
+     * deleted: a normal launch's [resyncFromStorage] brings it back (AVE-235).
+     */
+    fun applyEphemeralSignedOut() {
+        isEphemeral = true
+        _twoFactorChallenge.value = null
+        _token.value = null
+        _userEmail.value = null
+        _errorMessage.value = null
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
     /** Re-read session from disk — undoes a DEBUG [applyEphemeralSession] after a preview launch. */
     fun resyncFromStorage() {
+        isEphemeral = false
         _token.value = storedToken()
         _userEmail.value = storedEmail()
         ApiClient.shared.authTokenProvider = { _token.value }
@@ -272,6 +296,9 @@ class AuthStore(context: Context) {
         _twoFactorChallenge.value = null
         _token.value = null
         _userEmail.value = null
+        // A DEBUG preview signing out (or "expiring") must not delete the real account's
+        // session or its widget.
+        if (isEphemeral) return
         clearStoredSession()
         // Nothing about the account stays on the home screen (AVE-150).
         co.inboxies.app.widget.InboxWidgetPublisher.clear()
@@ -286,6 +313,7 @@ class AuthStore(context: Context) {
     }
 
     private fun persist(token: String, email: String?) {
+        isEphemeral = false
         _token.value = token
         _userEmail.value = email
         writeStoredSession(token, email)

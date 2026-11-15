@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -91,6 +92,8 @@ enum class ComposeActionItem {
     Archive,
     Drafts,
     Sent,
+    /** Paper Trail (AVE-192), listed after Updates like the swipe tabs. */
+    PaperTrail,
     Updates,
     Promotions,
     // No Screener here: it's the Screening room, reached from the Inbox row (AVE-136).
@@ -109,6 +112,7 @@ enum class ComposeActionItem {
             Archive -> "Archive"
             Drafts -> "Drafts"
             Sent -> "Sent"
+            PaperTrail -> "Paper Trail"
             Updates -> "Updates"
             Promotions -> "Promotions"
             Inbox -> "Inbox"
@@ -126,6 +130,7 @@ enum class ComposeActionItem {
             Archive -> Icons.Filled.Archive
             Drafts -> Icons.Outlined.Drafts
             Sent -> Icons.AutoMirrored.Filled.Send
+            PaperTrail -> Icons.AutoMirrored.Filled.ReceiptLong
             Updates -> Icons.Filled.Newspaper
             Promotions -> Icons.Filled.Campaign
             Inbox -> Icons.Filled.Inbox
@@ -139,6 +144,7 @@ enum class ComposeActionItem {
             Inbox -> HomeTab.Folder(FolderIds.INBOX)
             Promotions -> HomeTab.Folder(FolderIds.PROMOTIONS)
             Updates -> HomeTab.Folder(FolderIds.UPDATES)
+            PaperTrail -> HomeTab.Folder(FolderIds.PAPER_TRAIL)
             Sent -> HomeTab.Folder(FolderIds.SENT)
             Drafts -> HomeTab.Folder(FolderIds.DRAFT)
             Archive -> HomeTab.Folder(FolderIds.ARCHIVE)

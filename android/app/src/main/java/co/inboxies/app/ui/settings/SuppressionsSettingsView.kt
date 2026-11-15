@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -268,15 +269,7 @@ private fun SuppressionRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                row.address,
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 15.sp,
-                color = colors.ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            SuppressedAddressText(row.address)
             Text(
                 BounceSuppression.metaLine(row),
                 fontFamily = InterFontFamily,
@@ -317,6 +310,40 @@ private fun SuppressionRow(
                 fontFamily = InterFontFamily,
                 fontSize = 12.sp,
                 color = colors.muted,
+            )
+        }
+    }
+}
+
+/**
+ * One-line address that truncates in the middle (AVE-237): the local part ellipsizes and
+ * `@domain` stays whole, like iOS `.truncationMode(.middle)` keeping the domain visible at
+ * large text. TalkBack reads the full address.
+ */
+@Composable
+private fun SuppressedAddressText(address: String) {
+    val colors = inboxiesColors()
+    val (local, domain) = BounceSuppression.displayParts(address)
+    Row(modifier = Modifier.clearAndSetSemantics { contentDescription = address }) {
+        Text(
+            local,
+            modifier = Modifier.weight(1f, fill = false),
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 15.sp,
+            color = colors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (domain.isNotEmpty()) {
+            Text(
+                domain,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                color = colors.ink,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }

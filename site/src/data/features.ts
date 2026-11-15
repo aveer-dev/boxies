@@ -16,6 +16,15 @@ const rows: Feature[] = [
 		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one only for Promotions / Updates, Inbox is the unpinned default (AVE-139, screenerAcceptDestination); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
 	},
 	{
+		id: "paper-trail",
+		title: "Paper Trail",
+		href: "/support#paper-trail",
+		platforms: ["ios", "android", "web"],
+		description: "A quiet folder for receipts and confirmations. Send a sender there from the Screener, or when you move their mail. It’s listed by month in short rows and never notifies you.",
+		status: "available",
+		src: "AVE-192: shared/folders.ts PAPER_TRAIL; shared/paper-trail.ts; classify-email.ts shouldSendPush skips Paper Trail; web, iOS, Android",
+	},
+	{
 		id: "senders",
 		title: "Sender destinations",
 		href: "/support#senders",
@@ -66,9 +75,9 @@ const rows: Feature[] = [
 		title: "Notifications that open the email",
 		href: "/support#notifications",
 		platforms: ["ios", "android"],
-		description: "See who wrote and a preview, then tap to land on that exact email. The Screener, Spam and mail a filter files away stay silent.",
+		description: "See who wrote and a preview, then tap to land on that exact email. The Screener, Paper Trail, Spam and mail a filter files away stay silent.",
 		status: "available",
-		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (filedAway → skipPush)",
+		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (filedAway → skipPush); AVE-192 (classify-email.ts shouldSendPush: no push for mail filed in Paper Trail)",
 	},
 	{
 		id: "offline",
