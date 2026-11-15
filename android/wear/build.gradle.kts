@@ -106,6 +106,13 @@ dependencies {
     implementation(libs.androidx.wear.compose.ui.tooling)
     implementation(libs.androidx.wear.input)
 
+    // Inbox Tile and unread-count complication (AVE-147, plan phase 3).
+    implementation(libs.androidx.wear.tiles)
+    implementation(libs.androidx.wear.protolayout)
+    implementation(libs.androidx.wear.protolayout.material)
+    implementation(libs.androidx.wear.complications.data.source.ktx)
+    implementation(libs.androidx.concurrent.futures)
+
     implementation(libs.play.services.wearable)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
