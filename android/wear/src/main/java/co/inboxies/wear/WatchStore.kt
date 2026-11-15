@@ -7,11 +7,14 @@ import co.inboxies.wear.data.WatchApiException
 import co.inboxies.wear.data.WatchEmail
 import co.inboxies.wear.data.WatchMailbox
 import co.inboxies.wear.data.WatchMoveTarget
+import co.inboxies.wear.glance.WatchGlance
+import co.inboxies.wear.glance.WatchGlanceSink
 import co.inboxies.wear.session.PhoneAnswer
 import co.inboxies.wear.session.PhoneSessionSource
 import co.inboxies.wear.session.WatchReconnector
 import co.inboxies.wear.session.WatchSessionStorage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +46,9 @@ class WatchStore(
     /** DEBUG fixtures: no phone, no network, actions only change local state. */
     val isPreview: Boolean = false,
     initialState: WatchState = WatchState(),
+    /** The Inbox Tile / unread complication snapshot (AVE-147). */
+    private val glance: WatchGlanceSink = WatchGlanceSink.None,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val _state = MutableStateFlow(initialState)
     val state: StateFlow<WatchState> = _state.asStateFlow()
@@ -50,6 +56,7 @@ class WatchStore(
     private val token = MutableStateFlow<String?>(null)
     private var apiBaseUrl: String = DEFAULT_API_BASE
     private var started = false
+    private var backgroundRefresh: Job? = null
 
     private val reconnector = WatchReconnector(scope, reconnectDelays, phone)
 
@@ -134,6 +141,7 @@ class WatchStore(
     fun receiveClear() {
         if (isPreview) return
         storage.clearToken()
+        glance.clear()
         scope.launch { wipe(CLEARED_MESSAGE) }
     }
 
@@ -146,6 +154,7 @@ class WatchStore(
         if (isPreview) return
         if (storage.token != null && context.wipes(storage.grantIssuedAt)) {
             storage.clearToken()
+            glance.clear()
             scope.launch { wipe(CLEARED_MESSAGE) }
             return
         }
@@ -171,6 +180,7 @@ class WatchStore(
     /** Drops the session and everything read with it (phone sign-out or revoke). */
     private fun wipe(message: String) {
         storage.clearToken()
+        glance.clear()
         storage.saveMailboxId(null)
         token.value = null
         _state.update {
@@ -245,12 +255,62 @@ class WatchStore(
             // A switch while loading: this list belongs to the old mailbox.
             if (state.value.activeMailbox?.id != mailboxId) return
             _state.update { it.copy(emails = emails, listState = ListState.Loaded) }
+            publishGlance(api, mailboxId, emails)
         } catch (e: WatchApiException) {
             if (e is WatchApiException.SignedOut) sessionEnded(api.token)
             if (state.value.emails.isEmpty() && token.value != null) {
                 _state.update { it.copy(listState = ListState.Failed(e.message.orEmpty())) }
             }
         }
+    }
+
+    /**
+     * The Tile's unread total: the server's Inbox count when the folders call answers,
+     * else the unread rows on the page. Never fails the refresh.
+     */
+    private suspend fun publishGlance(api: WatchApiClient, mailboxId: String, emails: List<WatchEmail>) {
+        val inboxUnread = try {
+            api.folders(mailboxId).firstOrNull { it.id == INBOX_FOLDER_ID }?.unread
+        } catch (e: WatchApiException) {
+            null
+        }
+        // Signed out or switched mailbox meanwhile: don't write the old one back.
+        if (token.value == null || state.value.activeMailbox?.id != mailboxId) return
+        glance.publish(WatchGlance.snapshot(mailboxId, inboxUnread, emails, clock()))
+    }
+
+    /**
+     * After an action changed the rows: moves the published count by the change in
+     * unread rows (the server total includes mail past the first page).
+     */
+    private fun republishGlance(unreadBefore: Int) {
+        val mailboxId = state.value.activeMailbox?.id ?: return
+        val previous = glance.read()?.takeIf { it.mailboxId == mailboxId } ?: return
+        val unread = state.value.emails.filter { it.isUnread }
+        val delta = unread.size - unreadBefore
+        if (delta == 0) return
+        glance.publish(
+            WatchGlance.snapshot(mailboxId, previous.unreadCount + delta, unread, clock()),
+        )
+    }
+
+    private fun unreadRows(): Int = state.value.emails.count { it.isUnread }
+
+    /**
+     * The Tile or complication found the snapshot stale (AVE-147): read the Inbox again
+     * with the stored session, without the UI. Never asks the phone: no stored token,
+     * nothing to do (the Tile shows "Open Inboxies").
+     */
+    fun refreshInBackground() {
+        if (isPreview) return
+        if (!started) {
+            if (storage.token == null) return
+            // start() reads the stored session and refreshes.
+            start()
+            return
+        }
+        if (token.value == null || backgroundRefresh?.isActive == true) return
+        backgroundRefresh = scope.launch { refresh() }
     }
 
     fun selectMailbox(id: String) {
@@ -274,7 +334,9 @@ class WatchStore(
 
     suspend fun setRead(read: Boolean, email: WatchEmail) {
         runAction { api, mailboxId -> api.setRead(read, mailboxId, email) }
+        val before = unreadRows()
         updateRow(email.id) { it.withRead(read) }
+        republishGlance(before)
     }
 
     suspend fun replyLater(email: WatchEmail) {
@@ -284,12 +346,16 @@ class WatchStore(
 
     suspend fun archive(email: WatchEmail) {
         runAction { api, mailboxId -> api.move(mailboxId, email.id, WatchMoveTarget.ARCHIVE) }
+        val before = unreadRows()
         removeRow(email.id)
+        republishGlance(before)
     }
 
     suspend fun reportSpam(email: WatchEmail) {
         runAction { api, mailboxId -> api.move(mailboxId, email.id, WatchMoveTarget.SPAM) }
+        val before = unreadRows()
         removeRow(email.id)
+        republishGlance(before)
     }
 
     /** [idempotencyKey]: one per reply attempt, reused on retries, so a reply can't send twice. */
@@ -334,6 +400,7 @@ class WatchStore(
 
     companion object {
         const val DEFAULT_API_BASE = "https://inboxies.email"
+        const val INBOX_FOLDER_ID = "inbox"
 
         const val SIGNED_OUT_MESSAGE = "Signed out. Sign in to Inboxies on your phone, then tap Connect."
         const val CLEARED_MESSAGE = "Signed out. Open Inboxies on your phone, then tap Connect."

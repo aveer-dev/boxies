@@ -59,6 +59,20 @@ data class WatchEmail(
     )
 }
 
+/**
+ * A folder's unread count (`GET .../folders`, AVE-147). For the Inbox,
+ * `unreadThreadCount` is the New total the phone's widget shows; older Workers only
+ * send `unreadCount` (messages).
+ */
+@Serializable
+data class WatchFolder(
+    val id: String,
+    val unreadThreadCount: Int? = null,
+    val unreadCount: Int? = null,
+) {
+    val unread: Int get() = unreadThreadCount ?: unreadCount ?: 0
+}
+
 @Serializable
 private data class WatchEmailList(val emails: List<WatchEmail> = emptyList())
 
@@ -104,6 +118,9 @@ interface WatchApiClient {
 
     suspend fun email(mailboxId: String, id: String): WatchEmail
 
+    /** Unread counts per folder, for the Tile and complication. */
+    suspend fun folders(mailboxId: String): List<WatchFolder>
+
     suspend fun setRead(read: Boolean, mailboxId: String, email: WatchEmail)
 
     suspend fun replyLater(mailboxId: String, id: String)
@@ -136,6 +153,12 @@ class WatchApi(
     override suspend fun email(mailboxId: String, id: String): WatchEmail = json.decodeOrThrow(
         WatchEmail.serializer(),
         send("GET", "/api/v1/mailboxes/${mailboxId.pathSegment()}/emails/${id.pathSegment()}"),
+    )
+
+    /** `GET .../folders`: the Inbox unread total for the Tile and complication (AVE-147). */
+    override suspend fun folders(mailboxId: String): List<WatchFolder> = json.decodeOrThrow(
+        ListSerializer(WatchFolder.serializer()),
+        send("GET", "/api/v1/mailboxes/${mailboxId.pathSegment()}/folders"),
     )
 
     /** `POST .../threads/:threadId/read`, or `PUT .../emails/:id { read }` for one message. */

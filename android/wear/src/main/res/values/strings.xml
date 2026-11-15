@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Inboxies</string>
+    <string name="tile_inbox_label">Inbox</string>
+    <string name="tile_inbox_description">Unread count and the newest senders in your Inbox</string>
+    <string name="complication_unread_label">Inbox unread</string>
 </resources>

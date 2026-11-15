@@ -5,8 +5,12 @@ import co.inboxies.watchshared.WatchSessionGrant
 import co.inboxies.wear.data.WatchApiClient
 import co.inboxies.wear.data.WatchApiException
 import co.inboxies.wear.data.WatchEmail
+import co.inboxies.wear.data.WatchFolder
 import co.inboxies.wear.data.WatchMailbox
 import co.inboxies.wear.data.WatchMoveTarget
+import co.inboxies.wear.glance.MemoryWatchGlanceStorage
+import co.inboxies.wear.glance.WatchGlancePublisher
+import co.inboxies.wear.glance.WatchGlanceSnapshot
 import co.inboxies.wear.session.MemoryWatchSessionStorage
 import co.inboxies.wear.session.PhoneAnswer
 import co.inboxies.wear.session.PhoneSessionSource
@@ -33,8 +37,13 @@ class WatchStoreTest {
         WatchSessionGrant(token, "https://inboxies.email", mailbox.id, issuedAt)
 
     /** Records each call with the token it used; tokens in [dead] answer 401. */
-    private class FakeApi(override val token: String, private val log: MutableList<String>, private val dead: Set<String>) :
-        WatchApiClient {
+    private class FakeApi(
+        override val token: String,
+        private val log: MutableList<String>,
+        private val dead: Set<String>,
+        /** The Inbox folder's unread total; null answers the folders call with an error. */
+        private val inboxUnread: Int? = null,
+    ) : WatchApiClient {
         private fun check(call: String) {
             log += "$call:$token"
             if (token in dead) throw WatchApiException.SignedOut()
@@ -55,6 +64,13 @@ class WatchStoreTest {
         override suspend fun email(mailboxId: String, id: String): WatchEmail {
             check("email")
             return WatchEmail(id = id, body = "Body")
+        }
+
+        // Not logged: the glance call is checked through the snapshot.
+        override suspend fun folders(mailboxId: String): List<WatchFolder> {
+            if (token in dead) throw WatchApiException.SignedOut()
+            val unread = inboxUnread ?: throw WatchApiException.Http(500, "boom")
+            return listOf(WatchFolder("inbox", unreadThreadCount = unread), WatchFolder("archive", unreadCount = 9))
         }
 
         override suspend fun setRead(read: Boolean, mailboxId: String, email: WatchEmail) = check("read=$read")
@@ -82,16 +98,21 @@ class WatchStoreTest {
         answers: List<PhoneAnswer> = emptyList(),
         val dead: MutableSet<String> = mutableSetOf(),
         delays: List<kotlin.time.Duration> = listOf(0.seconds, 2.seconds),
+        inboxUnread: Int? = null,
+        val glance: MemoryWatchGlanceStorage = MemoryWatchGlanceStorage(),
     ) {
         val log = mutableListOf<String>()
         val phone = FakePhone(ArrayDeque(answers))
+        var glanceUpdates = 0
         val store = WatchStore(
             // Foreground work on the test scheduler, so advanceUntilIdle runs it.
             scope = CoroutineScope(StandardTestDispatcher(scope.testScheduler) + SupervisorJob()),
             storage = storage,
             phone = phone,
-            apiFactory = { _, token -> FakeApi(token, log, dead) },
+            apiFactory = { _, token -> FakeApi(token, log, dead, inboxUnread) },
             reconnectDelays = delays,
+            glance = WatchGlancePublisher(glance) { glanceUpdates += 1 },
+            clock = { 1_000L },
         )
     }
 
@@ -281,5 +302,84 @@ class WatchStoreTest {
         advanceUntilIdle()
         h.store.reply(email, "   ", idempotencyKey = "k")
         assertTrue(h.log.none { it.startsWith("reply") })
+    }
+
+    // MARK: Tile / complication snapshot (AVE-147)
+
+    @Test
+    fun aRefreshPublishesTheServerInboxCountAndTheNewestSender() = runTest {
+        val h = Harness(this, storage = MemoryWatchSessionStorage(token = "tok", grantIssuedAt = 1), inboxUnread = 12)
+        h.store.start()
+        advanceUntilIdle()
+
+        assertEquals(WatchGlanceSnapshot(mailbox.id, 12, listOf("maya@northwind.co"), 1_000L), h.glance.snapshot)
+        assertEquals(1, h.glanceUpdates)
+
+        // Nothing new: written again, but no Tile / complication redraw.
+        h.store.refresh()
+        assertEquals(1, h.glanceUpdates)
+    }
+
+    @Test
+    fun withoutTheFoldersCallTheCountIsTheUnreadRows() = runTest {
+        val h = Harness(this, storage = MemoryWatchSessionStorage(token = "tok", grantIssuedAt = 1), inboxUnread = null)
+        h.store.start()
+        advanceUntilIdle()
+
+        assertEquals(1, h.glance.snapshot?.unreadCount)
+        // The folders call failing doesn't fail the Inbox.
+        assertEquals(ListState.Loaded, h.store.state.value.listState)
+    }
+
+    @Test
+    fun actionsMoveThePublishedCount() = runTest {
+        val h = Harness(this, storage = MemoryWatchSessionStorage(token = "tok", grantIssuedAt = 1), inboxUnread = 12)
+        h.store.start()
+        advanceUntilIdle()
+        val row = h.store.state.value.emails.single()
+
+        h.store.setRead(true, row)
+        assertEquals(11, h.glance.snapshot?.unreadCount)
+        assertEquals(emptyList<String>(), h.glance.snapshot?.senders)
+
+        h.store.setRead(false, row)
+        assertEquals(12, h.glance.snapshot?.unreadCount)
+
+        h.store.archive(row)
+        assertEquals(11, h.glance.snapshot?.unreadCount)
+    }
+
+    @Test
+    fun signOutWipesTheSnapshot() = runTest {
+        val h = Harness(this, storage = MemoryWatchSessionStorage(token = "tok", grantIssuedAt = 1), inboxUnread = 2)
+        h.store.start()
+        advanceUntilIdle()
+        val updates = h.glanceUpdates
+
+        h.store.receiveClear()
+        // Wiped right away, before the store's own wipe runs.
+        assertNull(h.glance.snapshot)
+        advanceUntilIdle()
+        assertNull(h.glance.snapshot)
+        assertEquals(updates + 1, h.glanceUpdates)
+    }
+
+    @Test
+    fun aBackgroundRefreshUsesTheStoredSessionAndNeverAsksThePhone() = runTest {
+        val signedOut = Harness(this)
+        signedOut.store.refreshInBackground()
+        advanceUntilIdle()
+        assertEquals(0, signedOut.phone.calls)
+        assertTrue(signedOut.log.isEmpty())
+
+        val h = Harness(this, storage = MemoryWatchSessionStorage(token = "tok", grantIssuedAt = 1), inboxUnread = 4)
+        h.store.refreshInBackground()
+        advanceUntilIdle()
+        assertEquals(0, h.phone.calls)
+        assertEquals(4, h.glance.snapshot?.unreadCount)
+
+        h.store.refreshInBackground()
+        advanceUntilIdle()
+        assertEquals(listOf("mailboxes:tok", "inbox:tok", "mailboxes:tok", "inbox:tok"), h.log)
     }
 }
