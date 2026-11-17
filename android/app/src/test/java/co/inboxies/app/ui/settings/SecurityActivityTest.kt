@@ -60,6 +60,7 @@ class SecurityActivityTest {
             "sign_in", "password_changed", "password_added", "password_reset",
             "two_factor_enabled", "two_factor_disabled", "passkey_added", "passkey_removed",
             "sign_in_method_added", "sign_in_method_removed", "recovery_email_set", "recovery_email_removed",
+            "app_connected",
         )
         for (kind in kinds) {
             val title = securityEventTitle(item(kind))

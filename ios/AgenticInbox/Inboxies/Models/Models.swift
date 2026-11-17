@@ -295,6 +295,7 @@ enum SecurityActivity {
             return providerName(event.provider).map { "\($0) sign-in removed" } ?? "Sign-in method removed"
         case "recovery_email_set": return "Recovery email changed"
         case "recovery_email_removed": return "Recovery email removed"
+        case "app_connected": return "App connected"
         default: return fallbackTitle
         }
     }
@@ -326,6 +327,7 @@ enum SecurityActivity {
         case "passkey_added", "passkey_removed": return "person.badge.key"
         case "recovery_email_set", "recovery_email_removed": return "envelope"
         case "sign_in_method_added", "sign_in_method_removed": return "person.crop.circle"
+        case "app_connected": return "sparkles"
         default: return "shield"
         }
     }

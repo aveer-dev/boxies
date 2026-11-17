@@ -68,3 +68,19 @@ export function requestReauth(challenge: ReauthChallenge): Promise<boolean> {
 	if (typeof window === "undefined") return Promise.resolve(false);
 	return new Promise((resolve) => useReauthStore.getState().open(challenge, resolve));
 }
+
+/**
+ * A plain form post (the MCP consent page, AVE-213) can't be retried after
+ * the prompt like an API call, so it checks first. Given
+ * `GET /api/v1/me/reauth`, the challenge to show, or null when the session
+ * stays fresh for at least `marginMs` more (time to post the form).
+ */
+export function staleSessionChallenge(
+	status: { fresh?: unknown; freshUntil?: unknown; methods?: unknown; twoFactor?: unknown; emailCodeTo?: unknown },
+	now: number = Date.now(),
+	marginMs = 30_000,
+): ReauthChallenge | null {
+	const until = typeof status.freshUntil === "string" ? Date.parse(status.freshUntil) : NaN;
+	if (status.fresh === true && Number.isFinite(until) && until - now > marginMs) return null;
+	return reauthChallenge({ ...status, code: REAUTH_REQUIRED_CODE });
+}
