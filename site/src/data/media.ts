@@ -53,7 +53,7 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "Replying on iPhone to Jordan Hale: “Re: Quarterly planning notes” with “9:30 works for me.”, and buttons for formatting and attachments.",
 	},
 	"compose-minimized": {
-		alt: "The Inbox on iPhone with a draft, “Re: Quarterly planning notes”, docked at the bottom of the screen.",
+		alt: "The Inbox on iPhone with a new message, still untitled, docked at the bottom of the screen.",
 	},
 	"action-menu": {
 		alt: "The corner button’s menu on iPhone, over a blurred Inbox: Settings, Trash, Archive, Drafts, Sent, Updates, Promotions, Screener, Inbox and Compose.",

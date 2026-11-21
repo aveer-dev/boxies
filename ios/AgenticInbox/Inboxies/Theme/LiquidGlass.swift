@@ -9,7 +9,9 @@ enum HomeChromeMetrics {
     static let chromeCornerRadius: CGFloat = 50
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 66
-    static let minimizedComposeGap: CGFloat = 0
+    /// Breathing room between the floating bar and the minimized compose dock's top edge
+    /// (Android twin: `HomeChromeMetrics.minimizedComposeGap`, 10.dp).
+    static let minimizedComposeGap: CGFloat = 10
 
     /// Compose stack: same-size discs, bottom-aligned, back layers lift upward so
     /// only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter
@@ -43,7 +45,7 @@ enum HomeChromeMetrics {
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
         var height = actionBarHeight + chromeBottomPadding
         if hasMinimizedCompose {
-            height += minimizedComposeHeight
+            height += minimizedComposeHeight + minimizedComposeGap
         }
         return height
     }

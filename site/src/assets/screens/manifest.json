@@ -60,8 +60,8 @@
       "name": "compose-minimized",
       "light": "compose-minimized-light.png",
       "dark": "compose-minimized-dark.png",
-      "whatItShows": "Draft minimized into a dock above the inbox.",
-      "alt": "Inbox with the reply draft Re: Quarterly planning notes minimized into a dock at the bottom of the screen, so the list stays usable while the draft waits."
+      "whatItShows": "Draft minimized into a dock at the bottom of the inbox.",
+      "alt": "Inbox with a new, untitled message minimized into a dock at the bottom of the screen, so the list stays usable while the draft waits."
     },
     {
       "name": "action-menu",
