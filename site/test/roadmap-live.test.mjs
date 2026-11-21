@@ -43,9 +43,11 @@ test("bad fields are dropped or blanked, never passed through", () => {
 	]);
 });
 
-test("loadLiveItems: OK with items → items; 503, network error, bad JSON or timeout → null", async () => {
+test("loadLiveItems: OK with Linear items → items; unconfigured (200), 503, network error, bad JSON or timeout → null", async () => {
 	assert.equal((await loadLiveItems(respond(200, payload([item()]))))?.length, 1);
 	assert.equal(await loadLiveItems(respond(503, payload([], { source: "unconfigured", fetchedAt: null }))), null);
+	assert.equal(await loadLiveItems(respond(200, payload([], { source: "unconfigured", fetchedAt: null }))), null);
+	assert.equal(await loadLiveItems(respond(200, payload([item()], { source: "unconfigured", fetchedAt: null }))), null);
 	assert.equal(await loadLiveItems(respond(200, payload([]))), null);
 	assert.equal(await loadLiveItems(async () => { throw new TypeError("offline"); }), null);
 	assert.equal(await loadLiveItems(async () => new Response("<html>", { status: 200 })), null);

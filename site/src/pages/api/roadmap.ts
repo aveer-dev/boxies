@@ -3,8 +3,10 @@
 // only { id, title, summary, status } (src/lib/roadmap-linear.ts does the mapping).
 //
 // The Linear key is the LINEAR_ROADMAP_API_KEY secret (read-only; README, Roadmap
-// from Linear). Without it, or when Linear fails, the answer is a 503 with no items
-// and source "unconfigured" or "error", and the page shows its static list.
+// from Linear). Without it the answer is a 200 with no items and source
+// "unconfigured" (not a 503, so every visit doesn't log a console error, AVE-233);
+// when Linear fails it's a 503 with source "error". Either way the page shows its
+// static list (src/lib/roadmap-live.ts only takes source "linear").
 //
 // Answers are cached for 10 minutes with the Cache API, plus a copy in the isolate's
 // memory: the Cache API does nothing on workers.dev, and the memory copy also stands
@@ -60,7 +62,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
 	const key = env.LINEAR_ROADMAP_API_KEY?.trim();
 	if (!key) {
 		log("unconfigured");
-		return json(503, { items: [], source: "unconfigured", fetchedAt: null }, "no-store");
+		return json(200, { items: [], source: "unconfigured", fetchedAt: null }, "no-store");
 	}
 
 	if (memory && memory.payload.source === "linear" && Date.now() - memory.at < TTL_S * 1000) {

@@ -132,7 +132,7 @@ What it answers:
 
 - **Status:** Linear's state type decides it: triage, backlog and unstarted → Planned; started → In progress; completed → Shipped. Canceled (and duplicates) are left out. Sorted In progress, Planned, Shipped, latest first.
 - **Public fields only:** the title (plain text, 120 characters at most), the Public summary (plain text with links, URLs, HTML, code and images stripped, 280 characters at most) and the status. `id` is a hash of the Linear id, stable but not a link into Linear. No identifiers, assignees, estimates, comments or the rest of the description.
-- **No key:** 503 with `source: "unconfigured"` and no items. **Linear failing** (HTTP error, GraphQL error, 5s timeout): the last good answer this isolate holds (up to a day old) if there is one, otherwise 503 with `source: "error"`. The page should treat anything but `source: "linear"` as "use the static list".
+- **No key:** 200 with `source: "unconfigured"` and no items (a 200, so visits don't log a console error; AVE-233). **Linear failing** (HTTP error, GraphQL error, 5s timeout): the last good answer this isolate holds (up to a day old) if there is one, otherwise 503 with `source: "error"`. The page should treat anything but `source: "linear"` as "use the static list".
 - **Caching:** 10 minutes in the Cache API (a failure for 1 minute), plus a copy in the isolate's memory, because the Cache API does nothing on `workers.dev`. Browsers may cache the answer for 10 minutes too.
 - **Logs:** one JSON line per request (outcome, item count), never the key or Linear's response.
 
@@ -140,7 +140,7 @@ The parsing and mapping live in `src/lib/roadmap-linear.ts`, tested by `site/tes
 
 ## Request forms
 
-`/request` lets anyone, signed in or not, send a **feature request**, **bug report** or **feedback** (AVE-81). Each one becomes a Linear issue in the AVE team's **Triage**, labelled `user-request` plus `feature`, `bug` or `feedback`. The roadmap page and the footer link to it, and `/request?type=bug` (or `feature`, `feedback`) preselects the kind.
+`/request` lets anyone, signed in or not, send a **feature request**, **bug report** or **feedback** (AVE-81). Each one becomes a Linear issue in the AVE team's **Triage**, labelled `user-request` plus `feature`, `bug` or `feedback`. The roadmap page, the footer and the in-page site map (Colophon) link to it, but only once `GET /api/requests` says it can send (AVE-233; the links are rendered hidden and `src/scripts/request-links.ts` shows them). `/request` itself always renders and says when it's offline. And `/request?type=bug` (or `feature`, `feedback`) preselects the kind.
 
 - `GET /api/requests` answers `{ available, siteKey }`. The page reads it to decide whether to show the Turnstile widget or say the form is offline.
 - `POST /api/requests` takes JSON `{ kind, title, details, email, platform, token, t, website }`. The checks run in this order: secrets set, then body size (32 KB) and origin, then the honeypot and the 2 s time trap (both get a fake OK), then the field rules (title 4 to 120 characters, details 10 to 4,000, email up to 254, platform required for bugs), then the per-IP rate limit, then Turnstile `siteverify`, then Linear. The code is in `src/lib/requests.ts`, the rules shared with the browser are in `src/components/request/request-rules.ts`, and the tests are in `site/test/requests.test.mjs` (`pnpm test:unit requests`).
