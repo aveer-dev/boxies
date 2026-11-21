@@ -25,8 +25,10 @@ import java.util.UUID
  * the notification gets these actions, and [NotificationCompat.WearableExtender]
  * bridges them to a paired Wear OS watch, which sends taps back to the phone.
  *
- * Archive, Mark read, Reply Later and Reply run in the background. Spam needs an
- * unlocked device (`setAuthenticationRequired`, API 31+; minSdk is 34). No Trash.
+ * All actions run in the background. Reply and Spam need an unlocked device
+ * (`setAuthenticationRequired`, API 31+; minSdk is 34), matching iOS
+ * `.authenticationRequired` (AVE-221), so a locked phone can't send mail as the user.
+ * The Wear OS app replies through its own bridge (`WatchApi`), not this flag. No Trash.
  */
 enum class MailNotificationAction(val id: String) {
     ARCHIVE("ARCHIVE"),
@@ -108,6 +110,12 @@ object MailNotificationActions {
         MailNotificationAction.SPAM -> MailNotificationRequest.Move("spam", setSenderPreference = true)
     }
 
+    /** Reply and Spam need an unlocked device, as on iOS (AVE-221). */
+    fun requiresAuthentication(action: MailNotificationAction): Boolean = when (action) {
+        MailNotificationAction.REPLY, MailNotificationAction.SPAM -> true
+        MailNotificationAction.ARCHIVE, MailNotificationAction.MARK_READ, MailNotificationAction.REPLY_LATER -> false
+    }
+
     /** Adds the five actions plus a [NotificationCompat.WearableExtender] carrying them. */
     fun addActions(
         context: Context,
@@ -129,6 +137,7 @@ object MailNotificationActions {
             .setAllowGeneratedReplies(true)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
+            .setAuthenticationRequired(requiresAuthentication(MailNotificationAction.REPLY))
             .build()
         val archive = simpleAction(
             context, MailNotificationAction.ARCHIVE, "Archive", R.drawable.ic_notification_archive,
@@ -145,7 +154,6 @@ object MailNotificationActions {
         val spam = simpleAction(
             context, MailNotificationAction.SPAM, "Report spam", R.drawable.ic_notification_spam,
             NotificationCompat.Action.SEMANTIC_ACTION_DELETE, target, notificationId,
-            authenticationRequired = true,
         )
         // The shade shows the first three (Reply, Archive, Mark as read); Wear OS shows all.
         val actions = listOf(reply, archive, markRead, replyLater, spam)
@@ -161,7 +169,6 @@ object MailNotificationActions {
         semantic: Int,
         target: MailNotificationTarget,
         notificationId: Int,
-        authenticationRequired: Boolean = false,
     ): NotificationCompat.Action =
         NotificationCompat.Action.Builder(
             icon,
@@ -170,7 +177,7 @@ object MailNotificationActions {
         )
             .setSemanticAction(semantic)
             .setShowsUserInterface(false)
-            .setAuthenticationRequired(authenticationRequired)
+            .setAuthenticationRequired(requiresAuthentication(action))
             .build()
 
     private fun pendingIntent(
