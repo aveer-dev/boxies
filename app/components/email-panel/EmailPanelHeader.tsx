@@ -4,6 +4,7 @@
 
 import type { ReactNode } from "react";
 import { Link } from "react-router";
+import MorphText from "~/components/MorphText";
 import { TagChip } from "~/components/TagPicker";
 
 interface EmailPanelHeaderProps {
@@ -14,6 +15,10 @@ interface EmailPanelHeaderProps {
 	chips?: ReactNode;
 	/** The conversation's tags (AVE-241), each linking to its tag view. */
 	tags?: { id: string; name: string; href: string }[];
+	/** The subject shown before this one (moving between messages): it morphs into this one. */
+	previousSubject?: string | null;
+	/** Rise and unblur on mount (opening the reader); off when moving between messages. */
+	reveal?: boolean;
 }
 
 export default function EmailPanelHeader({
@@ -22,9 +27,11 @@ export default function EmailPanelHeader({
 	showThreadCount,
 	chips,
 	tags = [],
+	previousSubject,
+	reveal = true,
 }: EmailPanelHeaderProps) {
 	return (
-		<div className="px-4 pt-4 pb-3 shrink-0 md:px-6 md:pt-5 animate-reveal">
+		<div className={`px-4 pt-4 pb-3 shrink-0 md:px-6 md:pt-5 ${reveal ? "animate-reveal" : ""}`}>
 			{(chips || tags.length > 0) && (
 				<div className="flex flex-wrap items-center gap-1.5 mb-3">
 					{chips}
@@ -36,7 +43,7 @@ export default function EmailPanelHeader({
 				</div>
 			)}
 			<h2 className="text-xl md:text-[length:calc(22px*var(--font-scale))] font-semibold leading-tight tracking-[-0.015em] text-kumo-default break-words">
-				{subject || "(no subject)"}
+				<MorphText text={subject || "(no subject)"} from={previousSubject} />
 			</h2>
 			{showThreadCount && (
 				<span className="text-xs text-kumo-subtle mt-1 block">
