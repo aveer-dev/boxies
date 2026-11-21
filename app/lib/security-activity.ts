@@ -55,6 +55,8 @@ export function securityEventTitle(event: ActivityLabelInput): string {
 			return "Recovery email changed";
 		case "recovery_email_removed":
 			return "Recovery email removed";
+		case "app_connected":
+			return "App connected";
 		default:
 			// A kind newer than this client.
 			return "Account security change";

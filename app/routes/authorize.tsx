@@ -4,9 +4,11 @@
 
 import { Banner, Button } from "@cloudflare/kumo";
 import { WarningIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import type { AppLoadContext } from "react-router";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
+import { requestReauth, staleSessionChallenge } from "~/lib/reauth";
+import api from "~/services/api";
 import {
 	CONSENT_FIELDS,
 	MCP_OAUTH_SCOPES,
@@ -33,6 +35,10 @@ export function loader({ context }: { context: AppLoadContext }): McpConsentView
  * MCP OAuth consent (AVE-68): which access an app gets, and in which
  * mailboxes. A plain form post back to the Worker, which re-checks
  * everything; this page decides nothing.
+ *
+ * Allow needs a freshly authenticated session (AVE-213). A form post can't be
+ * retried after the "Confirm it's you" prompt the way API calls are, so Allow
+ * checks first and prompts when the session is stale, then posts.
  */
 export default function AuthorizeRoute({ loaderData }: { loaderData: McpConsentView | null }) {
 	return (
@@ -76,9 +82,43 @@ function ConsentForm({ view }: { view: McpConsentView }) {
 		return next;
 	};
 	const noMailboxes = view.mailboxes.length === 0;
+	const [checking, setChecking] = useState(false);
+	const busy = useRef(false);
+
+	const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+		const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+		if (submitter?.value !== "approve") return; // Deny posts as is.
+		e.preventDefault();
+		if (busy.current) return;
+		busy.current = true;
+		const form = e.currentTarget;
+		setChecking(true);
+		void (async () => {
+			let go = true;
+			try {
+				const challenge = staleSessionChallenge(await api.getReauthStatus());
+				if (challenge) go = await requestReauth(challenge);
+			} catch {
+				// Can't tell: post anyway; the Worker answers a stale session itself.
+			}
+			if (!go) {
+				busy.current = false;
+				setChecking(false);
+				return;
+			}
+			// form.submit() skips this handler and has no submitter, so the
+			// decision rides in a hidden field.
+			const decision = document.createElement("input");
+			decision.type = "hidden";
+			decision.name = CONSENT_FIELDS.decision;
+			decision.value = "approve";
+			form.appendChild(decision);
+			form.submit();
+		})();
+	};
 
 	return (
-		<form method="post" action="/authorize" className="space-y-5">
+		<form method="post" action="/authorize" className="space-y-5" onSubmit={onSubmit}>
 			<input type="hidden" name={CONSENT_FIELDS.handle} value={view.handle} />
 			<input type="hidden" name={CONSENT_FIELDS.account} value={view.account} />
 			{/* The read checkbox is disabled (always granted), so it posts nothing itself. */}
@@ -167,7 +207,8 @@ function ConsentForm({ view }: { view: McpConsentView }) {
 					value="approve"
 					variant="primary"
 					className="flex-1"
-					disabled={mailboxes.size === 0}
+					disabled={mailboxes.size === 0 || checking}
+					loading={checking}
 				>
 					Allow
 				</Button>

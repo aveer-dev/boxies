@@ -55,7 +55,7 @@ import { purgeEmailAgents } from "../lib/email-agent";
 import { getMailboxStub } from "../lib/email-helpers";
 import type { MailboxContext } from "../lib/mailbox";
 import { mailDomainConfig } from "../lib/mail-domain";
-import { listMcpGrants, revokeMcpGrant } from "../mcp/grants";
+import { listMcpGrants, revokeMcpGrant, revokeUserMcpGrants } from "../mcp/grants";
 import { mcpOAuthApi } from "../mcp/oauth";
 import { canonicalMailboxId } from "../lib/mailbox-routing";
 import { validatePasswordStrength, verifyPassword } from "../lib/password-auth";
@@ -293,9 +293,12 @@ async function purgeMailbox(env: Env, db: AuthDb, mailboxId: string): Promise<vo
  * Delete the user: mailboxes they solely own are purged, shared ones just
  * lose them; Apple tokens are revoked; pre-D1 identity records in R2
  * (contact/recovery emails, password hash, sign-in links) are deleted;
- * sessions, accounts and memberships go with the user row.
+ * connected apps (MCP OAuth grants) are revoked (AVE-213); sessions,
+ * accounts and memberships go with the user row.
+ *
+ * `requestUrl` picks the OAuth configuration when APP_BASE_URL is unset.
  */
-export async function deleteUserAccount(env: Env, userId: string) {
+export async function deleteUserAccount(env: Env, userId: string, opts: { requestUrl?: string } = {}) {
 	const db = authDb(env.AUTH_DB);
 	const deletedMailboxes: string[] = [];
 	const leftMailboxes: string[] = [];
@@ -325,6 +328,10 @@ export async function deleteUserAccount(env: Env, userId: string) {
 		.where(and(eq(schema.account.userId, userId), inArray(schema.account.providerId, ["apple", "google"])))
 		.all();
 	const legacyKeys = await deleteLegacyIdentityForUser(env.BUCKET, userId, socialSubs.map((a) => a.sub));
+	// Grants live in OAUTH_KV, not with the user row: without this their
+	// refresh tokens would keep minting access tokens for up to 30 days.
+	const oauthUrl = opts.requestUrl ?? env.APP_BASE_URL?.trim();
+	if (oauthUrl) await revokeUserMcpGrants(env, oauthUrl, userId);
 	const ctx = await getAuth(env).$context;
 	await ctx.internalAdapter.deleteUser(userId);
 	await db.insert(schema.auditLog).values({
@@ -612,6 +619,9 @@ export function registerAccountRoutes(app: App) {
 		await setUserPassword(db, user.id, newPassword);
 		await revokeLinkTokens(db, "password-reset", user.id);
 		await revokeUserSessions(c.env, user.id);
+		// Connected apps too (AVE-213): a grant approved from a stolen session
+		// must not outlive the reset.
+		await revokeUserMcpGrants(c.env, c.req.url, user.id);
 		// The sign-in below is then recorded without a second (new-device) mail.
 		notifySecurityChange(c, user.id, { kind: "password_reset" });
 		if (user.twoFactorEnabled) {
@@ -669,7 +679,7 @@ export function registerAccountRoutes(app: App) {
 		// Addresses first: the user row and their sole-owned mailboxes go away.
 		const user = await findUserById(authDb(c.env.AUTH_DB), principal.userId);
 		const recipients = user ? await securityNoticeRecipients(c.env, user, { skipHostedLogin: true }) : [];
-		const result = await deleteUserAccount(c.env, principal.userId);
+		const result = await deleteUserAccount(c.env, principal.userId, { requestUrl: c.req.url });
 		if (user) notifySecurityChange(c, user.id, { kind: "account_deleted" }, { recipients, login: user.email });
 		c.header("Set-Cookie", await clearSessionCookieHeader(c.env));
 		return c.json({ ok: true, ...result });
@@ -735,12 +745,13 @@ export function registerAccountRoutes(app: App) {
 		return c.json({ ok: true });
 	});
 
-	/** "Sign out everywhere else". */
+	/** "Sign out everywhere else". Connected apps are disconnected too (AVE-213). */
 	app.post("/api/v1/me/sessions/revoke-others", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 		const revoked = await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
-		return c.json({ ok: true, revoked });
+		const revokedApps = await revokeUserMcpGrants(c.env, c.req.url, principal.userId);
+		return c.json({ ok: true, revoked, revokedApps });
 	});
 
 	// ── Connected apps (MCP OAuth grants, AVE-70) ────────────────
@@ -1018,7 +1029,7 @@ export function registerAccountRoutes(app: App) {
 		});
 	});
 
-	/** Change password; every other session is signed out. */
+	/** Change password; every other session is signed out and every connected app disconnected. */
 	app.post("/api/v1/me/identities/password", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
@@ -1051,6 +1062,7 @@ export function registerAccountRoutes(app: App) {
 		if (strength) return c.json({ error: strength }, 400);
 		await setUserPassword(db, principal.userId, parsed.data.newPassword);
 		await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
+		await revokeUserMcpGrants(c.env, c.req.url, principal.userId);
 		notifySecurityChange(c, principal.userId, { kind: "password_changed" });
 		const user = await findUserById(db, principal.userId);
 		return c.json({ ok: true, identities: user ? await listIdentities(db, user.id, user) : [] });

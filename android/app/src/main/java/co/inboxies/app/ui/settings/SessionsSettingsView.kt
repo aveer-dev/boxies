@@ -633,6 +633,7 @@ internal fun securityEventTitle(event: SecurityActivityItem): String = when (eve
     "sign_in_method_removed" -> providerName(event.provider)?.let { "$it sign-in removed" } ?: "Sign-in method removed"
     "recovery_email_set" -> "Recovery email changed"
     "recovery_email_removed" -> "Recovery email removed"
+    "app_connected" -> "App connected"
     else -> SECURITY_EVENT_FALLBACK_TITLE
 }
 
@@ -659,6 +660,7 @@ private fun securityEventIcon(event: SecurityActivityItem): ImageVector = when (
     "passkey_added", "passkey_removed" -> Icons.Outlined.Fingerprint
     "recovery_email_set", "recovery_email_removed" -> Icons.Outlined.Email
     "sign_in_method_added", "sign_in_method_removed" -> Icons.Outlined.AccountCircle
+    "app_connected" -> Icons.Outlined.AutoAwesome
     else -> Icons.Outlined.Shield
 }
 

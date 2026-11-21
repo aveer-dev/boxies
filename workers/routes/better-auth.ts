@@ -31,6 +31,11 @@
  * `auth/reauth.ts`): otherwise they answer 403 `reauth_required`. A change
  * that went through mails a "was this you?" notice.
  *
+ * Signing out other sessions (`/revoke-sessions`, `/revoke-other-sessions`)
+ * and changing the password also disconnect every connected app (MCP OAuth
+ * grant, AVE-213), so a grant approved from a stolen session doesn't outlive
+ * them.
+ *
  * Two-factor turning on or off (enable/disable, or the verify call that
  * confirms setup) mails one too (AVE-151): the signed-in user's flag is
  * compared before and after the call.
@@ -45,6 +50,7 @@ import { authDb } from "../auth/authz";
 import * as schema from "../auth/schema";
 import { requestDevice } from "../auth/security-activity";
 import { sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
+import { revokeUserMcpGrants } from "../mcp/grants";
 import type { Env } from "../types";
 
 type RouteRule = {
@@ -66,6 +72,8 @@ type RouteRule = {
 	notice?: (body: Record<string, unknown> | null) => SecurityChange;
 	/** May turn two-factor on or off for the signed-in user (notice on a change). */
 	twoFactorToggle?: boolean;
+	/** After a 2xx answer, revoke every MCP OAuth grant of the signed-in user (AVE-213). */
+	revokeMcpGrants?: boolean;
 };
 
 function providerOf(body: Record<string, unknown> | null): string {
@@ -80,13 +88,14 @@ const ROUTES: Record<string, RouteRule> = {
 	"/get-session": { methods: ["GET"], scoped: true },
 	"/list-sessions": { methods: ["GET"] },
 	"/revoke-session": { methods: ["POST"] },
-	"/revoke-sessions": { methods: ["POST"] },
-	"/revoke-other-sessions": { methods: ["POST"] },
+	"/revoke-sessions": { methods: ["POST"], revokeMcpGrants: true },
+	"/revoke-other-sessions": { methods: ["POST"], revokeMcpGrants: true },
 	"/change-password": {
 		methods: ["POST"],
 		limit: "sign-in",
 		password: "session",
 		reauth: true,
+		revokeMcpGrants: true,
 		notice: () => ({ kind: "password_changed" }),
 	},
 	"/link-social": {
@@ -184,6 +193,7 @@ export async function handleBetterAuthRequest(
 	const twoFactorBefore = rule.twoFactorToggle && userId ? await twoFactorEnabled(env, userId) : null;
 	const response = await getAuth(env).handler(request);
 	if (accountEmail && (await isWrongPassword(response))) await recordPasswordFailure(env, accountEmail);
+	if (rule.revokeMcpGrants && userId && response.ok) await revokeUserMcpGrants(env, request.url, userId);
 	let change: SecurityChange | null = rule.notice && response.ok ? rule.notice(noticeBody) : null;
 	if (twoFactorBefore !== null && userId && response.ok) {
 		const twoFactorAfter = await twoFactorEnabled(env, userId);

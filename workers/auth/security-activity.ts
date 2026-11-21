@@ -47,6 +47,8 @@ export const SECURITY_EVENT_KINDS = [
 	"sign_in_method_removed",
 	"recovery_email_set",
 	"recovery_email_removed",
+	/** An app was connected over MCP OAuth (AVE-213). */
+	"app_connected",
 ] as const;
 export type SecurityEventKind = (typeof SECURITY_EVENT_KINDS)[number];
 

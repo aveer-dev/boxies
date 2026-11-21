@@ -19,6 +19,11 @@
  *   /.well-known/oauth-protected-resource/mcp and accepts only tokens issued
  *   for itself (audience-bound).
  *
+ * Approving needs a freshly authenticated session (AVE-213, the same
+ * `reauthGate` as other sensitive changes, `auth/reauth.ts`): the web consent
+ * page prompts "Confirm it's you" first. A connected app is recorded as an
+ * `app_connected` security event and mailed as a notice.
+ *
  * PKCE is required for every client and only S256 is accepted; redirect URIs
  * must match a registered one exactly and be https or http on loopback.
  *
@@ -51,6 +56,9 @@ import {
 import { authDb, listMailboxesForUser } from "../auth/authz";
 import { hasSessionCredentials } from "../auth/middleware";
 import { principalFromHeaders, type RequestPrincipal } from "../auth/principal";
+import { REAUTH_REQUIRED_MESSAGE, reauthGate } from "../auth/reauth";
+import { requestDevice } from "../auth/security-activity";
+import { sendSecurityNotice } from "../auth/security-notice";
 import * as schema from "../auth/schema";
 import { isOAuthMcpRequest } from "../lib/mcp-oauth-token";
 import type { Env } from "../types";
@@ -276,7 +284,7 @@ export function createMcpOAuth(mcpHandler: McpFetchHandler, options: { renderCon
 					return await showConsent(request, env, ctx, oauth, options.renderConsent);
 				}
 				if (request.method === "POST") {
-					return await submitConsent(request, env, oauth, bundle.config.issuer);
+					return await submitConsent(request, env, ctx, oauth, bundle.config.issuer);
 				}
 				return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
 			} catch (error) {
@@ -490,7 +498,13 @@ async function showConsent(
 	return res;
 }
 
-async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer: string): Promise<Response> {
+async function submitConsent(
+	request: Request,
+	env: Env,
+	ctx: Pick<ExecutionContext, "waitUntil">,
+	oauth: OAuthApi,
+	issuer: string,
+): Promise<Response> {
 	// Belt and braces on top of the library's browser-bound handle cookie:
 	// a cross-site form post is refused outright.
 	const origin = request.headers.get("origin");
@@ -525,6 +539,14 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 		return new Response(null, { status: 302, headers: denied.headers });
 	}
 
+	// Connecting an app hands out mail access for up to 30 days of refreshes:
+	// like other sensitive changes it needs a fresh session (AVE-213). The web
+	// page asks "Confirm it's you" before posting; this is the backstop. The
+	// handle isn't spent, so going back and approving again works.
+	if (await reauthGate(env, principal)) {
+		return page(403, "Confirm it's you", `${REAUTH_REQUIRED_MESSAGE} Go back and approve again.`);
+	}
+
 	// What the user picked, checked against their mailboxes as of now (not
 	// the list the page showed) before the handle is spent.
 	const selection = validateConsentSelection(
@@ -552,8 +574,36 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 		scope: approved.request.scope,
 		props,
 	});
+	ctx.waitUntil(noticeAppConnected(env, request, oauth, principal.userId, approved.request.clientId, selection));
 	approved.headers.set("Location", redirectTo);
 	return new Response(null, { status: 302, headers: approved.headers });
+}
+
+/** Record `app_connected` and mail the "new app connected" notice (AVE-213). Never throws. */
+async function noticeAppConnected(
+	env: Env,
+	request: Request,
+	oauth: OAuthApi,
+	userId: string,
+	clientId: string,
+	selection: { scopes: readonly string[]; mailboxIds: readonly string[] },
+): Promise<void> {
+	try {
+		const client = await oauth.lookupClient(clientId).catch(() => null);
+		await sendSecurityNotice(env, {
+			userId,
+			requestUrl: request.url,
+			change: {
+				kind: "app_connected",
+				app: client?.clientName?.trim() || "",
+				scopes: [...selection.scopes],
+				mailboxIds: [...selection.mailboxIds],
+			},
+			device: requestDevice(request),
+		});
+	} catch (error) {
+		console.error("[MCP] App-connected notice failed:", (error as Error).message || error);
+	}
 }
 
 function redirect(location: string): Response {

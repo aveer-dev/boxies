@@ -44,10 +44,28 @@ export type SecurityChange =
 	| { kind: "sign_in_method_removed"; provider: string }
 	| { kind: "passkey_added" }
 	| { kind: "passkey_removed" }
+	/** An app was connected over MCP OAuth (AVE-213). `app` is its self-registered, unverified name. */
+	| { kind: "app_connected"; app: string; scopes: string[]; mailboxIds: string[] }
 	| { kind: "account_deleted" };
 
 /** Web settings page the "wasn't me" link opens (`app/routes/account-settings.tsx`). */
 export const SIGN_IN_SETTINGS_PATH = "/settings/sign-in";
+/** Where connected apps are listed and disconnected (Settings → Sessions). */
+export const SESSIONS_SETTINGS_PATH = "/settings/sessions";
+
+/** An app's self-chosen name, trimmed and capped, for a mail subject line. */
+function appLabel(name: string): string {
+	const trimmed = name.replace(/\s+/g, " ").trim();
+	if (!trimmed) return "An unnamed app";
+	return trimmed.length > 60 ? `${trimmed.slice(0, 59)}…` : trimmed;
+}
+
+const SCOPE_WORDS: Record<string, string> = {
+	read: "read mail",
+	draft: "write drafts",
+	send: "send mail",
+	manage: "organize mail",
+};
 
 function providerLabel(provider: string): string {
 	if (provider === "google") return "Google";
@@ -67,6 +85,7 @@ function changeDetail(change: SecurityChange): Record<string, string> | null {
 	if (change.kind === "sign_in_method_added" || change.kind === "sign_in_method_removed") {
 		return { provider: change.provider === "credential" ? "password" : change.provider };
 	}
+	if (change.kind === "app_connected") return { app: appLabel(change.app) };
 	return null;
 }
 
@@ -90,7 +109,7 @@ export function describeChange(change: SecurityChange): { subject: string; line:
 		case "password_reset":
 			return {
 				subject: "Your Inboxies password was reset",
-				line: "The password on your Inboxies account was reset with a code sent to your recovery email. Your other devices were signed out.",
+				line: "The password on your Inboxies account was reset with a code sent to your recovery email. Your other devices were signed out and connected apps were disconnected.",
 			};
 		case "two_factor_enabled":
 			return {
@@ -121,6 +140,16 @@ export function describeChange(change: SecurityChange): { subject: string; line:
 			return { subject: "A passkey was added to your Inboxies account", line: "A new passkey was added to your Inboxies account." };
 		case "passkey_removed":
 			return { subject: "A passkey was removed from your Inboxies account", line: "A passkey was removed from your Inboxies account." };
+		case "app_connected": {
+			const app = appLabel(change.app);
+			const can = change.scopes.map((s) => SCOPE_WORDS[s] ?? s).join(", ");
+			const where =
+				change.mailboxIds.length === 1 ? change.mailboxIds[0] : `${change.mailboxIds.length} mailboxes`;
+			return {
+				subject: "A new app was connected to your Inboxies account",
+				line: `"${app}" was connected to your Inboxies account. It can ${can || "read mail"} in ${where}. You can disconnect it in Settings → Sessions.`,
+			};
+		}
 		case "account_deleted":
 			return { subject: "Your Inboxies account was deleted", line: "Your Inboxies account and the mailboxes only you owned were deleted." };
 	}
@@ -146,8 +175,13 @@ export function securityNoticeEmail(opts: {
 	if (deviceName) details.push(["Device", deviceName]);
 	if (location) details.push(["Location", `${location} (approximate)`]);
 	const account = details.map(([k, v]) => `${k}: ${v}`).join("\n");
+	// A connected app is disconnected in Settings → Sessions; everything else is reviewed in sign-in settings.
+	const review =
+		opts.change.kind === "app_connected"
+			? { text: "disconnect the app, then change your password", html: "disconnect the app" }
+			: { text: "review your sign-in methods and recovery email", html: "review your sign-in settings" };
 	const action = opts.settingsUrl
-		? `If this was you, you can ignore this email.\n\nIf it wasn't you, sign in now and review your sign-in methods and recovery email:\n${opts.settingsUrl}\n\nIf you can't sign in, use "Forgot password" on the sign-in page.\n`
+		? `If this was you, you can ignore this email.\n\nIf it wasn't you, sign in now and ${review.text}:\n${opts.settingsUrl}\n\nIf you can't sign in, use "Forgot password" on the sign-in page.\n`
 		: "If this wasn't you, someone else had access to your account. Your data can't be recovered.\n";
 	const text = `${line}\n\n${account}\n\n${action}`;
 	const html =
@@ -155,7 +189,7 @@ export function securityNoticeEmail(opts: {
 		`<p style="color:#64748b;font-size:13px;">${details.map(([k, v]) => `${k}: ${escapeHtml(v)}`).join("<br>")}</p>` +
 		(opts.settingsUrl
 			? `<p>If this was you, you can ignore this email.</p>` +
-				`<p>If it wasn't you, <a href="${escapeHtml(opts.settingsUrl)}">sign in and review your sign-in settings</a> now. ` +
+				`<p>If it wasn't you, <a href="${escapeHtml(opts.settingsUrl)}">sign in and ${review.html}</a> now. ` +
 				`If you can't sign in, use “Forgot password” on the sign-in page.</p>`
 			: `<p>If this wasn't you, someone else had access to your account. Your data can't be recovered.</p>`);
 	return { subject, text, html };
@@ -222,8 +256,9 @@ export async function sendSecurityNotice(
 		login ??= user.email;
 		recipients ??= await securityNoticeRecipients(env, user, { extra: opts.extra });
 	}
+	const settingsPath = opts.change.kind === "app_connected" ? SESSIONS_SETTINGS_PATH : SIGN_IN_SETTINGS_PATH;
 	const settingsUrl =
-		opts.change.kind === "account_deleted" ? null : `${appBaseUrl(env, opts.requestUrl)}${SIGN_IN_SETTINGS_PATH}`;
+		opts.change.kind === "account_deleted" ? null : `${appBaseUrl(env, opts.requestUrl)}${settingsPath}`;
 	const mail = securityNoticeEmail({ change: opts.change, login, when: new Date(), settingsUrl, device: opts.device });
 	const sent: string[] = [];
 	for (const to of recipients) {

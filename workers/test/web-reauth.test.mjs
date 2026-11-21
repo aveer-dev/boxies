@@ -6,7 +6,7 @@
  */
 
 import assert from "node:assert/strict";
-import { reauthChallenge, requestReauth, useReauthStore } from "../../app/lib/reauth.ts";
+import { reauthChallenge, requestReauth, staleSessionChallenge, useReauthStore } from "../../app/lib/reauth.ts";
 
 // ── reauthChallenge ──
 assert.equal(reauthChallenge(null), null);
@@ -40,6 +40,27 @@ globalThis.window = globalThis;
 	const cancelled = requestReauth({ methods: ["email_code"], twoFactor: false, emailCodeTo: "g•••s@gmail.com" });
 	useReauthStore.getState().finish(false);
 	assert.equal(await cancelled, false);
+}
+
+// ── staleSessionChallenge (MCP consent page, AVE-213) ──
+{
+	const now = Date.parse("2026-11-16T12:00:00Z");
+	const status = (fresh, inMs) => ({
+		fresh,
+		freshUntil: fresh ? new Date(now + inMs).toISOString() : null,
+		maxAgeSeconds: 300,
+		methods: ["password", "passkey", "sign_in"],
+		twoFactor: true,
+		emailCodeTo: null,
+	});
+	assert.equal(staleSessionChallenge(status(true, 4 * 60_000), now), null, "fresh for minutes: post right away");
+	assert.deepEqual(
+		staleSessionChallenge(status(false), now),
+		{ methods: ["password", "passkey", "sign_in"], twoFactor: true, emailCodeTo: null },
+		"stale: prompt with the account's methods",
+	);
+	assert.ok(staleSessionChallenge(status(true, 10_000), now), "about to go stale: prompt rather than race the post");
+	assert.deepEqual(staleSessionChallenge({}, now)?.methods, ["sign_in"], "unknown shape: prompt, sign-in fallback");
 }
 
 console.log("web-reauth: ok");

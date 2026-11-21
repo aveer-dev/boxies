@@ -16,7 +16,8 @@
  */
 
 import type { GrantSummary } from "@cloudflare/workers-oauth-provider";
-import type { OAuthApi } from "./oauth";
+import type { Env } from "../types";
+import { mcpOAuthApi, type OAuthApi } from "./oauth";
 
 /** What the clients render. Plain JSON. */
 export type McpGrantView = {
@@ -103,4 +104,43 @@ export async function revokeMcpGrant(api: OAuthApi, userId: string, grantId: str
 	if (!owned) return false;
 	await api.revokeGrant(grantId, userId);
 	return true;
+}
+
+/** Rounds of list-then-revoke before giving up (each round takes up to MAX_GRANTS). */
+const MAX_REVOKE_ROUNDS = 10;
+
+/**
+ * Revoke every grant the user has, with all their access and refresh tokens
+ * (AVE-213). Returns how many were revoked. Used when the account's sign-ins
+ * are reset: password reset or change, "sign out everywhere", account
+ * deletion. Connected apps have to be approved again afterwards.
+ */
+export async function revokeAllMcpGrants(api: OAuthApi, userId: string): Promise<number> {
+	let revoked = 0;
+	for (let round = 0; round < MAX_REVOKE_ROUNDS; round++) {
+		const grants = await allGrants(api, userId);
+		if (grants.length === 0) break;
+		for (const grant of grants) {
+			await api.revokeGrant(grant.id, userId);
+			revoked++;
+		}
+		if (grants.length < MAX_GRANTS) break;
+	}
+	return revoked;
+}
+
+/**
+ * `revokeAllMcpGrants` from a request handler. A no-op (0) when OAuth is off.
+ * Never throws: the caller's change (a new password, signed-out sessions)
+ * has already happened, so a storage error is logged rather than failing it.
+ */
+export async function revokeUserMcpGrants(env: Env, requestUrl: string | URL, userId: string): Promise<number> {
+	const api = mcpOAuthApi(env, new URL(requestUrl));
+	if (!api) return 0;
+	try {
+		return await revokeAllMcpGrants(api, userId);
+	} catch (error) {
+		console.error("[MCP] Revoking the user's OAuth grants failed:", (error as Error).message || error);
+		return 0;
+	}
 }

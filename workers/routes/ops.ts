@@ -21,6 +21,7 @@ import type { Operator } from "../auth/operators";
 import type { RequestPrincipal } from "../auth/principal";
 import * as schema from "../auth/schema";
 import { findUserByEmail, findUserById, revokeUserSessions } from "../auth/users";
+import { revokeUserMcpGrants } from "../mcp/grants";
 import { getMailboxStub } from "../lib/email-helpers";
 import { strictMailboxId } from "../lib/mailbox-routing";
 import {
@@ -153,8 +154,10 @@ export function registerOpsRoutes(app: OpsApp) {
 		const userId = c.req.param("userId");
 		const db = authDb(c.env.AUTH_DB);
 		const revoked = await revokeUserSessions(c.env, userId);
-		await auditOps(db, c.get("operator"), "user.revoke_sessions", userId, { revoked });
-		return c.json({ ok: true, revoked });
+		// Connected apps (MCP OAuth grants) go too, like the user's own "sign out everywhere" (AVE-213).
+		const revokedApps = await revokeUserMcpGrants(c.env, c.req.url, userId);
+		await auditOps(db, c.get("operator"), "user.revoke_sessions", userId, { revoked, revokedApps });
+		return c.json({ ok: true, revoked, revokedApps });
 	});
 
 	// ── Dead-lettered Email Sending events (AVE-41, lib/email-sending-dlq) ──
