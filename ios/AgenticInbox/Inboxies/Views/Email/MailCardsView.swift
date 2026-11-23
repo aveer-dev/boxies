@@ -378,7 +378,7 @@ private struct InviteCard: View {
     // MARK: Free/busy
 
     /// "You're free" / "Conflicts with Team sync" and the calendar Add writes to. Before
-    /// access: a "Check availability" link that asks. Denied: nothing.
+    /// access: a "Check availability" link that asks. Denied: "Allow in Settings" (AVE-236).
     @ViewBuilder
     private var availabilityRow: some View {
         switch calendarAccess {
@@ -414,7 +414,25 @@ private struct InviteCard: View {
                 .accessibilityHint("Asks to read your calendar to see if you’re free")
             }
         case .denied:
-            EmptyView()
+            // iOS won't ask again: only the app's Settings page can grant (AVE-236).
+            if checksAvailability, let settings = URL(string: UIApplication.openSettingsURLString) {
+                Button {
+                    openURL(settings)
+                } label: {
+                    Label {
+                        Text("Allow in Settings")
+                            .font(.inter(size: AppTheme.MailCard.detail, weight: .medium))
+                    } icon: {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 12))
+                            .frame(width: 16)
+                    }
+                    .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(MailCardRowPressStyle())
+                .padding(.leading, 28)
+                .accessibilityHint("Opens Settings to let Inboxies read your calendar")
+            }
         }
     }
 
@@ -812,14 +830,14 @@ final class EventKitInviteCalendar: InviteCalendarStore {
 }
 
 #if DEBUG
-/// `-previewDetail -previewInvite -previewInviteFreeBusy free|conflict|added|ask`:
+/// `-previewDetail -previewInvite -previewInviteFreeBusy free|conflict|added|ask|denied`:
 /// fixture calendars and events, so the card's free/busy states can be screenshotted
 /// without a real calendar. Peer of Android `inviteCardFree` / `inviteCardConflict` /
-/// `inviteCardAdded`.
+/// `inviteCardAdded` / `inviteCardAsk` / `inviteCardDenied`.
 @MainActor
 final class PreviewInviteCalendar: InviteCalendarStore {
     enum Scenario: String {
-        case free, conflict, added, ask
+        case free, conflict, added, ask, denied
 
         static func fromLaunchArguments() -> Scenario? {
             let args = ProcessInfo.processInfo.arguments
@@ -835,13 +853,16 @@ final class PreviewInviteCalendar: InviteCalendarStore {
 
     init(scenario: Scenario) {
         self.scenario = scenario
-        granted = scenario != .ask
+        granted = scenario != .ask && scenario != .denied
     }
 
     /// The `added` scenario taps Add once on appear, so the Undo toast shows.
     var autoAdds: Bool { scenario == .added }
 
-    var access: InviteCalendarAccess { granted ? .full : .askable }
+    var access: InviteCalendarAccess {
+        if granted { return .full }
+        return scenario == .denied ? .denied : .askable
+    }
 
     func requestAccess() async -> Bool {
         granted = true

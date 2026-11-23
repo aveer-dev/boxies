@@ -35,9 +35,14 @@ interface InviteCalendarStore {
     val usesSystemPermission: Boolean get() = true
     /** DEBUG `inviteCardAdded`: tap Add once on appear so the Undo toast shows. */
     val autoAdds: Boolean get() = false
-    fun access(context: Context): InviteCalendarAccess
-    /** The system dialog answered: remember a refusal so the card stops offering to ask. */
-    fun recordRequestResult(context: Context, granted: Boolean)
+    /**
+     * [showsRationale] is `shouldShowRequestPermissionRationale` for the calendar
+     * permissions (needs the activity, so the card reads it): true means the system
+     * will show the dialog again.
+     */
+    fun access(context: Context, showsRationale: Boolean): InviteCalendarAccess
+    /** The system dialog answered: remember a refusal only once the system won't ask again (AVE-236). */
+    fun recordRequestResult(context: Context, granted: Boolean, showsRationale: Boolean)
     fun writableCalendars(context: Context): List<InviteCalendarChoice>
     fun events(context: Context, beginMillis: Long, endMillis: Long): List<CalendarBusyEvent>
     /** Writes the invite to [calendarId] and returns the new event's id. */
@@ -50,7 +55,14 @@ object InviteCalendar {
 
     /** The calendar picked last on the card (`inboxies_prefs`). */
     const val CHOSEN_CALENDAR_KEY = "invite_calendar_id"
-    private const val DENIED_KEY = "invite_calendar_denied"
+    /** Before AVE-236 any refusal (even a dismissed dialog) set this; no longer trusted. */
+    private const val LEGACY_DENIED_KEY = "invite_calendar_denied"
+    /** The system won't show the dialog again: only Settings can grant. */
+    private const val BLOCKED_KEY = "invite_calendar_blocked"
+    /** "Don't allow" was tapped at least once (the rationale flag was seen). */
+    private const val REFUSED_KEY = "invite_calendar_refused"
+    /** The last request came back refused with no rationale (dismissed, or never shown). */
+    private const val UNANSWERED_KEY = "invite_calendar_unanswered"
     private const val PREFS = "inboxies_prefs"
 
     /** DEBUG previews swap in a fake (`PreviewInviteCalendar`). */
@@ -74,32 +86,63 @@ object InviteCalendar {
     internal fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    internal fun wasDenied(context: Context) = prefs(context).getBoolean(DENIED_KEY, false)
+    /**
+     * Android shows the dialog again after a dismissal or a first "Don't allow", so
+     * only a refusal the system will not re-ask counts as [InviteCalendarAccess.Denied].
+     * A stored block is ignored while the rationale says the dialog can show again
+     * (e.g. permissions reset), and the pre-AVE-236 flag is ignored entirely.
+     */
+    internal fun accessFor(granted: Boolean, showsRationale: Boolean, blocked: Boolean): InviteCalendarAccess = when {
+        granted -> InviteCalendarAccess.Full
+        showsRationale -> InviteCalendarAccess.Askable
+        blocked -> InviteCalendarAccess.Denied
+        else -> InviteCalendarAccess.Askable
+    }
 
-    internal fun setDenied(context: Context, denied: Boolean) {
-        prefs(context).edit().putBoolean(DENIED_KEY, denied).apply()
+    /**
+     * After a refusal: final when the system no longer offers a rationale and either
+     * "Don't allow" was seen before (second refusal / "Don't ask again") or the last
+     * request also came back unanswered. A first dismissal (no rationale yet, nothing
+     * before) stays askable; a second one in a row, which is also what a silent
+     * system refusal looks like, falls back to the Settings link.
+     */
+    internal fun refusalIsFinal(showsRationale: Boolean, refusedBefore: Boolean, unansweredBefore: Boolean): Boolean =
+        !showsRationale && (refusedBefore || unansweredBefore)
+
+    internal fun isBlocked(context: Context) = prefs(context).getBoolean(BLOCKED_KEY, false)
+
+    internal fun record(context: Context, granted: Boolean, showsRationale: Boolean) {
+        val p = prefs(context)
+        val edit = p.edit().remove(LEGACY_DENIED_KEY)
+        when {
+            granted -> edit.remove(BLOCKED_KEY).remove(REFUSED_KEY).remove(UNANSWERED_KEY)
+            showsRationale -> edit.putBoolean(REFUSED_KEY, true).remove(UNANSWERED_KEY).remove(BLOCKED_KEY)
+            refusalIsFinal(
+                showsRationale = false,
+                refusedBefore = p.getBoolean(REFUSED_KEY, false),
+                unansweredBefore = p.getBoolean(UNANSWERED_KEY, false),
+            ) -> edit.putBoolean(BLOCKED_KEY, true).remove(UNANSWERED_KEY)
+            else -> edit.putBoolean(UNANSWERED_KEY, true)
+        }
+        edit.apply()
     }
 }
 
 /** CalendarContract with READ_CALENDAR + WRITE_CALENDAR. Call off the main thread. */
 object PhoneInviteCalendar : InviteCalendarStore {
-    override fun access(context: Context): InviteCalendarAccess {
-        val granted = InviteCalendar.permissions.all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-        return when {
-            granted -> InviteCalendarAccess.Full
-            InviteCalendar.wasDenied(context) -> InviteCalendarAccess.Denied
-            else -> InviteCalendarAccess.Askable
-        }
+    private fun granted(context: Context) = InviteCalendar.permissions.all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    override fun recordRequestResult(context: Context, granted: Boolean) {
-        InviteCalendar.setDenied(context, !granted)
+    override fun access(context: Context, showsRationale: Boolean): InviteCalendarAccess =
+        InviteCalendar.accessFor(granted(context), showsRationale, InviteCalendar.isBlocked(context))
+
+    override fun recordRequestResult(context: Context, granted: Boolean, showsRationale: Boolean) {
+        InviteCalendar.record(context, granted, showsRationale)
     }
 
     override fun writableCalendars(context: Context): List<InviteCalendarChoice> {
-        if (access(context) != InviteCalendarAccess.Full) return emptyList()
+        if (!granted(context)) return emptyList()
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
@@ -126,7 +169,7 @@ object PhoneInviteCalendar : InviteCalendarStore {
     }
 
     override fun events(context: Context, beginMillis: Long, endMillis: Long): List<CalendarBusyEvent> {
-        if (access(context) != InviteCalendarAccess.Full) return emptyList()
+        if (!granted(context)) return emptyList()
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
             ContentUris.appendId(it, beginMillis)
             ContentUris.appendId(it, endMillis)

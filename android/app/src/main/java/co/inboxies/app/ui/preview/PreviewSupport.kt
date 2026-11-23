@@ -356,6 +356,7 @@ object PreviewSupport {
             PreviewMode.InviteCardConflict,
             PreviewMode.InviteCardAdded,
             PreviewMode.InviteCardAsk,
+            PreviewMode.InviteCardDenied,
             -> {
                 // AVE-177: reader with the Code card / Invite card pinned at the bottom.
                 val card = if (mode == PreviewMode.Code) {
@@ -377,6 +378,7 @@ object PreviewSupport {
                     PreviewMode.InviteCardConflict -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Conflict)
                     PreviewMode.InviteCardAdded -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Added)
                     PreviewMode.InviteCardAsk -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Ask)
+                    PreviewMode.InviteCardDenied -> PreviewInviteCalendar(PreviewInviteCalendar.Scenario.Denied)
                     else -> null
                 }
                 DatabaseService.shared.upsertEmails(mailbox.id, listOf(card))
