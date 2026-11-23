@@ -445,9 +445,10 @@ enum PreviewSupport {
     /// `-previewInviteAddress` for an in-person invite (address only, Directions),
     /// `-previewInviteExpanded` to open the details, `-previewInviteClaimed` for a
     /// stranger naming someone else as organizer (AVE-220). Add `-previewInviteFreeBusy
-    /// free|conflict|added|ask` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
+    /// free|conflict|added|ask|denied` for fixture calendars (AVE-206, `PreviewInviteCalendar`):
     /// "You're free", "Conflicts with Team sync +1 more", the "Added to Work · Undo"
-    /// toast, or the "Check availability" link before access.
+    /// toast, the "Check availability" link before access, or "Allow in Settings"
+    /// once refused (AVE-236).
     static func inviteEmail(cancelled: Bool, inPerson: Bool = false, claimed: Bool = false) -> Email {
         Email(
             id: "preview-invite",

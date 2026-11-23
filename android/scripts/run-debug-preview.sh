@@ -37,6 +37,7 @@
 #   ./scripts/run-debug-preview.sh inviteCardConflict  # … "Conflicts with Team sync +1 more"
 #   ./scripts/run-debug-preview.sh inviteCardAdded     # … added in one tap, "Added to Work · Undo" toast
 #   ./scripts/run-debug-preview.sh inviteCardAsk       # … before access: "Check availability"
+#   ./scripts/run-debug-preview.sh inviteCardDenied    # … refused for good: "Allow in Settings" (AVE-236)
 #   ./scripts/run-debug-preview.sh replyQuote   # reply composer quoting a promo mail; tap the quote dock (AVE-133)
 #   ./scripts/run-debug-preview.sh forwardAttachments  # forward composer with the "Include 2 attachments" switch (AVE-181)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
@@ -169,6 +170,7 @@ case "$mode" in
   inviteCardConflict|InviteCardConflict|previewInviteConflict) extra=previewInviteConflict; label=inviteCardConflict ;;
   inviteCardAdded|InviteCardAdded|previewInviteAdded) extra=previewInviteAdded; label=inviteCardAdded ;;
   inviteCardAsk|InviteCardAsk|previewInviteAsk) extra=previewInviteAsk; label=inviteCardAsk ;;
+  inviteCardDenied|InviteCardDenied|previewInviteDenied) extra=previewInviteDenied; label=inviteCardDenied ;;
   replyQuote|ReplyQuote|previewReplyQuote) extra=previewReplyQuote; label=replyQuote ;;
   forwardAttachments|ForwardAttachments|previewForwardAttachments) extra=previewForwardAttachments; label=forwardAttachments ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
@@ -192,7 +194,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainAliasAdd | domainAliasConflict | domainAliasDelete | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainAliasAdd | domainAliasConflict | domainAliasDelete | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | screenerList | screenerUndo | screenerUndoAccept | screenerReaderAccept | tagView | tagPicker | tagList | replyLater | setAside | pile | pileList | pilePicker | focusReply | focusReplyDone | paperTrail | spam | newsletter | code | inviteCard | inviteCardExpanded | inviteCardAddress | inviteCardAddressExpanded | inviteCardCancelled | inviteCardClaimed | inviteCardFree | inviteCardConflict | inviteCardAdded | inviteCardAsk | inviteCardDenied | replyQuote | forwardAttachments | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac

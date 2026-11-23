@@ -138,6 +138,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteCardAdded("inviteCardAdded", "previewInviteAdded"),
     /** Before access: the "Check availability" link; tapping it grants without the system dialog (iOS `… -previewInviteFreeBusy ask`). */
     InviteCardAsk("inviteCardAsk", "previewInviteAsk"),
+    /** AVE-236: calendar access refused for good: "Allow in Settings" (iOS `… -previewInviteFreeBusy denied`). */
+    InviteCardDenied("inviteCardDenied", "previewInviteDenied"),
     /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
     /** Forward composer for a mail with two files + an inline logo: "Include 2 attachments" switch (iOS `-previewMailbox -previewForwardAttachments`, AVE-181). */

@@ -1,6 +1,8 @@
 package co.inboxies.app.ui.email
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ContextWrapper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipData
@@ -9,6 +11,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.os.PersistableBundle
 import android.provider.CalendarContract
 import android.text.format.DateFormat
@@ -333,11 +336,21 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
     val selectedCalendar = InviteCalendar.pick(calendars, chosenCalendarId)
     val isInCalendar = added != null || availability == InviteAvailability.InCalendar
 
+    /**
+     * Whether the system will show the calendar dialog again with a rationale (after a
+     * first "Don't allow"). Needs the activity; false when there is none (AVE-236).
+     */
+    fun showsRationale(): Boolean {
+        val activity = context.findActivity() ?: return false
+        return InviteCalendar.permissions.any { activity.shouldShowRequestPermissionRationale(it) }
+    }
+
     /** Reads access, calendars and free/busy. Never prompts. */
     suspend fun refresh() {
         val appContext = context.applicationContext
+        val rationale = showsRationale()
         val result = withContext(Dispatchers.IO) {
-            val nextAccess = store.access(appContext)
+            val nextAccess = store.access(appContext, rationale)
             if (nextAccess == InviteCalendarAccess.Full) {
                 Triple(
                     nextAccess,
@@ -405,7 +418,7 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         val granted = result.isNotEmpty() && result.values.all { it }
-        store.recordRequestResult(context.applicationContext, granted)
+        store.recordRequestResult(context.applicationContext, granted, showsRationale())
         val thenAdd = pendingAdd
         pendingAdd = false
         scope.launch {
@@ -418,7 +431,7 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
 
     fun requestAccess(thenAdd: Boolean) {
         if (!store.usesSystemPermission) {
-            store.recordRequestResult(context.applicationContext, true)
+            store.recordRequestResult(context.applicationContext, true, showsRationale = false)
             scope.launch {
                 refresh()
                 if (thenAdd) addDirectly()
@@ -427,6 +440,16 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
         }
         pendingAdd = thenAdd
         permissionLauncher.launch(InviteCalendar.permissions)
+    }
+
+    /** Refused for good: only the app's system settings page can grant now (AVE-236). */
+    fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            app.showToast("Couldn\u2019t open Settings", isError = true)
+        }
     }
 
     /** Full access: one tap writes the event. Not asked yet: ask, then add. Denied: the insert screen. */
@@ -546,6 +569,7 @@ private fun InviteCard(invite: EmailInvite, showToast: (MailCardToast?) -> Unit)
                 selectedCalendar = selectedCalendar,
                 showsCalendarPicker = calendarInsert != null && !isInCalendar,
                 onCheckAvailability = { requestAccess(thenAdd = false) },
+                onOpenSettings = { openAppSettings() },
                 onChooseCalendar = {
                     chosenCalendarId = it.id
                     InviteCalendar.setChosenCalendarId(context, it.id)
@@ -666,7 +690,7 @@ private data class AddedEvent(val eventId: Long, val calendarTitle: String)
 
 /**
  * "You're free" / "Conflicts with Team sync" and the calendar Add writes to. Before
- * access: a "Check availability" link that asks. Denied: nothing.
+ * access: a "Check availability" link that asks. Refused for good: "Allow in Settings".
  */
 @Composable
 private fun AvailabilityRow(
@@ -677,6 +701,7 @@ private fun AvailabilityRow(
     selectedCalendar: InviteCalendarChoice?,
     showsCalendarPicker: Boolean,
     onCheckAvailability: () -> Unit,
+    onOpenSettings: () -> Unit,
     onChooseCalendar: (InviteCalendarChoice) -> Unit,
 ) {
     val colors = inboxiesColors()
@@ -730,8 +755,28 @@ private fun AvailabilityRow(
                 medium = true,
             )
         }
-        InviteCalendarAccess.Denied -> Unit
+        InviteCalendarAccess.Denied -> {
+            // The system won't ask again (AVE-236): only Settings can grant now.
+            if (!checksAvailability) return
+            DetailRow(
+                Icons.Outlined.EventAvailable,
+                "Allow in Settings",
+                tint = colors.accent,
+                onClickLabel = "Open Settings to let Inboxies read your calendar",
+                onClick = onOpenSettings,
+                medium = true,
+            )
+        }
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var context = this
+    while (context is ContextWrapper) {
+        if (context is Activity) return context
+        context = context.baseContext
+    }
+    return null
 }
 
 @Composable

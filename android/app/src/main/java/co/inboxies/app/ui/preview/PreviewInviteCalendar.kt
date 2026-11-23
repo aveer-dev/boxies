@@ -10,21 +10,24 @@ import co.inboxies.app.services.InviteCalendarStore
 /**
  * DEBUG fixture calendars for the Invite card (AVE-206), so free/busy can be
  * screenshotted without a real calendar or the permission dialog. Peer of iOS
- * `PreviewInviteCalendar` (`-previewInviteFreeBusy free|conflict|added|ask`).
+ * `PreviewInviteCalendar` (`-previewInviteFreeBusy free|conflict|added|ask|denied`).
  */
 class PreviewInviteCalendar(private val scenario: Scenario) : InviteCalendarStore {
-    enum class Scenario { Free, Conflict, Added, Ask }
+    enum class Scenario { Free, Conflict, Added, Ask, Denied }
 
-    private var granted = scenario != Scenario.Ask
+    private var granted = scenario != Scenario.Ask && scenario != Scenario.Denied
     private var nextId = 1L
 
     override val usesSystemPermission: Boolean get() = false
     override val autoAdds: Boolean get() = scenario == Scenario.Added
 
-    override fun access(context: Context) =
-        if (granted) InviteCalendarAccess.Full else InviteCalendarAccess.Askable
+    override fun access(context: Context, showsRationale: Boolean) = when {
+        granted -> InviteCalendarAccess.Full
+        scenario == Scenario.Denied -> InviteCalendarAccess.Denied
+        else -> InviteCalendarAccess.Askable
+    }
 
-    override fun recordRequestResult(context: Context, granted: Boolean) {
+    override fun recordRequestResult(context: Context, granted: Boolean, showsRationale: Boolean) {
         this.granted = granted
     }
 
