@@ -128,6 +128,7 @@ import co.inboxies.app.ui.notes.NoteEditorSheet
 import co.inboxies.app.ui.notes.NoteEditorTarget
 import co.inboxies.app.ui.notes.StickyNotesLayer
 import co.inboxies.app.ui.compose.rememberReduceMotion
+import co.inboxies.app.models.AiSummaryEligibility
 import co.inboxies.app.models.MailCards
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.models.ThreadNote
@@ -496,6 +497,17 @@ fun EmailDetailView(
                     onEditTags = if (canEditTags) ({ app.openTagPicker(current) }) else null,
                     pileName = customPiles.firstOrNull { it.id == current.currentPileId }?.let(MailPiles::displayName),
                     onOpenPile = { current.currentPileId?.let { app.requestPileView(it) } },
+                )
+
+                // AI summary (AVE-218): same rule as web, decided once the thread is in.
+                val summaryEnabled = remember(current, thread, loading) {
+                    !(loading && thread.isEmpty()) && AiSummaryEligibility.isEnabled(current, thread)
+                }
+                ThreadSummaryCard(
+                    mailboxId = selectedMailboxId,
+                    threadId = current.noteThreadKey,
+                    enabled = summaryEnabled,
+                    isDebugPreview = app.isDebugPreview,
                 )
 
                 if (loading && messages.isEmpty()) {

@@ -118,6 +118,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Newsletter("newsletter", "previewNewsletter"),
     /** Sign-in mail open in the reader with the Code card pinned above the bottom bar (iOS `-previewDetail -previewCode`, AVE-177). */
     Code("code", "previewCode"),
+    /** Q3 thread open with the AI summary card on a fixture summary, no API (iOS `-previewDetail -previewSummary`, AVE-218). */
+    Summary("summary", "previewSummary"),
+    /** Same reader at the daily AI limit: "Daily AI limit reached. Resets in …" (iOS `-previewDetail -previewSummary quota`). */
+    SummaryQuota("summaryQuota", "previewSummaryQuota"),
     /** Invite with a Meet link: collapsed Invite card, Join + Add to calendar (iOS `-previewDetail -previewInvite`). */
     InviteCard("inviteCard", "previewInvite"),
     /** Same invite with the details open (iOS `… -previewInvite -previewInviteExpanded`). */

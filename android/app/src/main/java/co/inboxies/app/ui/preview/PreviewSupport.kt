@@ -2,6 +2,7 @@ package co.inboxies.app.ui.preview
 
 import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
+import co.inboxies.app.ui.email.ThreadSummaryDebug
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainAliasItem
 import co.inboxies.app.models.CloudflareDnsRecord
@@ -248,6 +249,11 @@ object PreviewSupport {
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
         DatabaseService.shared.upsertFolders(mailbox.id, folders)
         DatabaseService.shared.upsertEmails(mailbox.id, allEmails)
+        ThreadSummaryDebug.mode = when (mode) {
+            PreviewMode.Summary -> "ready"
+            PreviewMode.SummaryQuota -> "quota"
+            else -> null
+        }
 
         when (mode) {
             PreviewMode.Screener -> {
@@ -389,6 +395,25 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.INBOX),
                     selectedEmail = card,
                     threadEmails = listOf(card),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.Summary, PreviewMode.SummaryQuota -> {
+                // AVE-218: the Q3 thread open with the AI summary card on a fixture (no API).
+                val thread = noteThread(you)
+                DatabaseService.shared.upsertEmails(mailbox.id, thread)
+                val inbox = allEmails
+                    .filter { it.folderId == FolderIds.INBOX }
+                    .map { if (it.id == "preview-1") thread.last() else it }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = thread.last(),
+                    threadEmails = thread,
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
