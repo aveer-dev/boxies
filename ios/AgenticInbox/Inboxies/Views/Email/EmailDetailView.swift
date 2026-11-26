@@ -59,6 +59,13 @@ struct EmailDetailView: View {
         return MailCards.card(for: app.threadEmails)
     }
 
+    /// AI summary (AVE-218): same rule as web — an eligible folder and enough text across
+    /// the thread. Waits for the thread so the list row's missing body doesn't decide it.
+    private var summaryEnabled: Bool {
+        if app.isEmailDetailLoading && app.threadEmails.isEmpty { return false }
+        return AISummaryEligibility.isEnabled(email: email, thread: app.threadEmails)
+    }
+
     private var subjectText: String {
         let subject = email?.subject ?? ""
         return subject.isEmpty ? "(no subject)" : subject
@@ -107,6 +114,15 @@ struct EmailDetailView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 12)
+
+                    if let email {
+                        ThreadSummaryCard(
+                            mailboxId: app.selectedMailboxId,
+                            threadId: email.noteThreadKey,
+                            enabled: summaryEnabled,
+                            isDebugPreview: app.isDebugPreview
+                        )
+                    }
 
                     if app.isEmailDetailLoading && app.threadEmails.isEmpty {
                         detailSkeleton

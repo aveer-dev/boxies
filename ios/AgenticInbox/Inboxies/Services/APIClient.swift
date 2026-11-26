@@ -1270,6 +1270,31 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/ai-usage")
     }
 
+    /// Thread summary: cached, or generated on first open (AVE-20). Over the daily AI
+    /// limit a model run answers 429 (`AISummaryQuota`).
+    func getThreadSummary(mailboxId: String, threadId: String) async throws -> AISummaryResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/summary"
+        )
+    }
+
+    /// Always re-runs the model for the thread.
+    func regenerateThreadSummary(mailboxId: String, threadId: String) async throws -> AISummaryResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/summary/regenerate",
+            method: "POST"
+        )
+    }
+
+    /// Quick summary of one message in a multi-message thread.
+    func generateEmailSummary(mailboxId: String, emailId: String, regenerate: Bool = false) async throws -> AISummaryResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/summary/generate",
+            method: "POST",
+            body: ["regenerate": regenerate]
+        )
+    }
+
     func listSenderRules(mailboxId: String, verdict: String) async throws -> [SenderRule] {
         let response: SenderRulesResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",

@@ -77,6 +77,7 @@ import co.inboxies.app.models.SendEmailResponse
 import co.inboxies.app.models.SenderPreference
 import co.inboxies.app.models.SenderPreferencesResponse
 import co.inboxies.app.models.SenderRule
+import co.inboxies.app.models.AiSummaryResponse
 import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.SenderRuleResponse
 import co.inboxies.app.models.SenderRulesResponse
@@ -1429,6 +1430,28 @@ class ApiClient private constructor() {
     /** Today's per-mailbox AI usage and limits (AVE-45). */
     suspend fun getAiUsage(mailboxId: String): AiUsageSnapshot =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/ai-usage")
+
+    /**
+     * Thread summary: cached, or generated on first open (AVE-20). Over the daily AI
+     * limit a model run answers 429 (`AiSummaryQuota`).
+     */
+    suspend fun getThreadSummary(mailboxId: String, threadId: String): AiSummaryResponse =
+        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/summary")
+
+    /** Always re-runs the model for the thread. */
+    suspend fun regenerateThreadSummary(mailboxId: String, threadId: String): AiSummaryResponse =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/summary/regenerate",
+            method = "POST",
+        )
+
+    /** Quick summary of one message in a multi-message thread. */
+    suspend fun generateEmailSummary(mailboxId: String, emailId: String, regenerate: Boolean = false): AiSummaryResponse =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/summary/generate",
+            method = "POST",
+            body = buildJsonObject { put("regenerate", JsonPrimitive(regenerate)) },
+        )
 
     suspend fun listSenderRules(mailboxId: String, verdict: String): List<SenderRule> {
         val response: SenderRulesResponse = request(
